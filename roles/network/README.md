@@ -1,6 +1,6 @@
 # Network — routes + firewall
 
-Scripts owned by this role. 0 of 17 are built.
+Scripts owned by this role. 1 of 17 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -9,7 +9,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | NW-01 | Config backup and diff | 1 | Medium | planned |  |
 | NW-03 | Firewall rule export | 1 | Medium | planned |  |
 | SH-02 | Subnet sweep (Windows) | 1 | Easy | planned |  |
-| SH-03 | Network scan | 1 | Medium | planned |  |
+| SH-03 | Network scan | 1 | Medium | built | [`roles/network/SH-03-network-scan.sh`](../../roles/network/SH-03-network-scan.sh) |
 | NW-10 | Device password rotation | 2 | Medium | planned |  |
 | NW-04 | Tables collector | 3 | Medium | planned |  |
 | NW-07 | Device account and management audit | 3 | Medium | planned |  |

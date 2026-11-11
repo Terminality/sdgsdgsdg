@@ -2,7 +2,7 @@
 
 How to use what is built, what to watch for, and what to do when something goes wrong. A script gets a section here when it is built; `docs/STATUS.md` lists what exists.
 
-Built so far: the shell library (LB-01), the PowerShell library (LB-02), the Linux collector (SH-05), the script templates, and the test runner.
+Built so far: the shell library (LB-01), the PowerShell library (LB-02), the network scan (SH-03), the Linux collector (SH-05), the script templates, and the test runner.
 
 **Read this first.** The libraries pass their tests on Linux shells and on PowerShell 7. They have not been run on Windows, FreeBSD or Solaris. Section 8 says how to check them on your own test machines.
 
@@ -18,6 +18,7 @@ Contents:
 8. Tests
 9. Problems that apply to everything
 10. Linux collector, `roles/linux/SH-05-linux-collector.sh` (SH-05)
+11. Network scan, `roles/network/SH-03-network-scan.sh` (SH-03)
 
 ---
 
@@ -375,6 +376,7 @@ It runs, in order: the POSIX lint, the PowerShell 2.0 lint, a syntax check of ev
 | `tests/lib.test.sh` | The shell library: options, dry run, protected list, backup and undo, quarantine, passwords, CSV, findings, kit check |
 | `tests/lib.Tests.ps1` | The PowerShell library: the same list, plus program exit codes and `-Secret` |
 | `tests/templates.test.sh` | The shell template runs and writes its files |
+| `tests/sh03.test.sh` | The network scan: option checks, then both the python and nmap engines against two test listeners, including the scored-service and host-list checks |
 | `tests/sh05.test.sh` | The Linux collector: options, every profile writes its files, nothing on the host changes, and (as root) a planted SUID binary is flagged HIGH |
 | `tests/helper.sh` | The small test framework the `.test.sh` files use |
 
@@ -510,3 +512,83 @@ Only HIGH and MED flags are printed. LOW flags are in `flags.csv`.
 | It runs for many minutes | A very large disk or network home folders | `--fast`, or `--skip files,creds` |
 | `cannot find lib/lib.sh` (exit 3) | The script was copied without the `lib/` folder | Copy the whole kit, or use the built single-file version once the build step exists |
 | `$'\r': command not found` | The file got Windows line endings in transit | `tr -d '\r' < SH-05-linux-collector.sh > fixed.sh` |
+
+---
+
+## 11. Network scan, `roles/network/SH-03-network-scan.sh` (SH-03)
+
+Finds live hosts and open ports, with the service and version behind each. Run it from the admin workstation. It sends probes and changes nothing on any host.
+
+### How to run it
+
+```sh
+sh SH-03-network-scan.sh --target 10.0.2.0/24 --hosts config/hosts.csv --out ~/ccdc-out
+sh SH-03-network-scan.sh --target 10.0.2.0/24 --profile full --out ~/ccdc-out           # every port, slow
+sh SH-03-network-scan.sh --targets-file subnets.txt --profile outside --hosts hosts.csv  # from outside the firewall
+sudo sh SH-03-network-scan.sh --target 10.0.2.0/24 --profile udp                         # top 25 UDP ports
+```
+
+| Option | What it does |
+| --- | --- |
+| `--target` | An address, a network (`10.0.2.0/24`), a range (`10.0.2.1-50`) or a name. Repeat for more |
+| `--targets-file` | One target per line |
+| `--hosts` | The host list. Turns on the scored-service and unknown-host checks |
+| `--profile fast` (default) | Top 1000 TCP ports with service versions |
+| `--profile full` | All 65535 TCP ports, plus an OS guess as root. Minutes per host |
+| `--profile udp` | Top 25 UDP ports. Needs nmap and root |
+| `--profile outside` | Like fast, but also scans hosts that drop ping. Run it from outside to see what the red team sees; any open port that is not a scored service is flagged |
+| `--ports` | Your own port list, e.g. `22,80,8000-8100` |
+| `--engine` | Force `nmap`, `python`, `bash` or `nc` |
+| `--no-dns` | Skip name lookups when DNS is slow or broken |
+| `--pn` | Treat every address as up |
+
+**Engines.** nmap is used when installed. Without it the scan falls back to python3, then bash with `timeout`, then `nc -z`. The fallbacks:
+
+- check a fixed list of 53 common TCP ports
+- read a short banner instead of a version
+- cannot scan UDP
+- stop at 1024 addresses (`--max-hosts` raises that)
+
+### What it produces
+
+In `<out>/SH-03_<host>_<UTC time>/`:
+
+| File | Contents |
+| --- | --- |
+| `summary.txt` | Hosts up, one line per host with its open ports, the scored-service count, and the HIGH and MED flags |
+| `hosts.csv` | Each live host: address, name, open TCP and UDP ports, OS guess, whether it is on the host list |
+| `ports.csv` | Each open port: address, name, protocol, port, service, version |
+| `scored.csv` | With `--hosts`: each scored service and whether it answered |
+| `flags.csv` | Every flag |
+| `raw/` | nmap's own reports (`.nmap`, `.gnmap`, `.xml`) and screen output |
+
+### What it flags
+
+| Severity | When |
+| --- | --- |
+| HIGH | A scored service from the host list does not answer. Docker API on 2375. A version with a known backdoor or trivial remote root: vsftpd 2.3.4, ProFTPD 1.3.3c and 1.3.5, UnrealIRCd, Samba 3.0.20-3.0.25, distccd, Windows XP/2003 |
+| MED | A host is up but not on the host list, or on the list but silent. Telnet, rsh, TFTP, SNMP, VNC, Redis, MongoDB, Elasticsearch, memcached. Backdoor-style ports such as 4444 and 31337. With `outside`: Windows admin ports, and anything that is not a scored service |
+| LOW | Databases reachable over the network; FTP |
+
+### What to watch for
+
+- **"Not reachable" means not reachable from where you ran it.** A firewall may block your workstation but allow the scoring engine. Check from the scoring side, or with the service checker (SH-08) once it exists, before changing anything.
+- **The host list is what makes this useful.** Without `--hosts` you get an inventory; with it you get answers about scored services and strangers on the network. Keep `config/hosts.csv` current.
+- **Run it again after changes and compare.** The scan diff (SH-04, next) will do the comparison for you.
+- **A closed port can mean "nothing listening" or "dropped by a firewall".** nmap's report in `raw/` says which when it can tell.
+- **Inside versus outside.** From inside you see more than the red team does; `--profile outside` from beyond the firewall shows their view.
+- **Scans are visible.** They show up in IDS and firewall logs. That is fine on your own network; mention it if an inject asks about suspicious traffic.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `nothing to scan` (exit 2) | No `--target` or `--targets-file` | Add one |
+| `has N addresses; the python engine is limited to 1024` | Range too big without nmap | Install nmap, scan smaller pieces, or raise `--max-hosts` |
+| `UDP scanning needs root` / `the udp profile needs nmap` | UDP needs raw packets | `sudo`, with nmap installed |
+| `nmap produced no results` | A target nmap cannot parse, or no permission for the scan type | Read `raw/nmap_screen.txt` |
+| Hosts you know are up are missing | They drop ping and none of the scanned ports answered | `--pn`, or `--profile outside` |
+| The scan sits for minutes | `full` profile, a large range, or slow DNS | Watch the `nmap: Stats` lines; use `--no-dns`; run `fast` first |
+| Service shows as `unknown service` or ends in `?` | The fallback has no version detection, or nmap was unsure | Check the banner in `ports.csv`; rerun with nmap |
+| Every scored service fails | Wrong addresses in the host list, or your workstation is firewalled off | Check `config/hosts.csv`; try `--pn`; scan from another machine |
+
