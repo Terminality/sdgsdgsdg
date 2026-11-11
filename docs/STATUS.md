@@ -1,16 +1,16 @@
 # Build status
 
-5 of 140 scripts are built.
+5 of 142 scripts are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
 | Wave | Goal | Built | Total |
 | --- | --- | --- | --- |
 | 0 | Foundation | 2 | 5 |
-| 1 | Know what we have and what is scored | 2 | 28 |
-| 2 | Evict and lock, all at once | 0 | 27 |
+| 1 | Know what we have and what is scored | 2 | 29 |
+| 2 | Evict and lock, all at once | 0 | 29 |
 | 3 | Close what should not be open | 1 | 31 |
-| 4 | Hunt, recover and report | 0 | 26 |
+| 4 | Hunt, recover and report | 0 | 25 |
 | 5 | Nice to have, and everything if-present | 0 | 23 |
 
 ## Built so far
