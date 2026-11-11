@@ -3,7 +3,7 @@
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.1.0
+# VERSION:  0.2.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -14,7 +14,9 @@
 #     5. the protected-list refusal         cc_is_protected, cc_guard
 #     6. meaningful exit codes              cc_die, cc_finish
 #   plus small helpers the rules call for: tool detection, OS detection,
-#   password generation, quarantine, SHA-256, CSV output and findings files.
+#   password generation, quarantine, SHA-256, CSV output, findings files,
+#   and for inventory scripts: flags (cc_flag), a per-run folder
+#   (cc_use_run_dir) and raw command capture (cc_save).
 #
 # HOW A SCRIPT USES IT
 #   Start every new script from templates/script-template.sh.  During
@@ -72,7 +74,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.1.0"
+CC_LIB_VERSION="0.2.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -90,6 +92,11 @@ CC_N_WOULD=0                # changes a dry run would make
 CC_N_FAIL=0                 # changes that failed
 CC_N_REFUSED=0              # changes refused by the protected list
 CC_N_FIND=0                 # findings written by cc_finding
+CC_N_FLAG=0                 # flags written by cc_flag (this shell only; the
+                            # report counts from the file, see cc_flag_report)
+CC_CSV_DIR=""               # when set, CSV files go here instead of CC_OUT
+CC_RUN_DIR=""               # per-run folder, set by cc_use_run_dir
+CC_FLAGS=""                 # path of this run's flags.csv, once one is written
 CC_SHIFT=1                  # how many arguments cc_common_flag consumed
 
 # -----------------------------------------------------------------------------
@@ -108,6 +115,7 @@ cc_log() {
     case "$_cc_log_level" in
         DEBUG) [ "$CC_DEBUG" = 1 ] && printf '%s\n' "$_cc_log_line" >&2 ;;
         WARN|ERROR|REFUSED) printf '%s\n' "$_cc_log_line" >&2 ;;
+        NOTE) ;;            # log file only: detail that would flood the screen
         *) [ "$CC_QUIET" = 1 ] || printf '%s\n' "$_cc_log_line" >&2 ;;
     esac
     if [ -n "$CC_LOG" ]; then
@@ -116,6 +124,7 @@ cc_log() {
     return 0
 }
 cc_info()  { cc_log INFO "$@"; }
+cc_note()  { cc_log NOTE "$@"; }
 cc_warn()  { cc_log WARN "$@"; }
 cc_err()   { cc_log ERROR "$@"; }
 cc_debug() { cc_log DEBUG "$@"; }
@@ -614,11 +623,18 @@ cc_quarantine() {
 # Output files
 # -----------------------------------------------------------------------------
 
-# cc_csv_new NAME HEADER   -> create <out>/<ID>_<host>_<time>_<NAME>.csv with
-#   the given header line and print its path.
+# cc_csv_new NAME HEADER   -> create a CSV with the given header line and
+#   print its path.  Normally <out>/<ID>_<host>_<time>_<NAME>.csv; after
+#   cc_use_run_dir it is <run folder>/<NAME>.csv.
 #       f=$(cc_csv_new ports "proto,port,process,user")
+#   NOTE: this prints the path, so it is called inside $( ).  Anything it sets
+#   is lost in that subshell, which is why it sets nothing.
 cc_csv_new() {
-    _cc_csv_f="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_$1.csv"
+    if [ -n "$CC_CSV_DIR" ]; then
+        _cc_csv_f="$CC_CSV_DIR/$1.csv"
+    else
+        _cc_csv_f="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_$1.csv"
+    fi
     (umask 077; printf '%s\n' "$2" >"$_cc_csv_f") || { cc_err "cannot write $_cc_csv_f"; return 1; }
     printf '%s\n' "$_cc_csv_f"
 }
@@ -655,12 +671,143 @@ cc_csv_row() {
 #     host,script,weakness,fix_id,class,protected_dep,detail,time
 cc_finding() {
     case "$3" in safe|service|protected) ;; *) cc_die 1 "cc_finding: class must be safe, service or protected (got '$3')" ;; esac
+    # Created on first use.  The path is also derivable from the run, so a
+    # finding written inside a subshell still lands in the same file.
     if [ -z "$CC_FINDINGS" ]; then
-        CC_FINDINGS=$(cc_csv_new findings "host,script,weakness,fix_id,class,protected_dep,detail,time") || return 1
+        if [ -n "$CC_CSV_DIR" ]; then _cc_fd_f="$CC_CSV_DIR/findings.csv"; else _cc_fd_f="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_findings.csv"; fi
+        if [ -f "$_cc_fd_f" ]; then CC_FINDINGS=$_cc_fd_f
+        else CC_FINDINGS=$(cc_csv_new findings "host,script,weakness,fix_id,class,protected_dep,detail,time") || return 1
+        fi
     fi
     cc_csv_row "$CC_FINDINGS" "$CC_HOST" "$CC_ID" "$1" "$2" "$3" "${5:-}" "$4" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     CC_N_FIND=$((CC_N_FIND + 1))
     cc_log FINDING "[$3] $1 ($2): $4"
+}
+
+# -----------------------------------------------------------------------------
+# Inventory helpers: run folder, raw capture, flags
+# -----------------------------------------------------------------------------
+# Inventory scripts write many files.  They call cc_use_run_dir once after
+# cc_init so everything for one run sits in one folder:
+#     <out>/<ID>_<host>_<UTC time>/
+#         <section>.csv        one per section       (cc_csv_new)
+#         flags.csv            unusual items         (cc_flag)
+#         raw/<name>.txt       untouched tool output (cc_save)
+# The log file and the undo log stay in <out> itself, beside every other
+# script's, so all logs for a host are in one place.
+
+# cc_use_run_dir   -> create the run folder and send CSV files there.
+#   Sets CC_RUN_DIR and CC_CSV_DIR.
+cc_use_run_dir() {
+    CC_RUN_DIR="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}"
+    (umask 077; mkdir -p "$CC_RUN_DIR/raw") || cc_die 3 "cannot create run folder $CC_RUN_DIR"
+    CC_CSV_DIR=$CC_RUN_DIR
+    cc_debug "run folder: $CC_RUN_DIR"
+}
+
+# cc_save NAME COMMAND [ARG...]
+#   Run a READ-ONLY command and keep its untouched output in
+#   <run folder>/raw/NAME.txt (or <out>/<ID>_<host>_<time>_NAME.txt without a
+#   run folder).  The first line records the command.  Use it for output that
+#   is worth keeping but too varied to turn into CSV (iptables-save, sshd -T).
+#   This does NOT honour dry-run: never pass it a command that changes things.
+#   Returns the command's exit code; sets CC_LAST_SAVE to the file.
+cc_save() {
+    _cc_sv_name=$1
+    shift
+    if [ -n "$CC_RUN_DIR" ]; then CC_LAST_SAVE="$CC_RUN_DIR/raw/$_cc_sv_name.txt"
+    else CC_LAST_SAVE="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_$_cc_sv_name.txt"
+    fi
+    printf '# command: %s\n# time: %s\n' "$*" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$CC_LAST_SAVE"
+    "$@" >>"$CC_LAST_SAVE" 2>&1
+    _cc_sv_rc=$?
+    cc_debug "saved '$*' to $CC_LAST_SAVE (exit $_cc_sv_rc)"
+    return "$_cc_sv_rc"
+}
+
+# cc_flag SEVERITY SECTION ITEM DETAIL
+#   Record something unusual that an operator should look at.  Inventory
+#   scripts never act on what they see; a flag only says "look here".
+#     SEVERITY  HIGH  likely red team activity or an open door - look now
+#               MED   risky or unusual - look soon
+#               LOW   worth knowing - kept in the file, not shown on screen
+#     SECTION   which part of the script found it (users, ports, ...)
+#     ITEM      the thing itself, short (an account, a port, a path)
+#     DETAIL    one sentence: what is wrong and why it matters
+#   Written to flags.csv (columns: severity,section,item,detail,time) and to
+#   the log file.  Not printed while the script runs; cc_flag_report prints
+#   the HIGH and MED ones at the end, worst first (rule 17).
+#   Safe to call from a subshell: the file is the record, not a variable.
+#   Never put a password or other secret in ITEM or DETAIL.
+cc_flag() {
+    case "$1" in HIGH|MED|LOW) ;; *) cc_die 1 "cc_flag: severity must be HIGH, MED or LOW (got '$1')" ;; esac
+    if [ -z "$CC_FLAGS" ]; then
+        if [ -n "$CC_CSV_DIR" ]; then CC_FLAGS="$CC_CSV_DIR/flags.csv"; else CC_FLAGS="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_flags.csv"; fi
+        [ -f "$CC_FLAGS" ] || (umask 077; printf 'severity,section,item,detail,time\n' >"$CC_FLAGS")
+    fi
+    cc_csv_row "$CC_FLAGS" "$1" "$2" "$3" "$4" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    CC_N_FLAG=$((CC_N_FLAG + 1))
+    cc_note "FLAG $1 [$2] $3: $4"
+}
+
+# CC_AWK_CSV: an awk function that splits one CSV line correctly (quoted
+# fields, doubled quotes, commas inside quotes).  Paste it in front of an awk
+# program that reads files this kit wrote:
+#     awk "$CC_AWK_CSV"'{ n = csvsplit($0, f); print f[1] }' file.csv
+CC_AWK_CSV='
+function csvsplit(s, a,   n, i, c, f, q, len) {    # awk, not shell: posix-ok
+    n = 0; f = ""; q = 0; len = length(s)
+    for (i = 1; i <= len; i++) {
+        c = substr(s, i, 1)
+        if (q) {
+            if (c == "\"") {
+                if (substr(s, i + 1, 1) == "\"") { f = f "\""; i++ } else q = 0
+            } else f = f c
+        } else if (c == "\"") q = 1
+        else if (c == ",") { a[++n] = f; f = "" }
+        else if (c != "\r") f = f c
+    }
+    a[++n] = f
+    return n
+}'
+
+# cc_flag_report [MAX]
+#   Print the HIGH flags, then the MED flags, at most MAX lines in total
+#   (default 30), then how many LOW flags and how many were cut, with the path
+#   of flags.csv.  Each screen line is cut at 200 characters; the file keeps
+#   the full text.  Reads the file, so it counts flags written from subshells.
+#   Prints "no flags" when there are none.
+cc_flag_report() {
+    _cc_fr_max=${1:-30}
+    # If every flag was written from a subshell, this shell never learned the
+    # file name; it is always <run folder>/flags.csv in that case.
+    if [ -z "$CC_FLAGS" ] && [ -n "$CC_CSV_DIR" ] && [ -f "$CC_CSV_DIR/flags.csv" ]; then
+        CC_FLAGS="$CC_CSV_DIR/flags.csv"
+    fi
+    if [ -z "$CC_FLAGS" ] || [ ! -f "$CC_FLAGS" ]; then
+        printf 'Flags: none\n'
+        return 0
+    fi
+    awk -v max="$_cc_fr_max" -v file="$CC_FLAGS" "$CC_AWK_CSV"'
+        NR == 1 { next }
+        {
+            csvsplit($0, f)
+            sev = f[1]; cnt[sev]++
+            line = "  [" f[2] "] " f[3] ": " f[4]
+            # Screen lines are cut at 200 characters; flags.csv keeps the full text.
+            if (length(line) > 200) line = substr(line, 1, 197) "..."
+            if (sev == "HIGH") hi[++nh] = line
+            else if (sev == "MED") me[++nm] = line
+        }
+        END {
+            shown = 0
+            printf "Flags: %d high, %d medium, %d low\n", cnt["HIGH"], cnt["MED"], cnt["LOW"]
+            if (nh) { print "HIGH - look now"; for (i = 1; i <= nh && shown < max; i++) { print hi[i]; shown++ } }
+            if (nm && shown < max) { print "MED - look soon"; for (i = 1; i <= nm && shown < max; i++) { print me[i]; shown++ } }
+            cut = nh + nm - shown
+            if (cut > 0) printf "  ... %d more high/medium not shown\n", cut
+            if (cnt["LOW"] + cut > 0) printf "All flags, including low: %s\n", file
+        }' "$CC_FLAGS"
 }
 
 # -----------------------------------------------------------------------------
@@ -705,6 +852,7 @@ cc_finish() {
         if [ "$CC_N_FAIL" -gt 0 ]; then _cc_fin_rc=5; else _cc_fin_rc=0; fi
     fi
     cc_info "done: changed=$CC_N_DONE would-change=$CC_N_WOULD failed=$CC_N_FAIL refused=$CC_N_REFUSED findings=$CC_N_FIND exit=$_cc_fin_rc"
+    [ -n "$CC_RUN_DIR" ] && cc_info "results: $CC_RUN_DIR"
     [ "$CC_N_WOULD" -gt 0 ] && cc_info "this was a dry run - re-run with --apply to make the $CC_N_WOULD change(s)"
     [ "$CC_N_DONE" -gt 0 ] && cc_info "undo commands for this host are in $CC_UNDO"
     [ -n "$CC_LOG" ] && cc_info "log: $CC_LOG"

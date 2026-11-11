@@ -2,7 +2,7 @@
 # ID:       LB-02
 # NAME:     PowerShell library (lib.ps1)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.1.0
+# VERSION:  0.2.0
 #
 # PURPOSE
 #   The jobs every Windows script in this kit repeats, written once.  It is the
@@ -15,7 +15,9 @@
 #     5. the protected-list refusal         Test-CcProtected, Test-CcAllowed
 #     6. meaningful exit codes              Stop-Cc, Complete-Cc
 #   plus: admin check, OS facts, password generation, quarantine, SHA-256,
-#   CSV output and findings files.
+#   CSV output, findings files, and for inventory scripts: flags
+#   (Add-CcFlag), a per-run folder (Use-CcRunDir) and raw command capture
+#   (Save-CcOutput).
 #
 # HOW A SCRIPT USES IT
 #   Start every new script from templates/script-template.ps1.  A script
@@ -74,7 +76,7 @@
 #     session, because there is no file to hash.
 # =============================================================================
 
-$script:CcLibVersion = '0.1.0'
+$script:CcLibVersion = '0.2.0'
 
 # All library state lives in one hashtable so it is easy to inspect while
 # debugging: type  $Cc  at a prompt after dot-sourcing a script.
@@ -86,6 +88,7 @@ $script:Cc = @{
     Protected = $null; ProtectedRows = $null; Findings = $null
     Host = $null; Ts = $null; Kit = $null; ScriptPath = $null
     Done = 0; Would = 0; Failed = 0; Refused = 0; FindingCount = 0
+    RunDir = $null; CsvDir = $null; FlagsFile = $null; FlagCount = 0
 }
 
 # -----------------------------------------------------------------------------
@@ -106,6 +109,7 @@ function Write-CcLog {
     elseif ($Level -eq 'ERROR' -or $Level -eq 'REFUSED') { $color = 'Red' }
     elseif ($Level -eq 'DO') { $color = 'Green' }
     elseif ($Level -eq 'WOULD' -or $Level -eq 'FINDING') { $color = 'Cyan' }
+    elseif ($Level -eq 'NOTE') { $show = $false }     # log file only: detail that would flood the screen
     elseif ($script:Cc.Quiet) { $show = $false }
     if ($show) { Write-Host $line -ForegroundColor $color }
     if ($script:Cc.Log) {
@@ -621,11 +625,14 @@ function ConvertTo-CcCsvLine {
 }
 
 # New-CcCsv -Name ports -Header @('proto','port','process')
-#   Creates <out>\<ID>_<host>_<time>_<Name>.csv with that header; returns its path.
+#   Creates a CSV with that header and returns its path.  Normally
+#   <out>\<ID>_<host>_<time>_<Name>.csv; after Use-CcRunDir it is
+#   <run folder>\<Name>.csv.
 function New-CcCsv {
     param([Parameter(Mandatory=$true)][string]$Name, [Parameter(Mandatory=$true)][string[]]$Header)
     $c = $script:Cc
-    $file = Join-Path $c.Out ('{0}_{1}_{2}_{3}.csv' -f $c.Id, $c.Host, $c.Ts, $Name)
+    if ($c.CsvDir) { $file = Join-Path $c.CsvDir ($Name + '.csv') }
+    else { $file = Join-Path $c.Out ('{0}_{1}_{2}_{3}.csv' -f $c.Id, $c.Host, $c.Ts, $Name) }
     [IO.File]::WriteAllText($file, (($Header -join ',') + "`r`n"))
     return $file
 }
@@ -660,6 +667,125 @@ function Add-CcFinding {
     Add-CcCsvRow -File $c.Findings -Values @($c.Host, $c.Id, $Weakness, $FixId, $Class, $ProtectedDep, $Detail, [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"))
     $c.FindingCount++
     Write-CcLog -Level FINDING -Message "[$Class] $Weakness ($FixId): $Detail"
+}
+
+# -----------------------------------------------------------------------------
+# Inventory helpers: run folder, raw capture, flags
+# -----------------------------------------------------------------------------
+# Inventory scripts write many files.  They call Use-CcRunDir once after
+# Initialize-Cc so everything for one run sits in one folder:
+#     <out>\<ID>_<host>_<UTC time>\
+#         <section>.csv        one per section       (New-CcCsv)
+#         flags.csv            unusual items         (Add-CcFlag)
+#         raw\<name>.txt       untouched tool output (Save-CcOutput)
+# The log file and the undo log stay in <out> itself, beside every other
+# script's, so all logs for a host are in one place.
+
+# Use-CcRunDir   -> create the run folder and send CSV files there.
+function Use-CcRunDir {
+    $c = $script:Cc
+    $c.RunDir = Join-Path $c.Out ('{0}_{1}_{2}' -f $c.Id, $c.Host, $c.Ts)
+    try {
+        New-Item -ItemType Directory -Path (Join-Path $c.RunDir 'raw') -Force -ErrorAction Stop | Out-Null
+    } catch {
+        Stop-Cc -Code 3 -Message "cannot create run folder $($c.RunDir): $($_.Exception.Message)"
+    }
+    $c.CsvDir = $c.RunDir
+    Write-CcLog -Level DEBUG -Message ('run folder: ' + $c.RunDir)
+}
+
+# Save-CcOutput -Name netstat -Command { netstat -ano }
+#   Run a READ-ONLY script block and keep its untouched output as text in
+#   <run folder>\raw\<Name>.txt (or <out>\<ID>_<host>_<time>_<Name>.txt).
+#   Errors from the block are written into the file instead of stopping the
+#   script, because missing data is better than a stopped collector.
+#   This does NOT honour dry-run: never pass it a block that changes things.
+#   Returns the file path.
+function Save-CcOutput {
+    param([Parameter(Mandatory=$true)][string]$Name, [Parameter(Mandatory=$true)][scriptblock]$Command)
+    $c = $script:Cc
+    if ($c.RunDir) { $file = Join-Path (Join-Path $c.RunDir 'raw') ($Name + '.txt') }
+    else { $file = Join-Path $c.Out ('{0}_{1}_{2}_{3}.txt' -f $c.Id, $c.Host, $c.Ts, $Name) }
+    $head = '# command: ' + $Command.ToString().Trim() + "`r`n# time: " + [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") + "`r`n"
+    $text = ''
+    try {
+        $ErrorActionPreference = 'Continue'
+        $text = (& $Command 2>&1 | Out-String -Width 4096)
+    } catch {
+        $text = 'ERROR: ' + $_.Exception.Message
+    }
+    [IO.File]::WriteAllText($file, $head + $text)
+    Write-CcLog -Level DEBUG -Message ('saved output to ' + $file)
+    return $file
+}
+
+# Add-CcFlag -Severity HIGH -Section ports -Item '4444/tcp' -Detail 'nc.exe is listening'
+#   Record something unusual that an operator should look at.  Inventory
+#   scripts never act on what they see; a flag only says "look here".
+#     HIGH  likely red team activity or an open door - look now
+#     MED   risky or unusual - look soon
+#     LOW   worth knowing - kept in the file, not shown on screen
+#   Written to flags.csv (severity,section,item,detail,time) and to the log.
+#   Not printed while the script runs; Show-CcFlagReport prints the HIGH and
+#   MED ones at the end, worst first (rule 17).
+#   Never put a password or other secret in -Item or -Detail.
+function Add-CcFlag {
+    param(
+        [Parameter(Mandatory=$true)][ValidateSet('HIGH','MED','LOW')][string]$Severity,
+        [Parameter(Mandatory=$true)][string]$Section,
+        [string]$Item = '',
+        [string]$Detail = ''
+    )
+    $c = $script:Cc
+    if (-not $c.FlagsFile) {
+        if ($c.CsvDir) { $c.FlagsFile = Join-Path $c.CsvDir 'flags.csv' }
+        else { $c.FlagsFile = Join-Path $c.Out ('{0}_{1}_{2}_flags.csv' -f $c.Id, $c.Host, $c.Ts) }
+        if (-not (Test-Path -LiteralPath $c.FlagsFile)) { [IO.File]::WriteAllText($c.FlagsFile, "severity,section,item,detail,time`r`n") }
+    }
+    Add-CcCsvRow -File $c.FlagsFile -Values @($Severity, $Section, $Item, $Detail, [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"))
+    $c.FlagCount++
+    Write-CcLog -Level NOTE -Message ('FLAG {0} [{1}] {2}: {3}' -f $Severity, $Section, $Item, $Detail)
+}
+
+# Limit-CcLine text   -> the text cut to 200 characters with '...' added.
+#   Screen lines only; flags.csv keeps the full text.
+function Limit-CcLine {
+    param([string]$Text)
+    if ($Text.Length -gt 200) { return $Text.Substring(0, 197) + '...' }
+    return $Text
+}
+
+# Get-CcFlagReport [-Max 30]   -> the report as an array of text lines:
+#   counts, the HIGH flags, then the MED flags, at most -Max lines in total,
+#   then how many were cut and where flags.csv is.  LOW flags are counted but
+#   never listed.  Show-CcFlagReport prints the same lines.
+function Get-CcFlagReport {
+    param([int]$Max = 30)
+    $c = $script:Cc
+    if (-not $c.FlagsFile -or -not (Test-Path -LiteralPath $c.FlagsFile)) { return @('Flags: none') }
+    $rows = @(Import-Csv -LiteralPath $c.FlagsFile)
+    $hi = @($rows | Where-Object { $_.severity -eq 'HIGH' })
+    $me = @($rows | Where-Object { $_.severity -eq 'MED' })
+    $lo = @($rows | Where-Object { $_.severity -eq 'LOW' })
+    $out = @(('Flags: {0} high, {1} medium, {2} low' -f $hi.Count, $me.Count, $lo.Count))
+    $shown = 0
+    if ($hi.Count -gt 0) {
+        $out += 'HIGH - look now'
+        foreach ($r in $hi) { if ($shown -ge $Max) { break }; $out += (Limit-CcLine ('  [{0}] {1}: {2}' -f $r.section, $r.item, $r.detail)); $shown++ }
+    }
+    if ($me.Count -gt 0 -and $shown -lt $Max) {
+        $out += 'MED - look soon'
+        foreach ($r in $me) { if ($shown -ge $Max) { break }; $out += (Limit-CcLine ('  [{0}] {1}: {2}' -f $r.section, $r.item, $r.detail)); $shown++ }
+    }
+    $cut = $hi.Count + $me.Count - $shown
+    if ($cut -gt 0) { $out += ('  ... {0} more high/medium not shown' -f $cut) }
+    if ($lo.Count + $cut -gt 0) { $out += ('All flags, including low: ' + $c.FlagsFile) }
+    return $out
+}
+
+function Show-CcFlagReport {
+    param([int]$Max = 30)
+    foreach ($l in @(Get-CcFlagReport -Max $Max)) { Write-Host $l }
 }
 
 # -----------------------------------------------------------------------------
@@ -715,6 +841,7 @@ function Complete-Cc {
     Write-CcLog -Level INFO -Message ('done: changed={0} would-change={1} failed={2} refused={3} findings={4} exit={5}' -f $c.Done, $c.Would, $c.Failed, $c.Refused, $c.FindingCount, $ExitCode)
     if ($c.Would -gt 0) { Write-CcLog -Level INFO -Message ('this was a dry run - re-run with -Apply to make the {0} change(s)' -f $c.Would) }
     if ($c.Done -gt 0) { Write-CcLog -Level INFO -Message ('undo commands for this host are in {0}' -f $c.Undo) }
+    if ($c.RunDir) { Write-CcLog -Level INFO -Message ('results: {0}' -f $c.RunDir) }
     if ($c.Log) { Write-CcLog -Level INFO -Message ('log: {0}' -f $c.Log) }
     exit $ExitCode
 }

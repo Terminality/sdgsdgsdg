@@ -35,7 +35,10 @@ check "'==' inside [ ]; use a single '='"                           '\[[[:space:
 check "'&>' redirect; use >file 2>&1"                               '&>'
 check "'<<<' here-string; use printf | or a here-document"          '<<<'
 check "arrays are not in POSIX sh"                                  '(^|[[:space:]])[A-Za-z_][A-Za-z0-9_]*=\('
-check "\$'...' quoting is not in POSIX sh"                          "\\\$'"
+# Bash ANSI-C quoting is almost always written $'\n' or $'\t', so the
+# check looks for $' followed by a backslash.  A plain $' also ends regexes
+# such as '(a|b)$' and must not be flagged.
+check "\$'\\n'-style quoting is not in POSIX sh"                        "\\\$'\\\\"
 check "'declare/typeset' are not in POSIX sh"                       '^[[:space:]]*(declare|typeset)[[:space:]]'
 check "brace ranges {1..5} are bash only"                           '\{[0-9]+\.\.[0-9]+\}'
 check "\$RANDOM is not in POSIX sh; read /dev/urandom"              '\$\{?RANDOM'

@@ -1,12 +1,12 @@
 # Linux — hosts + services
 
-Scripts owned by this role. 0 of 24 are built.
+Scripts owned by this role. 1 of 24 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
 | ID | Script | Wave | Level | Status | File |
 | --- | --- | --- | --- | --- | --- |
-| SH-05 | Linux collector | 1 | Hard | planned |  |
+| SH-05 | Linux collector | 1 | Hard | built | [`roles/linux/SH-05-linux-collector.sh`](../../roles/linux/SH-05-linux-collector.sh) |
 | SV-05 | DNS inventory | 1 | Easy | planned |  |
 | LX-20 | Password rotation | 2 | Easy | planned |  |
 | LX-21 | Account lockdown | 2 | Easy | planned |  |
