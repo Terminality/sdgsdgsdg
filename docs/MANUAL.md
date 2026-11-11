@@ -21,6 +21,7 @@ Contents:
 11. Network scan, `roles/network/SH-03-network-scan.sh` (SH-03)
 12. Scan diff, `roles/network/SH-04-scan-diff.sh` (SH-04)
 13. Web and database inventory, `roles/applications/SV-01-web-db-inventory.sh` (SV-01)
+14. Backup, `roles/linux/LX-31-backup.sh` (LX-31)
 
 ---
 
@@ -754,3 +755,91 @@ In `<out>/SV-01_<host>_<UTC time>/`:
 | The run is slow on a large site | The content search reads every PHP file under 2 MB | `--fast`, or `--skip webroots` and run that section on its own later |
 | `sites.csv` empty, but a web server is running | `apachectl` or `nginx` missing or not in PATH | Point at the configs with `--apache-conf` / `--nginx-conf` |
 
+---
+
+## 14. Backup, `roles/linux/LX-31-backup.sh` (LX-31)
+
+Run first, before any script that changes the box. One archive of the files that decide how the box behaves, a hash of every one of them, and a snapshot of the state that is not in files. If a fix breaks a scored service, you put back the one file that broke. If the red team changes something, the hash list proves which file.
+
+### How to run it
+
+```sh
+sudo sh LX-31-backup.sh --out /root/ccdc-out
+sudo sh LX-31-backup.sh --out /root/ccdc-out --copy-to admin@10.0.0.5:/srv/backups/web01/
+sudo sh LX-31-backup.sh --out /root/ccdc-out --fast --no-webroots     # quickest; web roots and program hashes left out
+```
+
+| Option | What it does |
+| --- | --- |
+| `--add PATH` | Also back up a file or folder (repeat). Use it for scored content outside the usual places, such as `/opt/app` |
+| `--webroot DIR` | Back up DIR as a web root (repeat). The usual web roots and those named in the Apache and nginx configs are included already |
+| `--no-webroots` | Leave web roots out, when they are huge |
+| `--no-homes` | Leave out home-folder dotfiles and `.ssh` folders |
+| `--fast` | Skip hashing system programs and service units (saves 10 to 60 seconds) |
+| `--max-mb N` | Refuse to start if the backup would be bigger than N MB (default 2048) |
+| `--copy-to DEST` | Copy the archive and hash lists off the box with `scp` when done. Asks for a password if no key is set up |
+
+It changes nothing on the host, so it runs without `--apply` and needs no protected list. Run it as root; as a normal user it warns and backs up what it can read.
+
+### What goes in
+
+| Kind | Paths |
+| --- | --- |
+| config | `/etc`, `/usr/local/etc`, cron and at spools, BIND zone folders, `/root/.ssh` |
+| home | Top-level dotfiles of root and every account (shell startup files), and every `.ssh` folder |
+| webroot | `/var/www`, `/srv/www`, `/srv/http`, `/usr/share/nginx/html` and the others in the usual places, plus every `DocumentRoot`, `root` and `alias` folder in the Apache and nginx configs |
+| added | Anything given with `--add` |
+
+Paths that do not exist are skipped, so the same command works on any distribution.
+
+Not included: databases (use SV-14, which dumps them safely while they run) and whole home folders.
+
+### What it produces
+
+In `<out>/LX-31_<host>_<UTC time>/`:
+
+| File | Contents |
+| --- | --- |
+| `backup.tar.gz` | The archive. Paths inside are relative to `/` (`etc/passwd`). Mode 600 |
+| `backup.tar.gz.sha256` | Hash of the archive, to check a copy is intact |
+| `files.sha256` | SHA-256 of every file in the archive |
+| `system.sha256` | SHA-256 of programs in `/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`, `/usr/local/*bin`, `/usr/libexec` and of systemd unit files (hashed, not archived) |
+| `contents.txt` | The archive's file list |
+| `included.csv` | Every path asked for, its size, and whether it was read fully |
+| `raw/` | Firewall rules (iptables, nftables, ufw, firewalld, pf), services and timers, listening ports, packages, addresses, routes, kernel settings, mounts, accounts, root's crontab |
+| `RESTORE.txt` | The restore commands for this backup |
+| `summary.txt` | What was saved and how big |
+
+### Restoring
+
+```sh
+cd /root/ccdc-out/LX-31_web01_20261111T140000Z
+sha256sum -c backup.tar.gz.sha256                                  # the archive is intact
+tar -tzf backup.tar.gz | grep sshd_config                         # find a file
+cp -p /etc/ssh/sshd_config /etc/ssh/sshd_config.before-restore
+tar -xzf backup.tar.gz -C / etc/ssh/sshd_config                   # put ONE file back
+sha256sum -c files.sha256 2>/dev/null | grep -v ': OK$'           # what changed since the backup
+sha256sum -c system.sha256 2>/dev/null | grep -v ': OK$'          # programs replaced since the backup
+iptables-restore < raw/firewall_iptables.txt                       # firewall rules as they were
+```
+
+Unpack into a scratch folder (`-C /tmp/restore`) to compare with `diff -r` before putting anything back.
+
+### What to watch for
+
+- **The archive holds `/etc/shadow`, SSH host keys and passwords in config files.** Keep the output folder private and copy it only to the team's own machine.
+- **Copy it off the box.** A red team with root can delete a backup kept on the same host. Use `--copy-to`, or pull it from the admin workstation with the `scp` line in the summary.
+- **Never restore all of `/etc` at once.** That also rolls back every password change and fix made since. Put back only what broke.
+- **Run it again after you have hardened the box.** That backup is the known-good state, and its hash lists are the better baseline for the change watch.
+- **A changed program in `system.sha256` is serious.** Package updates also change programs, so check the package manager's log before calling it a rootkit.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `the backup would be about N MB, more than --max-mb` (exit 3) | Big web roots or a big `/etc` | Look at `included.csv` for the big paths; `--no-webroots`, or a larger `--max-mb` |
+| `not enough free space` (exit 3) | The output folder's disk is nearly full | `--out` on another disk or a USB stick |
+| `tar exited 1` or `2` warning | A file changed or could not be read while archiving | Harmless when the summary shows entries; check the log for the file names |
+| `the archive could not be read back` (exit 5) | Disk full or tar failed | Check the log; free space and run again |
+| `COPY FAILED` (exit 5) | Wrong destination, no route, or the password was refused | Test with `scp somefile DEST` by hand; the backup is still on the box |
+| `partial (some files unreadable)` in `included.csv` | Not root, or files the account cannot read | Run as root |

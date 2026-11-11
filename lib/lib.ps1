@@ -285,6 +285,7 @@ function Initialize-Cc {
 
     $mode = 'DRY RUN (nothing will change)'
     if ($c.Apply) { $mode = 'APPLY (changes will be made)' }
+    if ($c.Kind -eq 'readonly') { $mode = 'READ-ONLY (changes nothing on this host)' }
     Write-CcLog -Level INFO -Message ('start: {0} | lib {1} | host {2} | PowerShell {3} | {4}' -f $Name, $script:CcLibVersion, $c.Host, $PSVersionTable.PSVersion, $mode)
     Write-CcLog -Level DEBUG -Message ('out={0} log={1} protected={2} kit={3} kind={4}' -f $c.Out, $c.Log, $c.Protected, $c.Kit, $Kind)
     Test-CcSelf

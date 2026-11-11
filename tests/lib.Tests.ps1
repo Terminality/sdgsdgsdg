@@ -55,7 +55,7 @@ Complete-Cc
 $r = Run $s @('-Out', $out, '-Mine', 'hello')
 T-Eq $r.Code 0 'readonly dry run exits 0'
 T-Has $r.Text 'apply=False mine=hello' 'dry run is the default; own parameter still works'
-T-Has $r.Text 'DRY RUN' 'banner says DRY RUN'
+T-Has $r.Text 'READ-ONLY' "a read-only script's banner says READ-ONLY"
 $r = Run $s @('-Out', $out, '-Apply'); T-Has $r.Text 'apply=True' '-Apply is picked up from the bound parameters'
 T-True (@(Get-ChildItem -LiteralPath $out -Filter 'T-01_*.log').Count -ge 1) 'a log file was created'
 
@@ -247,7 +247,7 @@ $r = Run $v @('-Out', $out); T-Eq $r.Code 0 'CCDC_SKIP_VERIFY=1 bypasses the che
 T-Start 'the PowerShell template runs as a dry run and writes its files'
 $r = Run (Join-Path (Join-Path $root 'templates') 'script-template.ps1') @('-Out', $out, '-Example', 'hello')
 T-Eq $r.Code 0 'template exits 0'
-T-Has $r.Text 'DRY RUN' 'template runs as a dry run by default'
+T-Has $r.Text 'READ-ONLY' 'the template starts as a read-only script'
 $tcsv = @(Get-ChildItem -LiteralPath $out -Filter 'XX-00_*_example.csv')
 T-True ($tcsv.Count -ge 1 -and ([IO.File]::ReadAllText($tcsv[0].FullName)).Contains('"example option","hello"')) 'template csv has the option value'
 

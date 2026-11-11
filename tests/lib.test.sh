@@ -31,7 +31,7 @@ r=$(run "$S/init.sh" --out="$OUT" --apply 2>/dev/null); t_has "$r" "apply=1" "--
 run "$S/init.sh" --out "$OUT" --bogus >/dev/null 2>&1; t_eq "$?" 2 "unknown option exits 2"
 run "$S/init.sh" --out >/dev/null 2>&1; t_eq "$?" 2 "--out with no value exits 2"
 t_ok "a log file was created" sh -c "ls '$OUT'/T-01_*.log"
-r=$(run "$S/init.sh" --out "$OUT" 2>&1 >/dev/null); t_has "$r" "DRY RUN" "banner says DRY RUN"
+r=$(run "$S/init.sh" --out "$OUT" 2>&1 >/dev/null); t_has "$r" "READ-ONLY" "a read-only script's banner says READ-ONLY"
 
 t_start "output folder may not be inside the kit"
 mkdir -p "$T_TMP/kit"; cp "$S/init.sh" "$T_TMP/kit/s.sh"
@@ -45,7 +45,8 @@ cc_finish'
 MARK="$T_TMP/marker"; export MARK
 run "$S/chg.sh" --out "$OUT" --apply >/dev/null 2>&1; t_eq "$?" 3 "exit 3 with no protected list"
 t_fail "nothing was changed" test -e "$MARK"
-run "$S/chg.sh" --out "$OUT" >/dev/null 2>&1; t_eq "$?" 0 "dry run needs no protected list"
+r=$(run "$S/chg.sh" --out "$OUT" 2>&1 >/dev/null); t_eq "$?" 0 "dry run needs no protected list"
+t_has "$r" "DRY RUN" "a 'changes' script's banner says DRY RUN"
 t_fail "dry run changed nothing" test -e "$MARK"
 run "$S/chg.sh" --out "$OUT" --apply --no-protected >/dev/null 2>&1; t_eq "$?" 0 "--no-protected allows apply"
 t_ok "apply made the change" test -e "$MARK"

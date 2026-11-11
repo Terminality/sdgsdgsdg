@@ -327,7 +327,9 @@ cc_init() {
 
     trap 'cc_log ERROR "interrupted"; exit 130' INT TERM
 
-    if [ "$CC_APPLY" = 1 ]; then _cc_init_mode="APPLY (changes will be made)"; else _cc_init_mode="DRY RUN (nothing will change)"; fi
+    if [ "$CC_KIND" = readonly ]; then _cc_init_mode="READ-ONLY (changes nothing on this host)"
+    elif [ "$CC_APPLY" = 1 ]; then _cc_init_mode="APPLY (changes will be made)"
+    else _cc_init_mode="DRY RUN (nothing will change)"; fi
     cc_info "start: $CC_NAME | lib $CC_LIB_VERSION | host $CC_HOST | $_cc_init_mode"
     cc_debug "out=$CC_OUT log=$CC_LOG protected=${CC_PROTECTED:-none} kit=${CC_KIT:-none} kind=$CC_KIND"
     cc_verify_self
