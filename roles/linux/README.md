@@ -1,6 +1,6 @@
 # Linux — hosts + services
 
-Scripts owned by this role. 1 of 26 are built.
+Scripts owned by this role. 2 of 26 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -12,7 +12,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LX-21 | Account lockdown | 2 | Easy | planned |  |
 | LX-22 | SSH hardening and key cleanup | 2 | Medium | planned |  |
 | LX-27 | Sudo cleanup | 2 | Medium | planned |  |
-| LX-31 | Backup | 1 | Medium | planned |  |
+| LX-31 | Backup | 1 | Medium | built | [`roles/linux/LX-31-backup.sh`](../../roles/linux/LX-31-backup.sh) |
 | LX-33 | Logging and audit turn-on | 2 | Medium | planned |  |
 | LX-35 | PAM repair | 2 | Hard | planned |  |
 | LX-38 | Privilege escalation check (Linux) | 2 | Medium | planned |  |
