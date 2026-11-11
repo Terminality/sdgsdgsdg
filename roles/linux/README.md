@@ -1,6 +1,6 @@
 # Linux — hosts + services
 
-Scripts owned by this role. 2 of 26 are built.
+Scripts owned by this role. 3 of 26 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -16,7 +16,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LX-33 | Logging and audit turn-on | 2 | Medium | planned |  |
 | LX-35 | PAM repair | 2 | Hard | planned |  |
 | LX-38 | Privilege escalation check (Linux) | 2 | Medium | planned |  |
-| LX-39 | Linux safe fixes | 2 | Medium | planned |  |
+| LX-39 | Linux safe fixes | 2 | Medium | built | [`roles/linux/LX-39-safe-fixes.sh`](../../roles/linux/LX-39-safe-fixes.sh) |
 | LX-40 | Linux change watch | 2 | Medium | planned |  |
 | LX-24 | Port and service closer | 3 | Hard | planned |  |
 | LX-25 | Firewall builder | 3 | Hard | planned |  |
