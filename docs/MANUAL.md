@@ -2,7 +2,7 @@
 
 How to use what is built, what to watch for, and what to do when something goes wrong. A script gets a section here when it is built; `docs/STATUS.md` lists what exists.
 
-Built so far: the shell library (LB-01), the PowerShell library (LB-02), the network scan (SH-03), the scan diff (SH-04), the Linux collector (SH-05), the script templates, and the test runner.
+Built so far: the shell library (LB-01), the PowerShell library (LB-02), the network scan (SH-03), the scan diff (SH-04), the Linux collector (SH-05), the web and database inventory (SV-01), the script templates, and the test runner.
 
 **Read this first.** The libraries pass their tests on Linux shells and on PowerShell 7. They have not been run on Windows, FreeBSD or Solaris. Section 8 says how to check them on your own test machines.
 
@@ -20,6 +20,7 @@ Contents:
 10. Linux collector, `roles/linux/SH-05-linux-collector.sh` (SH-05)
 11. Network scan, `roles/network/SH-03-network-scan.sh` (SH-03)
 12. Scan diff, `roles/network/SH-04-scan-diff.sh` (SH-04)
+13. Web and database inventory, `roles/applications/SV-01-web-db-inventory.sh` (SV-01)
 
 ---
 
@@ -680,4 +681,76 @@ Each change gets one flag: a backdoor port that is HIGH is not also listed as ME
 | Everything in a section shows as added | The earlier run had that section empty (e.g. not root, or a different profile) | Rerun both the same way; check the warning about root |
 | Lots of port changes between scans | Different targets or engines (the fallbacks check 53 ports, nmap 1000) | Scan the same targets with the same engine and profile |
 | A changed item looks wrong | The comparison is by the columns in the table above | Look up the key in both runs' CSV files; `changes.csv` has the old and new values |
+
+---
+
+## 13. Web and database inventory, `roles/applications/SV-01-web-db-inventory.sh` (SV-01)
+
+Shows what web sites and databases are on a Linux or Unix host and what is wrong with them. Run it on every box that serves a web site or holds a database, right after the Linux collector. It only reads; it never records a password.
+
+### How to run it
+
+```sh
+sudo sh SV-01-web-db-inventory.sh --out /root/ccdc-out
+sudo sh SV-01-web-db-inventory.sh --out /root/ccdc-out --fast                 # skip the web shell content search
+sudo sh SV-01-web-db-inventory.sh --webroot /opt/app/public                   # a web root the configs don't show
+sudo sh SV-01-web-db-inventory.sh --only mysql --mysql-cnf /root/my.cnf       # when root can't log in through the socket
+```
+
+| Option | What it does |
+| --- | --- |
+| `--only` / `--skip` | Run or leave out sections: `servers sites webroots php apps mysql postgres datastores` |
+| `--fast` | Skip reading file contents (the web shell and phpinfo search). Names, owners and settings are still checked |
+| `--webroot DIR` | Also scan this folder as a web root. Repeat for more |
+| `--apache-conf FILE` / `--nginx-conf FILE` | Read these config files directly instead of asking the server which files it uses. For when `apachectl` or `nginx` is missing, broken or replaced |
+| `--mysql-cnf FILE` | A MySQL client file with a user and password (a `[client]` section). Make it mode 600 and delete it after |
+
+Run it as root. As a normal user it still runs, but it cannot read most configs, log in to PostgreSQL, or see every file; the section table marks those sections `partial`.
+
+**How it logs in to the databases.** MySQL/MariaDB: `--mysql-cnf` if given, then `root` through the local socket (normal on Debian and Ubuntu), then the Debian maintenance account in `/etc/mysql/debian.cnf`, then the client's own defaults. PostgreSQL: as the `postgres` account through the local socket. Queries are SELECT and SHOW only.
+
+### What it produces
+
+In `<out>/SV-01_<host>_<UTC time>/`:
+
+| File | Contents |
+| --- | --- |
+| `summary.txt` | Web servers, sites, web roots, apps, databases; a section table; HIGH and MED flags |
+| `servers.csv`, `fpm_pools.csv` | Each web server and PHP-FPM pool: version, running or not, the account it runs as |
+| `sites.csv` | Each Apache virtual host and nginx server block: name, listen address, TLS, web root, config file and line |
+| `webroots.csv` | Each web root: owner, mode, file counts, files owned by the web account, world-writable files |
+| `files.csv` | Every file that should not be in a web root, with its kind (`webshell`, `upload_code`, `dump`, `env`, `vcs`, `phpinfo`, `config_readable`, `backup`) |
+| `php.csv` | The risky settings of each `php.ini`, after its `conf.d` overrides |
+| `apps.csv` | Each web app found: version, folder, config file, database name, user and host (never the password) |
+| `db_users.csv` | MySQL and PostgreSQL accounts: how they log in, empty password, superuser, file access, grant rights |
+| `db_settings.csv`, `db_databases.csv`, `db_objects.csv` | Server settings; databases with size; triggers, events, routines and user-defined functions |
+| `pg_hba.csv` | PostgreSQL login rules |
+| `datastores.csv` | Redis, memcached, MongoDB, Elasticsearch and CouchDB: where they listen and whether they answer without a password |
+
+### What it flags
+
+| Severity | When |
+| --- | --- |
+| HIGH | A file that looks like a web shell; a program file in an upload or media folder; a database dump or `.env` inside a web root; a web server or PHP-FPM pool running entirely as root; `allow_url_include` on; a database account with no password; MySQL root or an admin account allowed from other hosts; a user-defined function (the `lib_mysqludf_sys` backdoor); a PostgreSQL `trust` rule for network logins; logging in to MySQL with no name or password; a Redis or similar store open to the network without a password |
+| MED | Directory listing on; a web root owned by the web account; world-writable files in a web root; `.git` folders, backups and phpinfo pages in a web root; app configs every local account can read; MySQL `secure_file_priv` empty; accounts with the FILE privilege; anonymous MySQL accounts; triggers and scheduled events; extra PostgreSQL superusers; `trust` for local logins; a database or data store listening on a network address |
+| LOW | Server version shown in headers; PHP `display_errors`, `expose_php` on, `disable_functions` empty; MySQL `local_infile` on; accounts allowed from any address; PostgreSQL `password` (clear text) logins |
+
+### What to watch for
+
+- **Read before you delete.** A web shell flag means the file matched a known pattern. Read it, copy it for the incident report, then quarantine it. A security plugin's signature list can also match.
+- **"Owned by the web account" is common and still worth fixing.** Many WordPress installs are owned by `www-data` so plugins can update. It is also how one flaw becomes a defaced site. Changing owners can break uploads and updates, so it is a fix for later, not the first 15 minutes.
+- **Database accounts the apps use are listed in `apps.csv`.** Before changing a database password, find which app uses that account and update its config at the same time, or the site goes down.
+- **Triggers, events and user-defined functions are rare in competition apps.** One that the app did not create is a strong sign of red team persistence.
+- **Some checks need tools.** Without a MySQL client or `psql` the database accounts are not listed; without `redis-cli` or `curl` the "answers without a password" column says `not checked`.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `MySQL/MariaDB: found, but could not log in` | root needs a password and there is no `debian.cnf` | Give `--mysql-cnf` with a working user and password |
+| `accounts not readable with default client settings` | Logged in with an account that cannot read `mysql.user`, usually as a normal user | Run as root |
+| `PostgreSQL: found, but could not log in` | Not root, or the `postgres` account cannot log in through the socket | Run as root; check `pg_hba.conf` has a `local ... peer` line for postgres |
+| A site is missing from `sites.csv` | Its config is in a file Apache or nginx loads in an unusual way | Compare with `raw/apache_S.txt` or `raw/nginx_T.txt`; add its folder with `--webroot` |
+| The run is slow on a large site | The content search reads every PHP file under 2 MB | `--fast`, or `--skip webroots` and run that section on its own later |
+| `sites.csv` empty, but a web server is running | `apachectl` or `nginx` missing or not in PATH | Point at the configs with `--apache-conf` / `--nginx-conf` |
 
