@@ -1,0 +1,18 @@
+host,ip,os,role,connect,port,user,scored_services,notes
+# The host list: one row per machine the team defends.
+# AU-01 (host list builder) will create and maintain this file once it exists;
+# until then, fill it in by hand from the scan and the team packet.
+#
+# host             short name, no domain
+# ip               address the admin workstation reaches it on
+# os               linux | windows | bsd | solaris | network
+# role             what the box is for, in a few words
+# connect          ssh | winrm | none  (how fan-out reaches it)
+# port             port for that connection
+# user             account fan-out logs in as (never put a password here)
+# scored_services  semicolon-separated type:port, e.g. http:80;dns:53
+# notes            anything the team should know
+web01,10.0.2.5,windows,IIS employee portal,winrm,5985,ccdc-automation,http:80,
+dc1,10.0.2.2,windows,domain controller,winrm,5985,ccdc-automation,dns:53;ldap:389,
+mail01,10.0.2.20,linux,mail and webmail,ssh,22,ccdc-automation,smtp:25;imap:143;http:80,
+fw01,10.0.2.1,network,perimeter firewall,ssh,22,admin,,Palo Alto

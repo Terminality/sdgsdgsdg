@@ -1,0 +1,7 @@
+# Shell scripts must keep Unix line endings or they fail with
+# "bad interpreter" / "$'\r': command not found" on the target host.
+*.sh    text eol=lf
+*.csv   text eol=lf
+*.md    text eol=lf
+# PowerShell runs with either ending; CRLF opens cleanly in Notepad on old Windows.
+*.ps1   text eol=crlf
