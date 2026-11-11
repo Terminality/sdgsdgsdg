@@ -22,6 +22,7 @@ Contents:
 12. Scan diff, `roles/network/SH-04-scan-diff.sh` (SH-04)
 13. Web and database inventory, `roles/applications/SV-01-web-db-inventory.sh` (SV-01)
 14. Backup, `roles/linux/LX-31-backup.sh` (LX-31)
+15. Linux safe fixes, `roles/linux/LX-39-safe-fixes.sh` (LX-39)
 
 ---
 
@@ -843,3 +844,89 @@ Unpack into a scratch folder (`-C /tmp/restore`) to compare with `diff -r` befor
 | `the archive could not be read back` (exit 5) | Disk full or tar failed | Check the log; free space and run again |
 | `COPY FAILED` (exit 5) | Wrong destination, no route, or the password was refused | Test with `scp somefile DEST` by hand; the backup is still on the box |
 | `partial (some files unreadable)` in `included.csv` | Not root, or files the account cannot read | Run as root |
+
+---
+
+## 15. Linux safe fixes, `roles/linux/LX-39-safe-fixes.sh` (LX-39)
+
+Hardening that cannot break a scored service, so it can run on every Linux box in the first minutes without study. It only removes risky settings and permissions; it never changes an owner, never deletes a file, and never touches a service that serves anything.
+
+Run the backup (LX-31) first.
+
+### How to run it
+
+```sh
+sudo sh LX-39-safe-fixes.sh --out /root/ccdc-out                    # dry run: shows every change
+sudo sh LX-39-safe-fixes.sh --out /root/ccdc-out --apply            # make them
+sudo sh LX-39-safe-fixes.sh --out /root/ccdc-out --apply --keep-ipv6
+sudo sh LX-39-safe-fixes.sh --out /root/ccdc-out --apply --no-forwarding   # NOT on routers, firewalls or Docker hosts
+```
+
+| Option | What it does |
+| --- | --- |
+| `--only` / `--skip` | Run or leave out fixes by name (see `--list`) |
+| `--keep-ipv6` | Leave IPv6 on |
+| `--no-forwarding` | Also turn IP forwarding off. Routers, firewalls and Docker hosts need it on |
+| `--root DIR` | Treat DIR as `/` for the file fixes, for fixing a mounted disk image. Kernel settings and services still act on the running system |
+
+`--apply` needs a protected list (`--protected FILE`) or `--no-protected`, like every script that changes things. A path on the protected list is skipped.
+
+### The fixes
+
+| Fix | What it does | Why it is safe |
+| --- | --- | --- |
+| `sysctl` | SYN cookies on; full address-space randomization; source-routed packets and ICMP redirects refused and not sent; odd-source packets logged; symlink and hardlink protection; kernel pointers and kernel log hidden from normal accounts | None of these change what a service listens on or answers |
+| `ipv6` | IPv6 off on every interface except loopback, with the kernel setting `disable_ipv6`, written for boot too | Services listening on `[::]` keep working for IPv4. NOT the `ipv6.disable=1` boot option, which stops such services from starting at all. Services bound to one specific IPv6 address are listed first under "check by hand" |
+| `forwarding` | IP forwarding off. Only with `--no-forwarding` | Opt-in because routers, firewalls and Docker need forwarding |
+| `coredumps` | No core dumps from setuid programs; core size limit 0 for every account | A core dump of a login program can hold password hashes |
+| `perms` | Removes group and other write (and other read on secrets) from `/etc/passwd`, `/etc/group`, `/etc/shadow`, `/etc/gshadow`, sudo files, SSH host keys and `sshd_config`, `/root`, cron files, shell startup files, `ld.so` config, PAM and systemd unit folders; removes world-write from anything in `/etc`, program folders and home folders | Only bits are removed. Owners and groups stay, so `shadow` stays readable by the `shadow` group on Debian and by `ssh_keys` on Red Hat |
+| `tmp` | Sticky bit on `/tmp`, `/var/tmp`, `/dev/shm` | Normal on every distribution |
+| `logging` | Starts and enables rsyslog, syslog-ng and auditd if they are installed but stopped | Logging is never scored against you |
+| `preload` | If `/etc/ld.so.preload` loads a library no package owns, the file is moved to quarantine. `LD_PRELOAD` and `LD_LIBRARY_PATH` lines in `/etc/environment` are commented out | That file is the classic user-mode rootkit hook. A library owned by a package (a logger such as snoopy) is reported and left alone |
+| `trust` | `.rhosts`, `.shosts`, `/etc/hosts.equiv`, `/etc/shosts.equiv` moved to quarantine | They let other machines log in with no password |
+| `hosts` | Reports `/etc/hosts` lines that pin a name to an address. Never changes the file | Scoring can depend on `/etc/hosts`; a red team uses it to redirect updates and logins |
+
+IP forwarding left on is reported under "check by hand" even without `--no-forwarding`.
+
+### What it produces
+
+In `<out>/LX-39_<host>_<UTC time>/`:
+
+| File | Contents |
+| --- | --- |
+| `summary.txt` | Counts per fix, every change (or would-be change), and the items to check by hand |
+| `fixes.csv` | `fix,item,before,after,status` for every item looked at |
+
+Every change adds an undo command to `<out>/undo-<host>.log`. Changed files are copied to `<out>/backup/<host>/` first; quarantined files go to `<out>/quarantine/<host>/`.
+
+Kernel settings are written to `/etc/sysctl.d/99-zz-ccdc-safe.conf`, a name read last at boot, so they win over `/etc/sysctl.conf`.
+
+### Undo
+
+Run the undo log's commands from the bottom up:
+
+```sh
+awk -F'\t' '{ l[NR] = $4 } END { for (i = NR; i >= 1; i--) print l[i] }' /root/ccdc-out/undo-web01.log > /tmp/undo.sh
+less /tmp/undo.sh        # read it first: it holds every change made by every script on this host
+sh /tmp/undo.sh
+```
+
+To undo only this script, keep the lines whose second field is `LX-39`.
+
+### What to watch for
+
+- **Dry run first on one box.** The summary shows exactly what will change.
+- **A container may refuse some kernel settings.** Those show as `failed` in `fixes.csv`; everything else still applies.
+- **A quarantined `ld.so.preload` is evidence.** Hash it and keep it for the incident report. After moving it, run the collector again: a rootkit that hid files stops hiding them.
+- **The boot file can be beaten by a file named later** (for example `99-zzz.conf`). The change watch reports new files in `/etc/sysctl.d`.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `no protected list ... refusing` (exit 3) | `--apply` without a protected list | Build one, pass `--protected FILE`, or pass `--no-protected` |
+| `this script must be run as root` (exit 3) | `--apply` as a normal user | `sudo` |
+| Kernel settings `failed` | Read-only `/proc/sys` (containers) | Nothing to do on that box; the host kernel decides |
+| `skipped (not on this kernel)` | Old or trimmed kernel without that setting | Harmless |
+| A service stopped answering on IPv6 | It was bound to a specific IPv6 address (listed under "check by hand") | Undo the two `disable_ipv6` lines, or bind the service to its IPv4 address |
+| `logging` shows nothing | No rsyslog, syslog-ng or auditd installed | Install one if logs matter for the box |
