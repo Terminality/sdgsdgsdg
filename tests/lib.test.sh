@@ -167,6 +167,42 @@ t_has "$r" "first=sh" "cc_first skips missing tools"; t_has "$r" "none=ok" "cc_f
 t_has "$r" "sum=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" "sha256 of abc is correct"
 t_eq "$(printf '%s\n' "$r" | sed -n 's/^q=//p')" "'a'\\''b c'" "shell quoting"
 
+t_start "run folder, raw capture and flags"
+mk flags 'while [ $# -gt 0 ]; do cc_common_flag "$@" && { shift "$CC_SHIFT"; continue; }; shift; done
+cc_init T-10 "flags test" readonly
+cc_use_run_dir
+f=$(cc_csv_new things "a,b")
+cc_save uname uname -s
+cc_flag LOW users "bob" "low one"
+cc_flag HIGH ports "4444/tcp" "nc listening, \"quoted\", with comma"
+( cc_flag MED ssh "root" "flag written from a subshell" )
+cc_flag HIGH files "/tmp/x" "second high"
+echo "run=$CC_RUN_DIR"; echo "csv=$f"; echo "raw=$CC_LAST_SAVE"
+cc_flag_report 2
+cc_flag_report 30 >"$CC_RUN_DIR/report30.txt"
+cc_finish'
+r=$(run "$S/flags.sh" --out "$OUT" 2>/dev/null)
+RUN=$(printf '%s\n' "$r" | sed -n 's/^run=//p')
+t_eq "$(printf '%s\n' "$r" | sed -n 's/^csv=//p')" "$RUN/things.csv" "CSV goes into the run folder"
+t_ok "raw output saved" grep -q "$(uname -s)" "$RUN/raw/uname.txt"
+t_has "$(sed -n 1p "$RUN/raw/uname.txt")" "# command: uname -s" "raw file records the command"
+t_eq "$(wc -l <"$RUN/flags.csv" | tr -d ' ')" 5 "four flags plus header, including the one from a subshell"
+t_has "$r" "Flags: 2 high, 1 medium, 1 low" "report counts from the file"
+t_has "$r" "[ports] 4444/tcp: nc listening, \"quoted\", with comma" "report keeps quotes and commas intact"
+t_hasnt "$r" "flag written from a subshell" "MAX=2 cuts the list after two lines"
+t_has "$r" "1 more high/medium not shown" "report says how many were cut"
+t_has "$(cat "$RUN/report30.txt")" "MED - look soon" "with room, MED lines are shown"
+t_hasnt "$(cat "$RUN/report30.txt")" "low one" "LOW lines are never printed"
+t_ok "summary line in the log names the run folder" grep -q "results: $RUN" "$OUT/$(basename "$RUN").log"
+mk noflags 'while [ $# -gt 0 ]; do cc_common_flag "$@" && { shift "$CC_SHIFT"; continue; }; shift; done
+cc_init T-11 "no flags" readonly; cc_flag_report; cc_finish'
+r=$(run "$S/noflags.sh" --out "$OUT" 2>/dev/null); t_has "$r" "Flags: none" "no flags reported cleanly"
+mk badsev 'while [ $# -gt 0 ]; do cc_common_flag "$@" && { shift "$CC_SHIFT"; continue; }; shift; done
+cc_init T-12 "bad sev" readonly; cc_flag URGENT x y z'
+run "$S/badsev.sh" --out "$OUT" >/dev/null 2>&1; t_eq "$?" 1 "bad severity is rejected"
+mk csvp 'printf "%s\n" "\"a\",\"b,c\",\"d \"\"q\"\"\",\"\"" | awk "$CC_AWK_CSV"'"'"'{ n = csvsplit($0, f); print n "|" f[1] "|" f[2] "|" f[3] "|" f[4] "|" }'"'"
+t_eq "$(run "$S/csvp.sh")" '4|a|b,c|d "q"||' "CSV parser handles commas, doubled quotes and empty fields"
+
 t_start "kit integrity check"
 unset CCDC_SKIP_VERIFY
 mkdir -p "$T_TMP/dist"; cp "$S/init.sh" "$T_TMP/dist/v.sh"

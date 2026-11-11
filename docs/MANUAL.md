@@ -2,7 +2,7 @@
 
 How to use what is built, what to watch for, and what to do when something goes wrong. A script gets a section here when it is built; `docs/STATUS.md` lists what exists.
 
-Built so far: the shell library (LB-01), the PowerShell library (LB-02), the script templates, and the test runner.
+Built so far: the shell library (LB-01), the PowerShell library (LB-02), the Linux collector (SH-05), the script templates, and the test runner.
 
 **Read this first.** The libraries pass their tests on Linux shells and on PowerShell 7. They have not been run on Windows, FreeBSD or Solaris. Section 8 says how to check them on your own test machines.
 
@@ -17,6 +17,7 @@ Contents:
 7. Script templates
 8. Tests
 9. Problems that apply to everything
+10. Linux collector, `roles/linux/SH-05-linux-collector.sh` (SH-05)
 
 ---
 
@@ -206,6 +207,11 @@ cc_finish
 | `cc_quarantine PATH` | Move a file to the quarantine folder, log its hash, record the undo |
 | `cc_csv_new NAME HEADER` / `cc_csv_row FILE FIELD...` | Create a CSV in the output folder; append a quoted row |
 | `cc_finding WEAKNESS FIX_ID CLASS DETAIL [DEP]` | Write a finding. `CLASS` is `safe`, `service` or `protected` |
+| `cc_use_run_dir` | Inventory scripts: put this run's CSV files in one folder, `<out>/<ID>_<host>_<time>/` |
+| `cc_save NAME CMD...` | Keep a read-only command's untouched output in `raw/NAME.txt` |
+| `cc_flag SEV SECTION ITEM DETAIL` | Record something unusual. `SEV` is `HIGH`, `MED` or `LOW`. Goes to `flags.csv` and the log, not the screen |
+| `cc_flag_report [MAX]` | Print HIGH then MED flags, at most MAX lines (default 30), then counts. LOW flags are counted, never listed |
+| `CC_AWK_CSV` | An awk `csvsplit()` function for reading the kit's CSV files correctly |
 | `cc_shquote STR` / `cc_abspath PATH` | Quote for a shell; make a path absolute |
 | `cc_verify_self` | Check the running script against `MANIFEST.sha256` (called by `cc_init`) |
 | `cc_finish [CODE]` | Print the summary and exit |
@@ -296,6 +302,10 @@ Library state is in one hashtable, `$Cc`: `$Cc.Apply`, `$Cc.Out`, `$Cc.Log`, `$C
 | `Move-CcQuarantine -Path` | Move a file to the quarantine folder, log its hash, record the undo |
 | `New-CcCsv -Name -Header` / `Add-CcCsvRow -File -Values` | Create a CSV in the output folder; append a quoted row |
 | `Add-CcFinding -Weakness -FixId -Class -Detail [-ProtectedDep]` | Write a finding |
+| `Use-CcRunDir` | Inventory scripts: put this run's CSV files in one folder |
+| `Save-CcOutput -Name -Command {}` | Keep a read-only block's untouched output in `raw\<Name>.txt`; an error is recorded in the file instead of stopping the script |
+| `Add-CcFlag -Severity -Section -Item -Detail` | Record something unusual (`HIGH`, `MED`, `LOW`) |
+| `Show-CcFlagReport [-Max]` / `Get-CcFlagReport` | Print, or return, the HIGH then MED flags and the counts |
 | `ConvertTo-CcQuoted` / `Resolve-CcPath` | Quote for PowerShell; make a path absolute |
 | `Test-CcSelf` | Check the running script against `MANIFEST.sha256` (called by `Initialize-Cc`) |
 | `Complete-Cc [-ExitCode]` | Print the summary and exit |
@@ -365,6 +375,7 @@ It runs, in order: the POSIX lint, the PowerShell 2.0 lint, a syntax check of ev
 | `tests/lib.test.sh` | The shell library: options, dry run, protected list, backup and undo, quarantine, passwords, CSV, findings, kit check |
 | `tests/lib.Tests.ps1` | The PowerShell library: the same list, plus program exit codes and `-Secret` |
 | `tests/templates.test.sh` | The shell template runs and writes its files |
+| `tests/sh05.test.sh` | The Linux collector: options, every profile writes its files, nothing on the host changes, and (as root) a planted SUID binary is flagged HIGH |
 | `tests/helper.sh` | The small test framework the `.test.sh` files use |
 
 **Checking the Windows library on a real machine.** Copy the repository to a Windows test VM and run:
@@ -401,3 +412,101 @@ Do this on the oldest and the newest Windows you expect to defend. It ends with 
 | The clock on a host is wrong | Log times come from the host's clock, in UTC | Note the offset. The time sync check (AU-18) will report this once built |
 | Git shows every line of a `.sh` file as changed | Line endings were converted | `.gitattributes` forces LF for `.sh`. Run `git add --renormalize .` |
 | A script printed a password | A script passed a secret to `cc_log`, `cc_run` or a description | Treat that password as exposed and rotate it. Fix the script to use `cc_run_quiet` / `-Secret` |
+
+---
+
+## 10. Linux collector, `roles/linux/SH-05-linux-collector.sh` (SH-05)
+
+Read-only inventory of one Linux or Unix host. Run it first on every Linux box: it shows who can log in, what is listening, what starts on boot or on a schedule, who can become root, what is running, and the usual hiding places. It changes nothing.
+
+### How to run it
+
+```sh
+sudo sh SH-05-linux-collector.sh --out /root/ccdc-out              # full, about a minute
+sudo sh SH-05-linux-collector.sh --out /root/ccdc-out --profile card   # quick look, seconds
+sudo sh SH-05-linux-collector.sh --out /root/ccdc-out --profile triage # full plus a copy of the logs
+sudo sh SH-05-linux-collector.sh --out /root/ccdc-out --only ports,processes
+```
+
+Run it as root. As a normal user it still works, but the summary marks several sections `partial`.
+
+| Option | What it does |
+| --- | --- |
+| `--profile card` | system, users, ports, services, autostart, ssh, sudo. Use it in the first minutes |
+| `--profile full` (default) | card plus processes, connections, sessions, packages, files, firewall, pam, mac, trust, creds, containers, modules |
+| `--profile triage` | full plus copying the logs. Use it when you think the box is compromised, before anything else changes |
+| `--only a,b` / `--skip a,b` | Pick sections. `--list` shows the names |
+| `--fast` | Skip the two slow disk searches (files, creds) |
+| `--max-flags N` | How many HIGH/MED flags to print (default 30) |
+
+### What it produces
+
+Everything for one run is in `<out>/SH-05_<host>_<UTC time>/`:
+
+| File | Contents |
+| --- | --- |
+| `summary.txt` | The page printed on screen: key facts, a row per section, the HIGH and MED flags |
+| `flags.csv` | Every flag, including LOW: severity, section, item, detail, time |
+| `facts.csv`, `addresses.csv` | Host name, OS, kernel, init system, uptime, IPv6 on or off, addresses, DNS |
+| `users.csv` | Every account: UID, shell, whether it can log in, password state (`set`, `EMPTY`, `locked`; never the hash), groups |
+| `ports.csv` | Listening ports: protocol, address, port, `any` or `local`, pid, process, user, program file |
+| `services.csv` | Services with enabled and running state |
+| `autostart.csv` | cron, at, timers, rc.local, and suspicious lines from startup files, motd scripts and udev rules |
+| `ssh_config.csv`, `ssh_keys.csv` | Effective sshd settings; every authorized key with its account, file, fingerprint and options |
+| `sudo.csv` | sudoers, doas and polkit rules |
+| `processes.csv`, `connections.csv`, `sessions.csv` | Every process with its program file; live connections; who is logged in |
+| `packages.csv` | Installed packages and versions |
+| `suid.csv`, `capabilities.csv`, `world_writable.csv`, `immutable.csv` | Risky file permissions |
+| `firewall.csv`, `pam.csv`, `mac.csv`, `trust.csv`, `modules.csv`, `containers.csv` | One per section |
+| `creds.csv`, `private_keys.csv`, `history.csv` | Files holding password-like settings (file, line and setting name only), private key files, shell history sizes |
+| `raw/*.txt` | Untouched tool output: `iptables-save`, `sshd -T`, `ss`, `last` and others |
+| `logs/` | Triage only: copies of auth, syslog, web and audit logs, with SHA-256 in `logs.csv` |
+
+### Reading the summary
+
+The screen shows one page. The section table tells you where to look:
+
+```
+section        rows  high   med   low  note
+users            31     1     0     2
+ports             9     1     1     0  partial: process shown only for your own sockets
+```
+
+- **rows** is how much was collected.
+- **high / med / low** are the flags from that section.
+- **note** says when a section is incomplete and why.
+
+Only HIGH and MED flags are printed. LOW flags are in `flags.csv`.
+
+| Severity | Meaning | Examples |
+| --- | --- | --- |
+| HIGH | Likely red team activity or an open door. Look now | Second UID-0 account, empty password, shell listening on a port, process running from a deleted file, reverse-shell cron job, SUID `find`, keys on a service account, locked `/etc/passwd`, changed `pam_unix.so` |
+| MED | Risky or unusual. Look soon | Passwordless sudo, root accepts SSH keys, backdoor-style port number, no host firewall, IPv6 unfiltered |
+| LOW | Worth knowing. Not shown | Extra hosts-file entries, `nullok`, locally created service files |
+
+### What to watch for
+
+- **A flag is a pointer, not a verdict.** Some flags are legitimate on your box. In testing, this sandbox's own launcher was flagged HIGH because it decodes a base64 payload, which is exactly what a malicious one does. Look, then decide.
+- **Run it again after you change things.** Two runs compared side by side show what changed. The scan diff and change watch will automate this later.
+- **It sees what the operating system reports.** A kernel rootkit can hide processes, files and ports from every tool it uses.
+- **Accounts come from `/etc/passwd`.** LDAP or FreeIPA users are not listed.
+- **Passwords are never recorded.** `users.csv` shows only whether a password is set; `creds.csv` shows only the file, line and setting name.
+- **Triage copies logs into the output folder.** Copy that folder off the host; a red team that owns the box can delete it.
+- **Time.** About a minute for `full` on a normal server. The files and creds sections walk the disk and take most of that. Use `--fast` or `card` under time pressure.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Summary says `root: NO - partial` | Not run as root | `sudo sh ...`, and pass `--out` because `~` changes under sudo |
+| `ports` note: `process unknown` | `/proc/<pid>/fd` is unreadable, even for root, in some containers | Expected there; the port list itself is complete |
+| `ports` note: `no ss, netstat, sockstat or /proc/net` | Not Linux and no tools (for example Solaris) | Read `raw/netstat_an.txt` |
+| `Addresses: none found` | No `ip` or `ifconfig`, and no `/proc/net/fib_trie` | Run `ip addr` or `ifconfig` by hand if either exists |
+| `ssh` note: `no sshd configuration found` | SSH server not installed | Nothing to fix |
+| A sudo, cron or ssh setting you know is there is missing | Not root, so the file was unreadable | Rerun as root; check the section note |
+| `docker ... 'docker ps' failed` | Docker daemon stopped, or the user is not in the docker group | Rerun as root; `systemctl status docker` |
+| `firewall` says NOT-filtered but you set rules | Rules exist in a tool the collector does not read, or need root | Check `raw/` for the tool's output; run as root |
+| A flag looks wrong | The check is too broad for your box | Check `raw/` to see what the tool printed. Report the flag line so the check can be tightened |
+| It runs for many minutes | A very large disk or network home folders | `--fast`, or `--skip files,creds` |
+| `cannot find lib/lib.sh` (exit 3) | The script was copied without the `lib/` folder | Copy the whole kit, or use the built single-file version once the build step exists |
+| `$'\r': command not found` | The file got Windows line endings in transit | `tr -d '\r' < SH-05-linux-collector.sh > fixed.sh` |

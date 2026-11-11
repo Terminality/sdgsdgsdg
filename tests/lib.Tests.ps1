@@ -197,6 +197,39 @@ T-Eq $fl[0] 'host,script,weakness,fix_id,class,protected_dep,detail,time' 'findi
 T-Has $fl[2] '"FIX-SMB1","service","port 445"' 'finding row has fix id, class and dependency'
 T-Has $r.Text 'findings=2' 'findings counted'
 
+T-Start 'run folder, raw capture and flags'
+$s = Mk 'flags' @'
+Initialize-Cc -Id 'T-10' -Name 'flags test' -Kind readonly -Bound $PSBoundParameters
+Use-CcRunDir
+$f = New-CcCsv -Name things -Header @('a','b')
+$raw = Save-CcOutput -Name ver -Command { $PSVersionTable.PSVersion.ToString() }
+$bad = Save-CcOutput -Name broken -Command { Get-Item -LiteralPath 'Z:\no\such\path\here' }
+Add-CcFlag -Severity LOW -Section users -Item bob -Detail 'low one'
+Add-CcFlag -Severity HIGH -Section ports -Item '4444/tcp' -Detail 'nc listening, "quoted", with comma'
+Add-CcFlag -Severity MED -Section ssh -Item root -Detail 'medium one'
+Add-CcFlag -Severity HIGH -Section files -Item 'C:\tmp\x' -Detail 'second high'
+Write-Host ('run=' + $Cc.RunDir); Write-Host ('csv=' + $f); Write-Host ('raw=' + $raw); Write-Host ('bad=' + $bad)
+Show-CcFlagReport -Max 2
+[IO.File]::WriteAllText((Join-Path $Cc.RunDir 'report30.txt'), ((Get-CcFlagReport -Max 30) -join "`n"))
+Complete-Cc
+'@
+$r = Run $s @('-Out', $out)
+$lines = $r.Text -split "`r?`n"
+$runDir = ($lines | Where-Object { $_ -like 'run=*' }) -replace '^run=', ''
+T-Eq (($lines | Where-Object { $_ -like 'csv=*' }) -replace '^csv=', '') (Join-Path $runDir 'things.csv') 'CSV goes into the run folder'
+T-Has ([IO.File]::ReadAllText((Join-Path (Join-Path $runDir 'raw') 'ver.txt'))) $PSVersionTable.PSVersion.ToString() 'raw output saved'
+T-Has ([IO.File]::ReadAllText((Join-Path (Join-Path $runDir 'raw') 'broken.txt'))) 'Cannot find' 'a failing block is recorded, not fatal'
+T-Eq $r.Code 0 'script still exits 0 after a failing capture'
+T-Eq (@(Get-Content -LiteralPath (Join-Path $runDir 'flags.csv')).Count) 5 'four flags plus header'
+T-Has $r.Text 'Flags: 2 high, 1 medium, 1 low' 'report counts'
+T-Has $r.Text '[ports] 4444/tcp: nc listening, "quoted", with comma' 'report keeps quotes and commas intact'
+T-HasNot $r.Text 'medium one' 'Max 2 cuts the list'
+T-Has $r.Text '1 more high/medium not shown' 'report says how many were cut'
+$rep30 = [IO.File]::ReadAllText((Join-Path $runDir 'report30.txt'))
+T-Has $rep30 'MED - look soon' 'with room, MED lines are shown'
+T-HasNot $rep30 'low one' 'LOW lines are never printed'
+T-HasNot $r.Text 'FLAG HIGH' 'flags are not printed while the script runs'
+
 T-Start 'kit integrity check'
 $env:CCDC_SKIP_VERIFY = $null
 $dist = Join-Path $tmp 'dist'; New-Item -ItemType Directory -Path $dist -Force | Out-Null
