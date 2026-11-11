@@ -6,9 +6,12 @@ Blue-team scripts for the Collegiate Cyber Defense Competition, written with Cla
 
 | Script | What it does | How to run it |
 | --- | --- | --- |
+| Network scan (SH-03) | Live hosts, open ports and service versions. With the host list it checks every scored service is reachable and flags hosts that should not be there. Uses nmap, or python, bash or nc when nmap is missing | `sh roles/network/SH-03-network-scan.sh --target 10.0.2.0/24 --hosts config/hosts.csv --out ~/ccdc-out` |
+| Scan diff (SH-04) | What changed between two network scans, or two collector runs of one host: new accounts, SSH keys, cron entries, sudo rules, SUID files and listening ports, with the additions flagged first | `sh roles/network/SH-04-scan-diff.sh --type sh05 --out /root/ccdc-out` |
 | Linux collector (SH-05) | Read-only inventory of a Linux or Unix host: accounts, listening ports and their programs, services, cron and other autostart, SSH keys, sudo, processes, risky files, firewall, PAM, credentials files. One-page summary with the problems worst first | `sudo sh roles/linux/SH-05-linux-collector.sh --out /root/ccdc-out` |
+| Web and database inventory (SV-01) | Web servers, sites and web roots; web shells, database dumps, .env and .git files in web roots; app versions; MySQL, MariaDB and PostgreSQL accounts with no password, remote root, backdoor functions and trust logins | `sudo sh roles/applications/SV-01-web-db-inventory.sh --out /root/ccdc-out` |
 
-The two shared libraries (`lib/lib.sh`, `lib/lib.ps1`) are also finished; every other script is built on them. Next up: the Windows collector, the network scan, and the Active Directory audits.
+The two shared libraries (`lib/lib.sh`, `lib/lib.ps1`) are also finished; every other script is built on them. Next up: the scan diff, the Windows collector, and the Active Directory audits.
 
 Nothing here has been run on real competition systems yet. Read "What has and hasn't been tested" before relying on it.
 
@@ -68,7 +71,10 @@ To add a script: copy a template into the right `roles/` folder, rename it to it
 | --- | --- | --- |
 | `lib.sh` | dash, bash, busybox sh, ksh93, mksh, yash on Linux; shellcheck clean | FreeBSD, Solaris, and old Linux releases |
 | `lib.ps1` | PowerShell 7.4 on Linux; a pattern check for post-2.0 features | Any real Windows, including PowerShell 2.0, 4.0 and 5.1 |
+| Network scan (SH-03) | All four engines (nmap 7.94, python, bash, nc) against test listeners on 127.0.0.1, under six shells | A real competition network; the udp and full profiles at scale |
+| Scan diff (SH-04) | Real SH-03 and SH-05 runs before and after planting a user, a cron entry and listeners, plus hand-made run folders, under six shells | Runs taken on a real competition network |
 | Linux collector (SH-05) | Ubuntu 24.04 as root and as an unprivileged user, under the same six shells; a planted SUID binary is flagged | RHEL, SUSE, Alpine, FreeBSD, Solaris |
+| Web and database inventory (SV-01) | Ubuntu 24.04 with Apache, nginx, PHP 8.3, MariaDB 10.11 and PostgreSQL 16 with planted problems, as root and as a normal user, under six shells and three awk versions | RHEL (httpd), FreeBSD, MySQL 8, IIS and MSSQL (Windows twin SV-03 not built yet) |
 
 The Windows library is written to PowerShell 2.0 rules but has never run on Windows. Run `tests\lib.Tests.ps1` on your oldest and newest Windows test VMs before building on it.
 

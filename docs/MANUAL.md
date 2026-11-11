@@ -2,7 +2,7 @@
 
 How to use what is built, what to watch for, and what to do when something goes wrong. A script gets a section here when it is built; `docs/STATUS.md` lists what exists.
 
-Built so far: the shell library (LB-01), the PowerShell library (LB-02), the Linux collector (SH-05), the script templates, and the test runner.
+Built so far: the shell library (LB-01), the PowerShell library (LB-02), the network scan (SH-03), the scan diff (SH-04), the Linux collector (SH-05), the web and database inventory (SV-01), the script templates, and the test runner.
 
 **Read this first.** The libraries pass their tests on Linux shells and on PowerShell 7. They have not been run on Windows, FreeBSD or Solaris. Section 8 says how to check them on your own test machines.
 
@@ -18,6 +18,9 @@ Contents:
 8. Tests
 9. Problems that apply to everything
 10. Linux collector, `roles/linux/SH-05-linux-collector.sh` (SH-05)
+11. Network scan, `roles/network/SH-03-network-scan.sh` (SH-03)
+12. Scan diff, `roles/network/SH-04-scan-diff.sh` (SH-04)
+13. Web and database inventory, `roles/applications/SV-01-web-db-inventory.sh` (SV-01)
 
 ---
 
@@ -375,6 +378,7 @@ It runs, in order: the POSIX lint, the PowerShell 2.0 lint, a syntax check of ev
 | `tests/lib.test.sh` | The shell library: options, dry run, protected list, backup and undo, quarantine, passwords, CSV, findings, kit check |
 | `tests/lib.Tests.ps1` | The PowerShell library: the same list, plus program exit codes and `-Secret` |
 | `tests/templates.test.sh` | The shell template runs and writes its files |
+| `tests/sh03.test.sh` | The network scan: option checks, then both the python and nmap engines against two test listeners, including the scored-service and host-list checks |
 | `tests/sh05.test.sh` | The Linux collector: options, every profile writes its files, nothing on the host changes, and (as root) a planted SUID binary is flagged HIGH |
 | `tests/helper.sh` | The small test framework the `.test.sh` files use |
 
@@ -510,3 +514,243 @@ Only HIGH and MED flags are printed. LOW flags are in `flags.csv`.
 | It runs for many minutes | A very large disk or network home folders | `--fast`, or `--skip files,creds` |
 | `cannot find lib/lib.sh` (exit 3) | The script was copied without the `lib/` folder | Copy the whole kit, or use the built single-file version once the build step exists |
 | `$'\r': command not found` | The file got Windows line endings in transit | `tr -d '\r' < SH-05-linux-collector.sh > fixed.sh` |
+
+---
+
+## 11. Network scan, `roles/network/SH-03-network-scan.sh` (SH-03)
+
+Finds live hosts and open ports, with the service and version behind each. Run it from the admin workstation. It sends probes and changes nothing on any host.
+
+### How to run it
+
+```sh
+sh SH-03-network-scan.sh --target 10.0.2.0/24 --hosts config/hosts.csv --out ~/ccdc-out
+sh SH-03-network-scan.sh --target 10.0.2.0/24 --profile full --out ~/ccdc-out           # every port, slow
+sh SH-03-network-scan.sh --targets-file subnets.txt --profile outside --hosts hosts.csv  # from outside the firewall
+sudo sh SH-03-network-scan.sh --target 10.0.2.0/24 --profile udp                         # top 25 UDP ports
+```
+
+| Option | What it does |
+| --- | --- |
+| `--target` | An address, a network (`10.0.2.0/24`), a range (`10.0.2.1-50`) or a name. Repeat for more |
+| `--targets-file` | One target per line |
+| `--hosts` | The host list. Turns on the scored-service and unknown-host checks |
+| `--profile fast` (default) | Top 1000 TCP ports with service versions |
+| `--profile full` | All 65535 TCP ports, plus an OS guess as root. Minutes per host |
+| `--profile udp` | Top 25 UDP ports. Needs nmap and root |
+| `--profile outside` | Like fast, but also scans hosts that drop ping. Run it from outside to see what the red team sees; any open port that is not a scored service is flagged |
+| `--ports` | Your own port list, e.g. `22,80,8000-8100` |
+| `--engine` | Force `nmap`, `python`, `bash` or `nc` |
+| `--no-dns` | Skip name lookups when DNS is slow or broken |
+| `--pn` | Treat every address as up |
+
+**Engines.** nmap is used when installed. Without it the scan falls back to python3, then bash with `timeout`, then `nc -z`. The fallbacks:
+
+- check a fixed list of 53 common TCP ports
+- read a short banner instead of a version
+- cannot scan UDP
+- stop at 1024 addresses (`--max-hosts` raises that)
+
+### What it produces
+
+In `<out>/SH-03_<host>_<UTC time>/`:
+
+| File | Contents |
+| --- | --- |
+| `summary.txt` | Hosts up, one line per host with its open ports, the scored-service count, and the HIGH and MED flags |
+| `hosts.csv` | Each live host: address, name, open TCP and UDP ports, OS guess, whether it is on the host list |
+| `ports.csv` | Each open port: address, name, protocol, port, service, version |
+| `scored.csv` | With `--hosts`: each scored service and whether it answered |
+| `flags.csv` | Every flag |
+| `raw/` | nmap's own reports (`.nmap`, `.gnmap`, `.xml`) and screen output |
+
+### What it flags
+
+| Severity | When |
+| --- | --- |
+| HIGH | A scored service from the host list does not answer. Docker API on 2375. A version with a known backdoor or trivial remote root: vsftpd 2.3.4, ProFTPD 1.3.3c and 1.3.5, UnrealIRCd, Samba 3.0.20-3.0.25, distccd, Windows XP/2003 |
+| MED | A host is up but not on the host list, or on the list but silent. Telnet, rsh, TFTP, SNMP, VNC, Redis, MongoDB, Elasticsearch, memcached. Backdoor-style ports such as 4444 and 31337. With `outside`: Windows admin ports, and anything that is not a scored service |
+| LOW | Databases reachable over the network; FTP |
+
+### What to watch for
+
+- **"Not reachable" means not reachable from where you ran it.** A firewall may block your workstation but allow the scoring engine. Check from the scoring side, or with the service checker (SH-08) once it exists, before changing anything.
+- **The host list is what makes this useful.** Without `--hosts` you get an inventory; with it you get answers about scored services and strangers on the network. Keep `config/hosts.csv` current.
+- **Run it again after changes and compare.** The scan diff (SH-04, section 12) does the comparison for you.
+- **A closed port can mean "nothing listening" or "dropped by a firewall".** nmap's report in `raw/` says which when it can tell.
+- **Inside versus outside.** From inside you see more than the red team does; `--profile outside` from beyond the firewall shows their view.
+- **Scans are visible.** They show up in IDS and firewall logs. That is fine on your own network; mention it if an inject asks about suspicious traffic.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `nothing to scan` (exit 2) | No `--target` or `--targets-file` | Add one |
+| `has N addresses; the python engine is limited to 1024` | Range too big without nmap | Install nmap, scan smaller pieces, or raise `--max-hosts` |
+| `UDP scanning needs root` / `the udp profile needs nmap` | UDP needs raw packets | `sudo`, with nmap installed |
+| `nmap produced no results` | A target nmap cannot parse, or no permission for the scan type | Read `raw/nmap_screen.txt` |
+| Hosts you know are up are missing | They drop ping and none of the scanned ports answered | `--pn`, or `--profile outside` |
+| The scan sits for minutes | `full` profile, a large range, or slow DNS | Watch the `nmap: Stats` lines; use `--no-dns`; run `fast` first |
+| Service shows as `unknown service` or ends in `?` | The fallback has no version detection, or nmap was unsure | Check the banner in `ports.csv`; rerun with nmap |
+| Every scored service fails | Wrong addresses in the host list, or your workstation is firewalled off | Check `config/hosts.csv`; try `--pn`; scan from another machine |
+
+---
+
+## 12. Scan diff, `roles/network/SH-04-scan-diff.sh` (SH-04)
+
+Answers "what changed since last time?" by comparing two earlier runs of the network scan (SH-03) or two runs of the Linux collector (SH-05) on the same host. It only reads their CSV files; it touches no host and needs no root.
+
+The point: run SH-03 and SH-05 in the first minutes as a baseline, run them again later, and diff. Anything **added** is where to look for red team persistence.
+
+### How to run it
+
+```sh
+sh SH-04-scan-diff.sh --out ~/ccdc-out                        # the newest two network scans
+sh SH-04-scan-diff.sh --out /root/ccdc-out --type sh05        # the newest two collector runs of the newest run's host
+sh SH-04-scan-diff.sh --out /root/ccdc-out --type sh05 --host web01
+sh SH-04-scan-diff.sh --old ~/ccdc-out/SH-03_admin_20261111T140000Z --new ~/ccdc-out/SH-03_admin_20261111T150000Z
+```
+
+| Option | What it does |
+| --- | --- |
+| `--old` / `--new` | The two run folders to compare. Give both or neither. The type comes from the folder names |
+| `--type sh03` (default) / `sh05` | Which runs to pick when no folders are given |
+| `--host` | With `--type sh05`: whose runs. Default: the host of the newest SH-05 run |
+| `--runs` | Where the run folders are, if not in the `--out` folder (e.g. collector results copied off each box into one folder) |
+| `--max-lines` | Changes listed on screen (default 40; every change is in `changes.csv`) |
+| `--max-flags` | HIGH and MED flags shown on screen (default 30) |
+
+**Which runs it picks.** Run folders are named `<ID>_<host>_<UTC time>`, so the newest two by time are compared. Folders without `summary.txt` are skipped: those are runs that were stopped part way and would look like everything was removed.
+
+### What it compares
+
+| Run type | Section | A row is the same thing when these match | Compared for "changed" |
+| --- | --- | --- | --- |
+| SH-03 | hosts | address | name |
+| SH-03 | ports | address, protocol, port | service, version |
+| SH-03 | scored | host, address, service, port | reachable |
+| SH-05 | users | user | UID, shell, can log in, password state, groups |
+| SH-05 | ports | protocol, address, port | process, program |
+| SH-05 | services | name | enabled, active |
+| SH-05 | autostart | source, user, entry | |
+| SH-05 | ssh_keys | user, file, fingerprint | type, comment, options |
+| SH-05 | sudo, pam | file, entry | |
+| SH-05 | suid | path | mode, owner |
+| SH-05 | capabilities | path | capabilities |
+| SH-05 | immutable | path | attributes |
+| SH-05 | firewall | tool | status, detail |
+
+Processes and connections are not compared: they change every second. Line numbers and PIDs are left out of the comparison on purpose, so editing a file above a sudo rule or restarting sshd does not show as a change.
+
+### What it produces
+
+In `<out>/SH-04_<host>_<UTC time>/`:
+
+| File | Contents |
+| --- | --- |
+| `summary.txt` | Per-section counts of added, removed and changed; the changes (added first); the HIGH and MED flags |
+| `changes.csv` | `section,change,key,old,new` for every difference |
+| `flags.csv` | Every flag |
+
+### What it flags
+
+| Severity | When |
+| --- | --- |
+| HIGH | SH-03: a scored service that answered before and does not now; a backdoor-style port (4444, 31337, 1337, 2375 and others) newly open. SH-05: a new account, cron or startup entry, SSH key, sudo rule, SUID program, file capability or PAM line; a backdoor-style port newly listening |
+| MED | SH-03: a host appeared or vanished; a port opened or closed. SH-05: an account changed or removed; a listening port added, removed or taken over by another program; a new service; a file newly locked with `chattr`; a PAM line removed; the firewall state changed |
+| LOW | SH-03: a service version changed; a scored-service check added. SH-05: a service started, stopped, enabled or disabled |
+
+Each change gets one flag: a backdoor port that is HIGH is not also listed as MED.
+
+### What to watch for
+
+- **Changes you made show up too.** Removing a user, closing a port or adding a firewall rule appear as changes. Compare against what the team did (the undo log and the changelog in your notes) before chasing them.
+- **Compare like with like.** Two collector runs should use the same profile. A section that is in only one run is reported as `skipped (not in both runs)`, not as everything removed. The summary warns when one collector run was as root and the other was not, because a root run sees more.
+- **"Removed" on a scored port is an outage.** A port that closed between two scans of a scored host needs checking right away.
+- **Take a fresh baseline after you clean up.** Otherwise every later diff repeats your own changes. Keep the old runs; the diff only reads them.
+- **The newest two may not be the two you want.** If a run was made from a different machine or with different targets, give `--old` and `--new` yourself.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `need two finished SH-03 runs ... found 1` (exit 3) | Only one finished run in the folder, or the runs are elsewhere | Run the scan again, point `--runs` at the folder, or give `--old` and `--new` |
+| `... is not an SH-03 or SH-05 run folder` (exit 2) | The folder was renamed, or you gave the parent folder | Give the run folder itself; its name must start with `SH-03_` or `SH-05_` |
+| `the two folders are from different scripts` (exit 2) | One SH-03 run and one SH-05 run | Compare runs of the same script |
+| `comparing two different hosts` warning | `--old`/`--new` point at collector runs of two machines | Usually a mistake; pick two runs of one host |
+| Everything in a section shows as added | The earlier run had that section empty (e.g. not root, or a different profile) | Rerun both the same way; check the warning about root |
+| Lots of port changes between scans | Different targets or engines (the fallbacks check 53 ports, nmap 1000) | Scan the same targets with the same engine and profile |
+| A changed item looks wrong | The comparison is by the columns in the table above | Look up the key in both runs' CSV files; `changes.csv` has the old and new values |
+
+---
+
+## 13. Web and database inventory, `roles/applications/SV-01-web-db-inventory.sh` (SV-01)
+
+Shows what web sites and databases are on a Linux or Unix host and what is wrong with them. Run it on every box that serves a web site or holds a database, right after the Linux collector. It only reads; it never records a password.
+
+### How to run it
+
+```sh
+sudo sh SV-01-web-db-inventory.sh --out /root/ccdc-out
+sudo sh SV-01-web-db-inventory.sh --out /root/ccdc-out --fast                 # skip the web shell content search
+sudo sh SV-01-web-db-inventory.sh --webroot /opt/app/public                   # a web root the configs don't show
+sudo sh SV-01-web-db-inventory.sh --only mysql --mysql-cnf /root/my.cnf       # when root can't log in through the socket
+```
+
+| Option | What it does |
+| --- | --- |
+| `--only` / `--skip` | Run or leave out sections: `servers sites webroots php apps mysql postgres datastores` |
+| `--fast` | Skip reading file contents (the web shell and phpinfo search). Names, owners and settings are still checked |
+| `--webroot DIR` | Also scan this folder as a web root. Repeat for more |
+| `--apache-conf FILE` / `--nginx-conf FILE` | Read these config files directly instead of asking the server which files it uses. For when `apachectl` or `nginx` is missing, broken or replaced |
+| `--mysql-cnf FILE` | A MySQL client file with a user and password (a `[client]` section). Make it mode 600 and delete it after |
+
+Run it as root. As a normal user it still runs, but it cannot read most configs, log in to PostgreSQL, or see every file; the section table marks those sections `partial`.
+
+**How it logs in to the databases.** MySQL/MariaDB: `--mysql-cnf` if given, then `root` through the local socket (normal on Debian and Ubuntu), then the Debian maintenance account in `/etc/mysql/debian.cnf`, then the client's own defaults. PostgreSQL: as the `postgres` account through the local socket. Queries are SELECT and SHOW only.
+
+### What it produces
+
+In `<out>/SV-01_<host>_<UTC time>/`:
+
+| File | Contents |
+| --- | --- |
+| `summary.txt` | Web servers, sites, web roots, apps, databases; a section table; HIGH and MED flags |
+| `servers.csv`, `fpm_pools.csv` | Each web server and PHP-FPM pool: version, running or not, the account it runs as |
+| `sites.csv` | Each Apache virtual host and nginx server block: name, listen address, TLS, web root, config file and line |
+| `webroots.csv` | Each web root: owner, mode, file counts, files owned by the web account, world-writable files |
+| `files.csv` | Every file that should not be in a web root, with its kind (`webshell`, `upload_code`, `dump`, `env`, `vcs`, `phpinfo`, `config_readable`, `backup`) |
+| `php.csv` | The risky settings of each `php.ini`, after its `conf.d` overrides |
+| `apps.csv` | Each web app found: version, folder, config file, database name, user and host (never the password) |
+| `db_users.csv` | MySQL and PostgreSQL accounts: how they log in, empty password, superuser, file access, grant rights |
+| `db_settings.csv`, `db_databases.csv`, `db_objects.csv` | Server settings; databases with size; triggers, events, routines and user-defined functions |
+| `pg_hba.csv` | PostgreSQL login rules |
+| `datastores.csv` | Redis, memcached, MongoDB, Elasticsearch and CouchDB: where they listen and whether they answer without a password |
+
+### What it flags
+
+| Severity | When |
+| --- | --- |
+| HIGH | A file that looks like a web shell; a program file in an upload or media folder; a database dump or `.env` inside a web root; a web server or PHP-FPM pool running entirely as root; `allow_url_include` on; a database account with no password; MySQL root or an admin account allowed from other hosts; a user-defined function (the `lib_mysqludf_sys` backdoor); a PostgreSQL `trust` rule for network logins; logging in to MySQL with no name or password; a Redis or similar store open to the network without a password |
+| MED | Directory listing on; a web root owned by the web account; world-writable files in a web root; `.git` folders, backups and phpinfo pages in a web root; app configs every local account can read; MySQL `secure_file_priv` empty; accounts with the FILE privilege; anonymous MySQL accounts; triggers and scheduled events; extra PostgreSQL superusers; `trust` for local logins; a database or data store listening on a network address |
+| LOW | Server version shown in headers; PHP `display_errors`, `expose_php` on, `disable_functions` empty; MySQL `local_infile` on; accounts allowed from any address; PostgreSQL `password` (clear text) logins |
+
+### What to watch for
+
+- **Read before you delete.** A web shell flag means the file matched a known pattern. Read it, copy it for the incident report, then quarantine it. A security plugin's signature list can also match.
+- **"Owned by the web account" is common and still worth fixing.** Many WordPress installs are owned by `www-data` so plugins can update. It is also how one flaw becomes a defaced site. Changing owners can break uploads and updates, so it is a fix for later, not the first 15 minutes.
+- **Database accounts the apps use are listed in `apps.csv`.** Before changing a database password, find which app uses that account and update its config at the same time, or the site goes down.
+- **Triggers, events and user-defined functions are rare in competition apps.** One that the app did not create is a strong sign of red team persistence.
+- **Some checks need tools.** Without a MySQL client or `psql` the database accounts are not listed; without `redis-cli` or `curl` the "answers without a password" column says `not checked`.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `MySQL/MariaDB: found, but could not log in` | root needs a password and there is no `debian.cnf` | Give `--mysql-cnf` with a working user and password |
+| `accounts not readable with default client settings` | Logged in with an account that cannot read `mysql.user`, usually as a normal user | Run as root |
+| `PostgreSQL: found, but could not log in` | Not root, or the `postgres` account cannot log in through the socket | Run as root; check `pg_hba.conf` has a `local ... peer` line for postgres |
+| A site is missing from `sites.csv` | Its config is in a file Apache or nginx loads in an unusual way | Compare with `raw/apache_S.txt` or `raw/nginx_T.txt`; add its folder with `--webroot` |
+| The run is slow on a large site | The content search reads every PHP file under 2 MB | `--fast`, or `--skip webroots` and run that section on its own later |
+| `sites.csv` empty, but a web server is running | `apachectl` or `nginx` missing or not in PATH | Point at the configs with `--apache-conf` / `--nginx-conf` |
+

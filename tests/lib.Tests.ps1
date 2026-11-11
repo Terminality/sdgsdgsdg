@@ -211,11 +211,13 @@ Add-CcFlag -Severity HIGH -Section files -Item 'C:\tmp\x' -Detail 'second high'
 Write-Host ('run=' + $Cc.RunDir); Write-Host ('csv=' + $f); Write-Host ('raw=' + $raw); Write-Host ('bad=' + $bad)
 Show-CcFlagReport -Max 2
 [IO.File]::WriteAllText((Join-Path $Cc.RunDir 'report30.txt'), ((Get-CcFlagReport -Max 30) -join "`n"))
+$first = $Cc.RunDir; Use-CcRunDir; Write-Host ('second=' + $Cc.RunDir); $Cc.RunDir = $first; $Cc.CsvDir = $first
 Complete-Cc
 '@
 $r = Run $s @('-Out', $out)
 $lines = $r.Text -split "`r?`n"
 $runDir = ($lines | Where-Object { $_ -like 'run=*' }) -replace '^run=', ''
+T-Eq (($lines | Where-Object { $_ -like 'second=*' }) -replace '^second=', '') ($runDir + '-2') 'a second run folder in the same second gets -2'
 T-Eq (($lines | Where-Object { $_ -like 'csv=*' }) -replace '^csv=', '') (Join-Path $runDir 'things.csv') 'CSV goes into the run folder'
 T-Has ([IO.File]::ReadAllText((Join-Path (Join-Path $runDir 'raw') 'ver.txt'))) $PSVersionTable.PSVersion.ToString() 'raw output saved'
 T-Has ([IO.File]::ReadAllText((Join-Path (Join-Path $runDir 'raw') 'broken.txt'))) 'Cannot find' 'a failing block is recorded, not fatal'
