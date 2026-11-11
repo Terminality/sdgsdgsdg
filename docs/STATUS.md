@@ -1,6 +1,6 @@
 # Build status
 
-4 of 140 scripts are built.
+5 of 140 scripts are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -9,7 +9,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | 0 | Foundation | 2 | 5 |
 | 1 | Know what we have and what is scored | 2 | 28 |
 | 2 | Evict and lock, all at once | 0 | 27 |
-| 3 | Close what should not be open | 0 | 31 |
+| 3 | Close what should not be open | 1 | 31 |
 | 4 | Hunt, recover and report | 0 | 26 |
 | 5 | Nice to have, and everything if-present | 0 | 23 |
 
@@ -21,5 +21,6 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LB-02 | PowerShell library (lib.ps1) | Automation | built | `lib/lib.ps1` |
 | SH-03 | Network scan | Network | built | `roles/network/SH-03-network-scan.sh` |
 | SH-05 | Linux collector | Linux | built | `roles/linux/SH-05-linux-collector.sh` |
+| SH-04 | Scan diff | Network | built | `roles/network/SH-04-scan-diff.sh` |
 
 `built` means written and passing the local tests. `tested` means it has also been run on the real target systems.

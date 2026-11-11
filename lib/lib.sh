@@ -3,7 +3,7 @@
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.2.0
+# VERSION:  0.2.1
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -74,7 +74,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.2.0"
+CC_LIB_VERSION="0.2.1"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -699,7 +699,18 @@ cc_finding() {
 # cc_use_run_dir   -> create the run folder and send CSV files there.
 #   Sets CC_RUN_DIR and CC_CSV_DIR.
 cc_use_run_dir() {
+    # Two runs in the same second would share one folder and mix their CSVs,
+    # so claim the folder with a plain mkdir (it fails if the folder exists)
+    # and add -2, -3, ... until one is free.  The suffix still sorts after
+    # the plain time, so "newest last" ordering keeps working.
     CC_RUN_DIR="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}"
+    _cc_rd_n=1
+    while ! (umask 077; mkdir "$CC_RUN_DIR" 2>/dev/null); do
+        [ -d "$CC_RUN_DIR" ] || cc_die 3 "cannot create run folder $CC_RUN_DIR (check that $CC_OUT is writable)"
+        _cc_rd_n=$((_cc_rd_n + 1))
+        [ "$_cc_rd_n" -le 99 ] || cc_die 3 "too many run folders named ${CC_ID}_${CC_HOST}_${CC_TS}-N in $CC_OUT"
+        CC_RUN_DIR="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}-$_cc_rd_n"
+    done
     (umask 077; mkdir -p "$CC_RUN_DIR/raw") || cc_die 3 "cannot create run folder $CC_RUN_DIR"
     CC_CSV_DIR=$CC_RUN_DIR
     cc_debug "run folder: $CC_RUN_DIR"

@@ -2,7 +2,7 @@
 
 How to use what is built, what to watch for, and what to do when something goes wrong. A script gets a section here when it is built; `docs/STATUS.md` lists what exists.
 
-Built so far: the shell library (LB-01), the PowerShell library (LB-02), the network scan (SH-03), the Linux collector (SH-05), the script templates, and the test runner.
+Built so far: the shell library (LB-01), the PowerShell library (LB-02), the network scan (SH-03), the scan diff (SH-04), the Linux collector (SH-05), the script templates, and the test runner.
 
 **Read this first.** The libraries pass their tests on Linux shells and on PowerShell 7. They have not been run on Windows, FreeBSD or Solaris. Section 8 says how to check them on your own test machines.
 
@@ -19,6 +19,7 @@ Contents:
 9. Problems that apply to everything
 10. Linux collector, `roles/linux/SH-05-linux-collector.sh` (SH-05)
 11. Network scan, `roles/network/SH-03-network-scan.sh` (SH-03)
+12. Scan diff, `roles/network/SH-04-scan-diff.sh` (SH-04)
 
 ---
 
@@ -574,7 +575,7 @@ In `<out>/SH-03_<host>_<UTC time>/`:
 
 - **"Not reachable" means not reachable from where you ran it.** A firewall may block your workstation but allow the scoring engine. Check from the scoring side, or with the service checker (SH-08) once it exists, before changing anything.
 - **The host list is what makes this useful.** Without `--hosts` you get an inventory; with it you get answers about scored services and strangers on the network. Keep `config/hosts.csv` current.
-- **Run it again after changes and compare.** The scan diff (SH-04, next) will do the comparison for you.
+- **Run it again after changes and compare.** The scan diff (SH-04, section 12) does the comparison for you.
 - **A closed port can mean "nothing listening" or "dropped by a firewall".** nmap's report in `raw/` says which when it can tell.
 - **Inside versus outside.** From inside you see more than the red team does; `--profile outside` from beyond the firewall shows their view.
 - **Scans are visible.** They show up in IDS and firewall logs. That is fine on your own network; mention it if an inject asks about suspicious traffic.
@@ -591,4 +592,92 @@ In `<out>/SH-03_<host>_<UTC time>/`:
 | The scan sits for minutes | `full` profile, a large range, or slow DNS | Watch the `nmap: Stats` lines; use `--no-dns`; run `fast` first |
 | Service shows as `unknown service` or ends in `?` | The fallback has no version detection, or nmap was unsure | Check the banner in `ports.csv`; rerun with nmap |
 | Every scored service fails | Wrong addresses in the host list, or your workstation is firewalled off | Check `config/hosts.csv`; try `--pn`; scan from another machine |
+
+---
+
+## 12. Scan diff, `roles/network/SH-04-scan-diff.sh` (SH-04)
+
+Answers "what changed since last time?" by comparing two earlier runs of the network scan (SH-03) or two runs of the Linux collector (SH-05) on the same host. It only reads their CSV files; it touches no host and needs no root.
+
+The point: run SH-03 and SH-05 in the first minutes as a baseline, run them again later, and diff. Anything **added** is where to look for red team persistence.
+
+### How to run it
+
+```sh
+sh SH-04-scan-diff.sh --out ~/ccdc-out                        # the newest two network scans
+sh SH-04-scan-diff.sh --out /root/ccdc-out --type sh05        # the newest two collector runs of the newest run's host
+sh SH-04-scan-diff.sh --out /root/ccdc-out --type sh05 --host web01
+sh SH-04-scan-diff.sh --old ~/ccdc-out/SH-03_admin_20261111T140000Z --new ~/ccdc-out/SH-03_admin_20261111T150000Z
+```
+
+| Option | What it does |
+| --- | --- |
+| `--old` / `--new` | The two run folders to compare. Give both or neither. The type comes from the folder names |
+| `--type sh03` (default) / `sh05` | Which runs to pick when no folders are given |
+| `--host` | With `--type sh05`: whose runs. Default: the host of the newest SH-05 run |
+| `--runs` | Where the run folders are, if not in the `--out` folder (e.g. collector results copied off each box into one folder) |
+| `--max-lines` | Changes listed on screen (default 40; every change is in `changes.csv`) |
+| `--max-flags` | HIGH and MED flags shown on screen (default 30) |
+
+**Which runs it picks.** Run folders are named `<ID>_<host>_<UTC time>`, so the newest two by time are compared. Folders without `summary.txt` are skipped: those are runs that were stopped part way and would look like everything was removed.
+
+### What it compares
+
+| Run type | Section | A row is the same thing when these match | Compared for "changed" |
+| --- | --- | --- | --- |
+| SH-03 | hosts | address | name |
+| SH-03 | ports | address, protocol, port | service, version |
+| SH-03 | scored | host, address, service, port | reachable |
+| SH-05 | users | user | UID, shell, can log in, password state, groups |
+| SH-05 | ports | protocol, address, port | process, program |
+| SH-05 | services | name | enabled, active |
+| SH-05 | autostart | source, user, entry | |
+| SH-05 | ssh_keys | user, file, fingerprint | type, comment, options |
+| SH-05 | sudo, pam | file, entry | |
+| SH-05 | suid | path | mode, owner |
+| SH-05 | capabilities | path | capabilities |
+| SH-05 | immutable | path | attributes |
+| SH-05 | firewall | tool | status, detail |
+
+Processes and connections are not compared: they change every second. Line numbers and PIDs are left out of the comparison on purpose, so editing a file above a sudo rule or restarting sshd does not show as a change.
+
+### What it produces
+
+In `<out>/SH-04_<host>_<UTC time>/`:
+
+| File | Contents |
+| --- | --- |
+| `summary.txt` | Per-section counts of added, removed and changed; the changes (added first); the HIGH and MED flags |
+| `changes.csv` | `section,change,key,old,new` for every difference |
+| `flags.csv` | Every flag |
+
+### What it flags
+
+| Severity | When |
+| --- | --- |
+| HIGH | SH-03: a scored service that answered before and does not now; a backdoor-style port (4444, 31337, 1337, 2375 and others) newly open. SH-05: a new account, cron or startup entry, SSH key, sudo rule, SUID program, file capability or PAM line; a backdoor-style port newly listening |
+| MED | SH-03: a host appeared or vanished; a port opened or closed. SH-05: an account changed or removed; a listening port added, removed or taken over by another program; a new service; a file newly locked with `chattr`; a PAM line removed; the firewall state changed |
+| LOW | SH-03: a service version changed; a scored-service check added. SH-05: a service started, stopped, enabled or disabled |
+
+Each change gets one flag: a backdoor port that is HIGH is not also listed as MED.
+
+### What to watch for
+
+- **Changes you made show up too.** Removing a user, closing a port or adding a firewall rule appear as changes. Compare against what the team did (the undo log and the changelog in your notes) before chasing them.
+- **Compare like with like.** Two collector runs should use the same profile. A section that is in only one run is reported as `skipped (not in both runs)`, not as everything removed. The summary warns when one collector run was as root and the other was not, because a root run sees more.
+- **"Removed" on a scored port is an outage.** A port that closed between two scans of a scored host needs checking right away.
+- **Take a fresh baseline after you clean up.** Otherwise every later diff repeats your own changes. Keep the old runs; the diff only reads them.
+- **The newest two may not be the two you want.** If a run was made from a different machine or with different targets, give `--old` and `--new` yourself.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `need two finished SH-03 runs ... found 1` (exit 3) | Only one finished run in the folder, or the runs are elsewhere | Run the scan again, point `--runs` at the folder, or give `--old` and `--new` |
+| `... is not an SH-03 or SH-05 run folder` (exit 2) | The folder was renamed, or you gave the parent folder | Give the run folder itself; its name must start with `SH-03_` or `SH-05_` |
+| `the two folders are from different scripts` (exit 2) | One SH-03 run and one SH-05 run | Compare runs of the same script |
+| `comparing two different hosts` warning | `--old`/`--new` point at collector runs of two machines | Usually a mistake; pick two runs of one host |
+| Everything in a section shows as added | The earlier run had that section empty (e.g. not root, or a different profile) | Rerun both the same way; check the warning about root |
+| Lots of port changes between scans | Different targets or engines (the fallbacks check 53 ports, nmap 1000) | Scan the same targets with the same engine and profile |
+| A changed item looks wrong | The comparison is by the columns in the table above | Look up the key in both runs' CSV files; `changes.csv` has the old and new values |
 

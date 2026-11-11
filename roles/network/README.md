@@ -1,6 +1,6 @@
 # Network — routes + firewall
 
-Scripts owned by this role. 1 of 17 are built.
+Scripts owned by this role. 2 of 17 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -16,7 +16,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | NW-11 | Management hardening | 3 | Medium | planned |  |
 | NW-12 | IP block list | 3 | Medium | planned |  |
 | NW-13 | Perimeter port closer | 3 | Hard | planned |  |
-| SH-04 | Scan diff | 3 | Medium | planned |  |
+| SH-04 | Scan diff | 3 | Medium | built | [`roles/network/SH-04-scan-diff.sh`](../../roles/network/SH-04-scan-diff.sh) |
 | NW-14 | Least-privilege rule builder | 4 | Hard | planned |  |
 | NW-17 | Egress filter and outbound log | 4 | Hard | planned |  |
 | NW-19 | Config restore | 4 | Hard | planned |  |

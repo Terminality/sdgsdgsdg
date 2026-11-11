@@ -180,9 +180,11 @@ cc_flag HIGH files "/tmp/x" "second high"
 echo "run=$CC_RUN_DIR"; echo "csv=$f"; echo "raw=$CC_LAST_SAVE"
 cc_flag_report 2
 cc_flag_report 30 >"$CC_RUN_DIR/report30.txt"
+_first=$CC_RUN_DIR; cc_use_run_dir; echo "second=$CC_RUN_DIR"; CC_RUN_DIR=$_first; CC_CSV_DIR=$_first
 cc_finish'
 r=$(run "$S/flags.sh" --out "$OUT" 2>/dev/null)
 RUN=$(printf '%s\n' "$r" | sed -n 's/^run=//p')
+t_eq "$(printf '%s\n' "$r" | sed -n 's/^second=//p')" "$RUN-2" "a second run folder in the same second gets -2"
 t_eq "$(printf '%s\n' "$r" | sed -n 's/^csv=//p')" "$RUN/things.csv" "CSV goes into the run folder"
 t_ok "raw output saved" grep -q "$(uname -s)" "$RUN/raw/uname.txt"
 t_has "$(sed -n 1p "$RUN/raw/uname.txt")" "# command: uname -s" "raw file records the command"

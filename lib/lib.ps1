@@ -2,7 +2,7 @@
 # ID:       LB-02
 # NAME:     PowerShell library (lib.ps1)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.2.0
+# VERSION:  0.2.1
 #
 # PURPOSE
 #   The jobs every Windows script in this kit repeats, written once.  It is the
@@ -76,7 +76,7 @@
 #     session, because there is no file to hash.
 # =============================================================================
 
-$script:CcLibVersion = '0.2.0'
+$script:CcLibVersion = '0.2.1'
 
 # All library state lives in one hashtable so it is easy to inspect while
 # debugging: type  $Cc  at a prompt after dot-sourcing a script.
@@ -684,7 +684,17 @@ function Add-CcFinding {
 # Use-CcRunDir   -> create the run folder and send CSV files there.
 function Use-CcRunDir {
     $c = $script:Cc
-    $c.RunDir = Join-Path $c.Out ('{0}_{1}_{2}' -f $c.Id, $c.Host, $c.Ts)
+    # Two runs in the same second would share one folder and mix their CSVs,
+    # so add -2, -3, ... until the name is free.  The suffix still sorts after
+    # the plain time, so "newest last" ordering keeps working.
+    $base = '{0}_{1}_{2}' -f $c.Id, $c.Host, $c.Ts
+    $c.RunDir = Join-Path $c.Out $base
+    $n = 1
+    while (Test-Path -LiteralPath $c.RunDir) {
+        $n++
+        if ($n -gt 99) { Stop-Cc -Code 3 -Message "too many run folders named $base-N in $($c.Out)" }
+        $c.RunDir = Join-Path $c.Out ($base + '-' + $n)
+    }
     try {
         New-Item -ItemType Directory -Path (Join-Path $c.RunDir 'raw') -Force -ErrorAction Stop | Out-Null
     } catch {
