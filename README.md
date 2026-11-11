@@ -1,6 +1,14 @@
 # CCDC-AI-SLOP
 
-Blue-team scripts for the Collegiate Cyber Defense Competition, written with Claude. The plan is 140 scripts across the eight official team roles; `docs/STATUS.md` shows how many exist. Right now that is the two shared libraries every other script will be built on.
+Blue-team scripts for the Collegiate Cyber Defense Competition, written with Claude. The plan is 140 scripts across the eight official team roles; `docs/STATUS.md` shows how many exist.
+
+## Ready to use
+
+| Script | What it does | How to run it |
+| --- | --- | --- |
+| Linux collector (SH-05) | Read-only inventory of a Linux or Unix host: accounts, listening ports and their programs, services, cron and other autostart, SSH keys, sudo, processes, risky files, firewall, PAM, credentials files. One-page summary with the problems worst first | `sudo sh roles/linux/SH-05-linux-collector.sh --out /root/ccdc-out` |
+
+The two shared libraries (`lib/lib.sh`, `lib/lib.ps1`) are also finished; every other script is built on them. Next up: the Windows collector, the network scan, and the Active Directory audits.
 
 Nothing here has been run on real competition systems yet. Read "What has and hasn't been tested" before relying on it.
 
@@ -44,6 +52,9 @@ Every script follows the same rules, enforced by the libraries:
 # run every check
 sh tests/run-tests.sh
 
+# look at a Linux host (read-only)
+sudo sh roles/linux/SH-05-linux-collector.sh --out /root/ccdc-out --profile card
+
 # try the template scripts (dry run; writes only to the folder you name)
 sh templates/script-template.sh --out /tmp/ccdc-out --debug
 powershell -NoProfile -ExecutionPolicy Bypass -File templates\script-template.ps1 -Out C:\ccdc-out -DebugLog
@@ -57,6 +68,7 @@ To add a script: copy a template into the right `roles/` folder, rename it to it
 | --- | --- | --- |
 | `lib.sh` | dash, bash, busybox sh, ksh93, mksh, yash on Linux; shellcheck clean | FreeBSD, Solaris, and old Linux releases |
 | `lib.ps1` | PowerShell 7.4 on Linux; a pattern check for post-2.0 features | Any real Windows, including PowerShell 2.0, 4.0 and 5.1 |
+| Linux collector (SH-05) | Ubuntu 24.04 as root and as an unprivileged user, under the same six shells; a planted SUID binary is flagged | RHEL, SUSE, Alpine, FreeBSD, Solaris |
 
 The Windows library is written to PowerShell 2.0 rules but has never run on Windows. Run `tests\lib.Tests.ps1` on your oldest and newest Windows test VMs before building on it.
 
@@ -65,4 +77,5 @@ The Windows library is written to PowerShell 2.0 rules but has never run on Wind
 - [`docs/MANUAL.md`](docs/MANUAL.md): how to use what is built, what to watch for, problems and fixes
 - [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md): rules for writing a script
 - [`docs/STATUS.md`](docs/STATUS.md): what is built
+- [`docs/CHANGELOG.md`](docs/CHANGELOG.md): what changed, and when
 - [`docs/catalog.csv`](docs/catalog.csv): all 140 planned scripts with role, wave and level

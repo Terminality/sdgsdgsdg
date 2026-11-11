@@ -18,6 +18,7 @@ Rules for writing a script in this repository. The libraries enforce most of the
 5. Run `sh tests/run-tests.sh` until it passes.
 6. In `docs/catalog.csv` set `status` to `built` and fill in `path`. Run `sh tools/update-docs.sh`.
 7. Add a section to `docs/MANUAL.md`: how to use it, what to watch for, problems and fixes.
+8. Add a line to `docs/CHANGELOG.md`, and to the "Ready to use" table in `README.md`.
 
 ## The header
 
@@ -51,6 +52,18 @@ Every script starts with the header block from the template: ID, NAME, ROLE, KIN
 17. Detection output is layered: unusual items on screen, everything in the CSV.
 
 Detection and fixing are separate scripts. A detection script writes findings with `cc_finding` / `Add-CcFinding`, each with a fix ID and a class (`safe`, `service`, `protected`). A fix script reads that file.
+
+## Inventory scripts
+
+Scripts that only look (collectors, audits) follow the Linux collector's pattern:
+
+- Call `cc_use_run_dir` / `Use-CcRunDir` after starting, so the run's files sit in one folder.
+- One CSV per section; keep raw tool output with `cc_save` / `Save-CcOutput`.
+- Mark anything unusual with `cc_flag` / `Add-CcFlag`: `HIGH` (look now), `MED` (look soon), `LOW` (file only). Write the detail for someone who has never seen the box: what is wrong and why it matters.
+- End with a one-page summary and `cc_flag_report` / `Show-CcFlagReport`. Only HIGH and MED reach the screen.
+- Tune for precision. Run the script on a real system before calling it built, and tighten any check that flags normal things. A screen full of false alarms hides the real one.
+- Never record a password, hash or secret value; record where it is and what it is called.
+- In shell scripts, never put `| while read` around a loop that sets variables or counts; read from a file instead (`done <file`). The right side of a pipe is a subshell in dash and bash, so its changes are lost.
 
 ## Shell scripts: POSIX sh only
 

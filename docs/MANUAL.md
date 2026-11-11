@@ -375,6 +375,7 @@ It runs, in order: the POSIX lint, the PowerShell 2.0 lint, a syntax check of ev
 | `tests/lib.test.sh` | The shell library: options, dry run, protected list, backup and undo, quarantine, passwords, CSV, findings, kit check |
 | `tests/lib.Tests.ps1` | The PowerShell library: the same list, plus program exit codes and `-Secret` |
 | `tests/templates.test.sh` | The shell template runs and writes its files |
+| `tests/sh05.test.sh` | The Linux collector: options, every profile writes its files, nothing on the host changes, and (as root) a planted SUID binary is flagged HIGH |
 | `tests/helper.sh` | The small test framework the `.test.sh` files use |
 
 **Checking the Windows library on a real machine.** Copy the repository to a Windows test VM and run:
