@@ -1,0 +1,14 @@
+# Built standalone scripts: regenerate with tools/build.sh, never commit.
+dist/
+# Script output must never live in the repo (logs can hold host details).
+out/
+ccdc-out/
+*.log
+# Real competition data: host lists, protected lists, credential sheets.
+config/*.csv
+!config/*.example.csv
+# Editor and OS clutter
+*.swp
+*~
+.DS_Store
+Thumbs.db
