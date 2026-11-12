@@ -2,6 +2,17 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-12: Windows collector
+
+**Added**
+
+- SH-06 Windows collector (`roles/windows-ad/SH-06-windows-collector.ps1`): 20 sections in three profiles; every source is saved under `raw\` and can be replayed with `-FromRaw`; password-like account descriptions and the Winlogon password are never copied; attack strings in the checks are split up so antivirus does not flag the file.
+- `tests/sh06.Tests.ps1`.
+
+**Tested**
+
+- The library on real Windows PowerShell 5.1 (71 checks). SH-06 by replaying a planted-problem domain controller and a clean workstation under PowerShell 7.4 (114 checks). Not yet run live on Windows.
+
 ## 2026-11-12: Fixes from a full review
 
 **Fixed**

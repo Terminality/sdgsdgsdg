@@ -32,6 +32,7 @@ Contents:
 22. Network config backup and diff, `roles/network/NW-01-config-backup.sh` (NW-01)
 23. Network config audit, `roles/network/NW-07-config-audit.sh` (NW-07)
 24. Device password rotation, `roles/network/NW-10-device-passwords.sh` (NW-10)
+25. Windows collector, `roles/windows-ad/SH-06-windows-collector.ps1` (SH-06)
 
 ---
 
@@ -1609,3 +1610,62 @@ There is no undo-log line: a password cannot be put back without storing it. The
 | `config may not be SAVED` | The device closed the first session early | Log in and save (`write memory`) by hand |
 | Palo Alto shows failed after a long wait | The commit took longer than `--commit-wait` | Raise `--commit-wait` |
 | `sshpass not found` (exit 3) | Not installed | `apt install sshpass` |
+
+---
+
+## 25. Windows collector, `roles/windows-ad/SH-06-windows-collector.ps1` (SH-06)
+
+Read-only inventory of a Windows host: the Windows twin of SH-05. Run it first on every Windows box, in an elevated PowerShell window. It changes nothing.
+
+### How to run it
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-collector.ps1 -Out C:\ccdc-out
+powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-collector.ps1 -Out C:\ccdc-out -Profile card     # about a minute
+powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-collector.ps1 -Out C:\ccdc-out -Only users,ports
+```
+
+| Option | What it does |
+| --- | --- |
+| `-Profile card\|full\|triage` | `card`: system, users, ports, services, autostart, tasks, security, firewall, defender. `full` (default): card plus processes, connections, sessions, shares, software, updates, events, drivers, rights, roles. `triage`: full plus a copy of the event logs |
+| `-Only a,b` / `-Skip a,b` | Choose sections; `-List` shows them |
+| `-EventHours N` | How far back the events section looks (default 24) |
+| `-MaxFlags N` | HIGH/MED flags shown on screen (default 30) |
+| `-FromRaw DIR` | Read a saved `raw` folder instead of this host. Send someone the `raw` folder of a run and they can replay it anywhere, PowerShell 7 on Linux included |
+
+### What you get
+
+`<out>\SH-06_<host>_<time>\` holds `summary.txt` (also printed), `flags.csv`, one CSV per section and `raw\` with everything as read. Run it without elevation and the summary says which sections are incomplete.
+
+### What it flags
+
+| Section | HIGH | MED | LOW |
+| --- | --- | --- | --- |
+| system | hosts file sends a Microsoft, update or antivirus name elsewhere | any other hosts entry | |
+| users | Guest enabled; enabled account ending in `$`; password-like text in a description (not copied); Everyone, Users or Domain Users inside Administrators, Remote Desktop Users or Domain/Enterprise Admins | account without a required password | each admin and RDP group member; built-in Administrator enabled |
+| ports | cmd, PowerShell, netcat-style tools listening; backdoor ports (4444, 1337, 31337 ...); listener run from Temp, AppData, Users\Public, ProgramData | Telnet | FTP; listener whose process is gone |
+| services | service that runs a command line or a shell; service program in an unusual folder; Event Log or Defender service stopped | unquoted path with spaces (privilege escalation); Remote Registry or Telnet running; Print Spooler on a DC | service running as a named account (changing its password breaks it); SNMP |
+| autostart | suspicious Run key (machine or user); Userinit or Shell changed; debugger key (sticky keys); SilentProcessExit; AppInit DLLs loaded; WMI event subscription; sethc/utilman/osk replaced by cmd or PowerShell | startup-folder file; unknown netsh helper or LSA package; BootExecute changed; AppInit DLL set but not loaded | ordinary Run entries |
+| tasks | task running a suspicious command or a program from an unusual folder | non-Microsoft task running a shell | other non-Microsoft tasks |
+| security | WDigest on; UAC off; EveryoneIncludesAnonymous; null sessions; AlwaysInstallElevated; stored Winlogon password (not copied); port forwards (portproxy); Zerologon enforcement off or allow-list set | SMBv1 server on; SMB signing off on a DC; NTLMv1/LM; LM hashes; anonymous SAM listing; RDP without NLA; LocalAccountTokenFilterPolicy; audit policy cleared; logons not audited | LSA protection off; LLMNR on; script block logging off; SMB signing off elsewhere; Zerologon key unset |
+| firewall | a profile OFF; allow-all inbound default; an enabled inbound rule allowing everything; rule for a shell, netcat or a program in Temp; rule opening a backdoor port | | |
+| defender | antivirus or real-time protection off; policy keys turning it off; exclusion of a drive, a script/program extension or a user/temp folder | any other exclusion | |
+| processes | system program name (lsass, svchost, csrss ...) from the wrong folder; two lsass; netcat-style tool; suspicious command line (encoded PowerShell, download cradle, hidden window); a shell started by IIS, Apache, Tomcat or SQL Server | program run from an unusual folder | |
+| connections | a shell or netcat-style tool with a live connection; connection to a backdoor port | program in an unusual folder with a live connection | |
+| shares | | Everyone, Anonymous or Guest with Full or Change on a share | every non-default share |
+| software | | remote-access tools (AnyDesk, TeamViewer, ScreenConnect, VNC, ngrok ...) | |
+| updates | DC whose newest update is before September 2020 (Zerologon) | newest update over a year old | |
+| events | Security or other event log cleared | in the look-back: account created, enabled or reset; member added to a group; service installed; task created; Defender or Event Log start type changed | |
+| drivers | running driver from an unusual folder | running driver outside Windows | |
+| rights | Everyone, Anonymous or Guests allowed to log on interactively or by RDP | debug, impersonate, backup, restore, load-driver, take-ownership or token rights held by a non-default account | |
+
+### Problems and fixes
+
+| What you see | Why | Fix |
+| --- | --- | --- |
+| "running scripts is disabled" | Execution policy | Start it with `powershell -NoProfile -ExecutionPolicy Bypass -File ...` as shown |
+| Antivirus deletes or blocks the file | Some checks contain the text of attack commands | The risky words are already split up; if it still happens, note the threat name from Windows Security, Protection history, and report it |
+| Sections note "could not be read" | Not elevated, or the tool is missing on this Windows version | Run as administrator; `raw\<name>.error.txt` has the reason |
+| Firewall or audit sections empty on a non-English Windows | netsh and auditpol text is read in English | The raw files still hold the output; read them by hand |
+| `users` is very long on a DC | A DC's "local" users are the domain's users | Expected; use `-Skip users` for a quick look |
+| A flag is legitimate (a Defender exclusion for SQL, a vendor task) | Flags are pointers, not verdicts | Check it, then move on |

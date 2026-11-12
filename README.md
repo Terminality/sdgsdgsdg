@@ -21,6 +21,7 @@ Blue-team scripts for the Collegiate Cyber Defense Competition, written with Cla
 | Network config backup and diff (NW-01) | Saves the running config of every firewall, router and switch (Cisco IOS/ASA, Palo Alto, FortiGate, VyOS, pfSense, OPNsense, MikroTik) and shows what changed since the last copy; a new admin, SNMP community, NAT or allow rule is HIGH; flags a changed device SSH key | `sh roles/network/NW-01-config-backup.sh --out ~/ccdc-out --hosts config/hosts.csv --password-env` |
 | Network config audit (NW-07) | Reads the saved device configs and flags telnet or plain-HTTP management, default SNMP communities, clear-text and type 7 passwords, management open to any address, any-to-any allow rules and default admins; lists every account. Touches no device | `sh roles/network/NW-07-config-audit.sh --out ~/ccdc-out` |
 | Device password rotation (NW-10) | Changes the login password on each firewall, router and switch (Cisco enable secret too, optionally) while keeping the first session open, tests the new password from a second session, then saves - or puts the old password back if the new one fails. New passwords only in a mode-600 file | `CCDC_NET_PASS=... sh roles/network/NW-10-device-passwords.sh --out ~/ccdc-out --hosts config/hosts.csv --apply` |
+| Windows collector (SH-06) | Read-only inventory of a Windows host: accounts and admins, listening ports and their programs, services, Run keys, debugger and sticky-keys backdoors, WMI subscriptions, tasks, weak settings (WDigest, UAC, SMBv1, Zerologon, RDP), firewall, Defender exclusions, processes, recent log clears and new admins. One-page summary, worst first | `powershell -NoProfile -ExecutionPolicy Bypass -File roles\windows-ad\SH-06-windows-collector.ps1 -Out C:\ccdc-out` |
 
 The two shared libraries (`lib/lib.sh`, `lib/lib.ps1`) are also finished; every other script is built on them. Next up: Windows (collector, backup, safe fixes, passwords, firewall, change watch).
 
@@ -52,7 +53,9 @@ Works with Cisco IOS and ASA, Palo Alto, FortiGate, VyOS, pfSense, OPNsense and 
 
 ### Windows
 
-Not built yet. The order will be added here with the scripts.
+Run in an elevated PowerShell window: `powershell -NoProfile -ExecutionPolicy Bypass -File <script> -Out C:\ccdc-out`. More scripts are being added in this order.
+
+1. `SH-06` collector. Read the HIGH flags first.
 
 ## Layout
 
@@ -109,7 +112,7 @@ To add a script: copy a template into the right `roles/` folder, rename it to it
 | | Tested | Not tested |
 | --- | --- | --- |
 | `lib.sh` | dash, bash, busybox sh, ksh93, mksh, yash on Linux; shellcheck clean | FreeBSD, Solaris, and old Linux releases |
-| `lib.ps1` | PowerShell 7.4 on Linux; a pattern check for post-2.0 features | Any real Windows, including PowerShell 2.0, 4.0 and 5.1 |
+| `lib.ps1` | Windows PowerShell 5.1 on real Windows (build 26100); PowerShell 7.4 on Linux; a pattern check for post-2.0 features | PowerShell 2.0 and 4.0 (Server 2008 R2, 2012) |
 | Network scan (SH-03) | All four engines (nmap 7.94, python, bash, nc) against test listeners on 127.0.0.1, under six shells | A real competition network; the udp and full profiles at scale |
 | Scan diff (SH-04) | Real SH-03 and SH-05 runs before and after planting a user, a cron entry and listeners, plus hand-made run folders, under six shells | Runs taken on a real competition network |
 | Linux collector (SH-05) | Ubuntu 24.04 as root and as an unprivileged user, under the same six shells; a planted SUID binary is flagged | RHEL, SUSE, Alpine, FreeBSD, Solaris |
@@ -125,8 +128,9 @@ To add a script: copy a template into the right `roles/` folder, rename it to it
 | Network config backup and diff (NW-01) | Against a real OpenSSH server (Linux profile: an added firewall rule shows as HIGH, its removal too); every vendor against sample output from a stand-in ssh under six shells, including unreachable devices, changed host keys, old-algorithm devices and password handling | Real Cisco, Palo Alto, FortiGate, VyOS, pfSense and MikroTik devices |
 | Network config audit (NW-07) | A planted-problem and a clean sample config for each of seven vendors under six shells and three awk versions: every planted weakness found, no HIGH or MED on the clean configs, secrets masked | Configs from real devices |
 | Device password rotation (NW-10) | Live against a real OpenSSH server (new password logs in, old one refused, nothing leaked). Every vendor, the Cisco privilege level, the Palo Alto hash, the enable secret and the automatic revert against a stand-in device under six shells | Real Cisco, Palo Alto, FortiGate, VyOS and MikroTik devices |
+| Windows collector (SH-06) | Replayed Windows data under PowerShell 7: a domain controller with about 70 planted problems (all found) and a clean workstation (no HIGH or MED); the live path where Windows tools are missing | Real Windows (the library itself passes on Windows PowerShell 5.1) |
 
-The Windows library is written to PowerShell 2.0 rules but has never run on Windows. Run `tests\lib.Tests.ps1` on your oldest and newest Windows test VMs before building on it.
+The Windows library passes its tests on Windows PowerShell 5.1. It is written to PowerShell 2.0 rules, but has not yet run on 2.0 or 4.0.
 
 ## Documents
 

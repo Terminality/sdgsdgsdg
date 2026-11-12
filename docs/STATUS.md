@@ -1,13 +1,13 @@
 # Build status
 
-17 of 142 scripts are built.
+18 of 142 scripts are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
 | Wave | Goal | Built | Total |
 | --- | --- | --- | --- |
 | 0 | Foundation | 2 | 5 |
-| 1 | Know what we have and what is scored | 7 | 31 |
+| 1 | Know what we have and what is scored | 8 | 31 |
 | 2 | Evict and lock, all at once | 6 | 28 |
 | 3 | Close what should not be open | 2 | 30 |
 | 4 | Hunt, recover and report | 0 | 25 |
@@ -22,6 +22,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | NW-01 | Config backup and diff | Network | built | `roles/network/NW-01-config-backup.sh` |
 | SH-03 | Network scan | Network | built | `roles/network/SH-03-network-scan.sh` |
 | SH-05 | Linux collector | Linux | built | `roles/linux/SH-05-linux-collector.sh` |
+| SH-06 | Windows collector | Windows / AD | built | `roles/windows-ad/SH-06-windows-collector.ps1` |
 | SV-01 | Web and database inventory | Applications | built | `roles/applications/SV-01-web-db-inventory.sh` |
 | NW-10 | Device password rotation | Network | built | `roles/network/NW-10-device-passwords.sh` |
 | LX-20 | Password rotation | Linux | built | `roles/linux/LX-20-password-rotation.sh` |

@@ -1,12 +1,12 @@
 # Windows / AD — identity + policy
 
-Scripts owned by this role. 0 of 29 are built.
+Scripts owned by this role. 1 of 29 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
 | ID | Script | Wave | Level | Status | File |
 | --- | --- | --- | --- | --- | --- |
-| SH-06 | Windows collector | 1 | Hard | planned |  |
+| SH-06 | Windows collector | 1 | Hard | built | [`roles/windows-ad/SH-06-windows-collector.ps1`](../../roles/windows-ad/SH-06-windows-collector.ps1) |
 | WN-04 | AD user audit | 1 | Medium | planned |  |
 | WN-05 | AD privileged groups | 1 | Medium | planned |  |
 | WN-11 | Group Policy report | 1 | Easy | planned |  |
