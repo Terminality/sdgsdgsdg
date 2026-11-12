@@ -164,6 +164,22 @@ cc_first() {
     return 1
 }
 
+# cc_which NAME -> print the full path of the program NAME, or return 1.
+#   Searches PATH and then the sbin folders (often missing from a normal
+#   account's PATH).  Use it when a script must run the REAL program: busybox
+#   sh runs its own built-in version of tools such as sysctl, chpasswd or find
+#   when called by bare name, but always runs a file given by full path.
+cc_which() {
+    _cc_wh_ifs=$IFS; IFS=:
+    for _cc_wh_d in $PATH /usr/local/sbin /usr/sbin /sbin /usr/local/bin /usr/bin /bin; do
+        IFS=$_cc_wh_ifs
+        [ -n "$_cc_wh_d" ] || continue
+        if [ -f "$_cc_wh_d/$1" ] && [ -x "$_cc_wh_d/$1" ]; then printf '%s\n' "$_cc_wh_d/$1"; return 0; fi
+    done
+    IFS=$_cc_wh_ifs
+    return 1
+}
+
 # cc_shquote STRING   -> print STRING wrapped in single quotes, safe to paste
 #   into a shell.  Used to build the undo commands.
 cc_shquote() {

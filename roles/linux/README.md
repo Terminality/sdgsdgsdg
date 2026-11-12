@@ -1,6 +1,6 @@
 # Linux — hosts + services
 
-Scripts owned by this role. 3 of 26 are built.
+Scripts owned by this role. 4 of 26 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -8,7 +8,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | --- | --- | --- | --- | --- | --- |
 | SH-05 | Linux collector | 1 | Hard | built | [`roles/linux/SH-05-linux-collector.sh`](../../roles/linux/SH-05-linux-collector.sh) |
 | SV-05 | DNS inventory | 1 | Easy | planned |  |
-| LX-20 | Password rotation | 2 | Easy | planned |  |
+| LX-20 | Password rotation | 2 | Easy | built | [`roles/linux/LX-20-password-rotation.sh`](../../roles/linux/LX-20-password-rotation.sh) |
 | LX-21 | Account lockdown | 2 | Easy | planned |  |
 | LX-22 | SSH hardening and key cleanup | 2 | Medium | planned |  |
 | LX-27 | Sudo cleanup | 2 | Medium | planned |  |

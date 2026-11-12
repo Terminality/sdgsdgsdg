@@ -159,12 +159,15 @@ mk help 'cc_detect_os
 echo "kernel=$CC_OS_KERNEL init=$CC_INIT"
 echo "first=$(cc_first definitely-not-a-tool sh)"
 cc_first nope1 nope2 >/dev/null || echo "none=ok"
+echo "which=$(cc_which sh)"
+cc_which definitely-not-a-tool >/dev/null || echo "which-none=ok"
 echo "q=$(cc_shquote "a'\''b c")"
 echo "sum=$(printf abc >"$T/abc"; cc_sha256 "$T/abc")"'
 T="$T_TMP"; export T
 r=$(run "$S/help.sh" 2>/dev/null)
 t_has "$r" "kernel=$(uname -s | tr 'A-Z' 'a-z')" "kernel detected"
 t_has "$r" "first=sh" "cc_first skips missing tools"; t_has "$r" "none=ok" "cc_first fails when nothing exists"
+t_has "$r" "which=/" "cc_which prints a full path"; t_has "$r" "which-none=ok" "cc_which fails for a missing program"
 t_has "$r" "sum=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" "sha256 of abc is correct"
 t_eq "$(printf '%s\n' "$r" | sed -n 's/^q=//p')" "'a'\\''b c'" "shell quoting"
 
