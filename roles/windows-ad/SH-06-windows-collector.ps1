@@ -299,6 +299,10 @@ function Get-Wmi([string]$Class, [string]$Filter = '', [string]$Namespace = 'roo
     return Get-CimInstance -Namespace $Namespace -ClassName $Class -ErrorAction Stop  # ps2-ok
 }
 
+# Leaf path -> the last part of a path.  [IO.Path]::GetFileName throws on
+# characters such as " < > | that real task and service command lines contain.
+function Leaf($p) { $t = (Nz $p).Trim().Trim('"'); return @($t -split '[\\/]')[-1] }
+
 # Join an array property into one text field.
 function J($v) { if ($null -eq $v) { return '' }; return ((@($v) | ForEach-Object { [string]$_ }) -join ' ') }
 
@@ -584,6 +588,8 @@ function S-system {
         Row $h @($parts[0], $names)
         if ((Lc $names) -match '(microsoft|windowsupdate|windows\.com|update|defender|virustotal|symantec|mcafee|kaspersky|sophos|crowdstrike|sentinelone)') {
             Flag HIGH "hosts: $names" ("hosts file sends {0} to {1}" -f $names, $parts[0])
+        } elseif ((Lc $names) -match '\.ts\.net\.?(\s|$)') {
+            Flag LOW "hosts: $names" ("hosts file entry written by Tailscale: {0} -> {1}" -f $names, $parts[0])
         } elseif ((Lc $names) -notmatch '^localhost') {
             Flag MED "hosts: $names" ("hosts file entry {0} -> {1}" -f $names, $parts[0])
         }
@@ -692,7 +698,7 @@ function S-services {
         if ($s.State -eq 'Running') { $running++ }
         $item = $s.Name
         $sus = Test-Susp $s.PathName
-        $ln = Lc ([IO.Path]::GetFileName($exe))
+        $ln = Lc (Leaf ($exe))
         if ($sus -eq 'strong' -or $ShellNames -contains $ln -or $NetToolNames -contains $ln) {
             Flag HIGH $item ("service runs a command line, not a service program: {0}" -f $s.PathName)
         } elseif ($sus -ne '') {
@@ -771,10 +777,10 @@ function S-autostart {
     $be = Reg "$CCS\Control\Session Manager" 'BootExecute'
     if ($be -and (Lc $be).Trim() -ne 'autocheck autochk *') { Row $f @('BootExecute', '', $be); Flag MED 'BootExecute' "runs at boot before Windows starts: $be" }
     # netsh helper DLLs load whenever netsh runs.
-    $defaultNetsh = @('authfwcfg.dll', 'dhcpcmonitor.dll', 'dot3cfg.dll', 'fwcfg.dll', 'hnetmon.dll', 'ifmon.dll', 'napmontr.dll', 'netiohlp.dll', 'netprofm.dll', 'nettrace.dll', 'nshhttp.dll', 'nshipsec.dll', 'nshwfp.dll', 'p2pnetsh.dll', 'rasmontr.dll', 'rpcnsh.dll', 'wcnnetsh.dll', 'whhelper.dll', 'wlancfg.dll', 'wshelper.dll', 'wwancfg.dll', 'peerdistsh.dll', 'mprmsg.dll', 'dhcpmonitor.dll', 'wcnnetsh.dll', 'ipmontr.dll', 'ippromon.dll', 'ipxmontr.dll', 'ipxpromn.dll', 'nshhttp.dll')
+    $defaultNetsh = @('authfwcfg.dll', 'dhcpcmonitor.dll', 'dot3cfg.dll', 'fwcfg.dll', 'hnetmon.dll', 'ifmon.dll', 'napmontr.dll', 'netiohlp.dll', 'netprofm.dll', 'nettrace.dll', 'nshhttp.dll', 'nshipsec.dll', 'nshwfp.dll', 'p2pnetsh.dll', 'rasmontr.dll', 'rpcnsh.dll', 'wcnnetsh.dll', 'whhelper.dll', 'wlancfg.dll', 'wshelper.dll', 'wwancfg.dll', 'peerdistsh.dll', 'nshdnsclient.dll', 'netiohlp.dll', 'mprmsg.dll', 'dhcpmonitor.dll', 'wcnnetsh.dll', 'ipmontr.dll', 'ippromon.dll', 'ipxmontr.dll', 'ipxpromn.dll', 'nshhttp.dll')
     foreach ($r in @(RegRows 'HKLM\SOFTWARE\Microsoft\NetSh')) {
         Row $f @('netsh helper', $r.Name, $r.Value)
-        if (-not ($defaultNetsh -contains (Lc ([IO.Path]::GetFileName($r.Value))))) { Flag MED $r.Name "unknown netsh helper DLL: $($r.Value)" }
+        if (-not ($defaultNetsh -contains (Lc (Leaf ($r.Value))))) { Flag MED $r.Name "unknown netsh helper DLL: $($r.Value)" }
     }
     # LSA packages load into lsass.exe and can read passwords.
     $defLsa = @('kerberos', 'msv1_0', 'schannel', 'wdigest', 'tspkg', 'pku2u', 'cloudap', 'negoexts', 'livessp', 'scecli', 'rassfm', '""', '')
@@ -785,7 +791,7 @@ function S-autostart {
         foreach ($pk in @($v -split '\s*\|\s*|\s+')) { if ($pk -ne '' -and -not ($defLsa -contains (Lc $pk))) { Flag MED "LSA $n" "unknown package loaded into lsass: $pk" } }
     }
     # Startup folders.
-    foreach ($s in @(Get-Rows -Name startup_files -Props @('Path', 'LastWrite') -Command {
+    foreach ($s in @(Get-Rows -Name startup_files -Props @('Path', 'LastWrite', 'Target') -Command {
             $dirs = @((Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\StartUp'))
             $ud = Split-Path -Parent $env:PUBLIC
             foreach ($u in @(Get-ChildItem -LiteralPath $ud -Force -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer })) {
@@ -794,13 +800,26 @@ function S-autostart {
             foreach ($d in $dirs) {
                 if (Test-Path -LiteralPath $d) {
                     foreach ($i in @(Get-ChildItem -LiteralPath $d -Force -ErrorAction SilentlyContinue)) {
-                        if (-not $i.PSIsContainer -and $i.Name -ne 'desktop.ini') { New-Object PSObject -Property @{ Path = $i.FullName; LastWrite = $i.LastWriteTime.ToString('yyyy-MM-dd HH:mm') } }
+                        if (-not $i.PSIsContainer -and $i.Name -ne 'desktop.ini') {
+                            # A shortcut is judged by what it starts.
+                            $target = ''
+                            if ($i.Extension -eq '.lnk') { try { $sh = New-Object -ComObject WScript.Shell; $lnk = $sh.CreateShortcut($i.FullName); $target = (($lnk.TargetPath + ' ' + $lnk.Arguments).Trim()) } catch { } }
+                            New-Object PSObject -Property @{ Path = $i.FullName; LastWrite = $i.LastWriteTime.ToString('yyyy-MM-dd HH:mm'); Target = $target }
+                        }
                     }
                 }
             }
         })) {
-        Row $f @('Startup folder', (Split-Path -Leaf $s.Path), $s.Path)
-        Flag MED (Split-Path -Leaf $s.Path) ("in a Startup folder (runs at logon): {0}" -f $s.Path)
+        $name = Leaf $s.Path; $what = Nz $s.Target; if ($what -eq '') { $what = $s.Path }
+        Row $f @('Startup folder', $name, $what)
+        # A shortcut to an installed program is normal; a script, a shell or
+        # something in an odd folder is not.  Unresolved files are MED.
+        $sv = Sev $what
+        if ($sv -eq '' -and (Nz $s.Target) -eq '') { $sv = 'MED' }
+        $ln = Lc (Leaf (Get-ExePath $what))
+        if ($ShellNames -contains $ln -or $NetToolNames -contains $ln -or (Lc $name) -match '\.(bat|cmd|ps1|vbs|js|hta|exe|scr)$') { $sv = 'HIGH' }
+        if ($sv -eq '') { $sv = 'LOW' }
+        Flag $sv $name ("in a Startup folder (runs at logon): {0}" -f $what)
     }
     # WMI event subscriptions run code on a trigger and survive reboots.
     foreach ($c in @(Get-Rows -Name wmi_consumers -Props @('Class', 'Name', 'Command') -Command {
@@ -851,7 +870,7 @@ function S-tasks {
         if ($s -eq 'strong') { Flag HIGH $t.c1 ("task runs a suspicious command: {0}" -f $t.c8) }
         elseif ($s -ne '') { Flag (Sev $t.c8) $t.c1 ("task runs a program from an unusual folder: {0}" -f $t.c8) }
         elseif (-not $ms) {
-            $ln = Lc ([IO.Path]::GetFileName((Get-ExePath $t.c8)))
+            $ln = Lc (Leaf ((Get-ExePath $t.c8)))
             if ($ShellNames -contains $ln) { Flag MED $t.c1 ("task outside \Microsoft\ runs {0} as {1}: {2}" -f $ln, $t.c14, $t.c8) }
             else { Flag LOW $t.c1 ("task outside \Microsoft\ as {0}: {1}" -f $t.c14, $t.c8) }
         }
@@ -1005,7 +1024,7 @@ function S-firewall {
             # package names (@{Microsoft.LockApp_10...}) are shortened.
             $name = Nz $x['Name']
             if ($name -match '^@\{([^_]+)_') { $name = $matches[1] }
-            elseif ($name.StartsWith('@')) { if ($x['App']) { $name = [IO.Path]::GetFileName($x['App']) + ' rule' } elseif ($x['Svc']) { $name = $x['Svc'] + ' rule' } else { $name = $v.Name } }
+            elseif ($name.StartsWith('@')) { if ($x['App']) { $name = Leaf ($x['App']) + ' rule' } elseif ($x['Svc']) { $name = $x['Svc'] + ' rule' } else { $name = $v.Name } }
             $proto = Nz $x['Protocol']; if ($protoName.ContainsKey($proto)) { $proto = $protoName[$proto] }
             $lport = @(@($x['LPort'], $x['LPort2_10'], $x['LPort2_20']) | Where-Object { $_ }) -join ','
             $raddr = @(@($x['RA4'], $x['RA6'], $x['RA42'], $x['RA62'], $x['RMauth']) | Where-Object { $_ }) -join ','
@@ -1016,7 +1035,7 @@ function S-firewall {
             Row $r @($name, $st2[0], $active, 'Allow', (Nz $x['Profile']), $proto, $lport, $raddr, $prog, ($limits -join ' '))
             if (-not $active) { continue }
             $allow++
-            $leaf = Lc ([IO.Path]::GetFileName((Nz $x['App'])))
+            $leaf = Lc (Leaf ((Nz $x['App'])))
             if ($proto -eq '' -and $lport -eq '' -and -not $x['App'] -and -not $x['Svc'] -and $limits.Count -eq 0) {
                 Flag HIGH $name ('enabled inbound rule ({0}) allows every port, protocol, program and address' -f $st2[0])
             } elseif ($ShellNames -contains $leaf -or $NetToolNames -contains $leaf -or (Test-Susp $x['App']) -eq 'odd' -or (Test-Susp $x['App']) -eq 'strong') {
@@ -1276,10 +1295,13 @@ function S-drivers {
     $f = NewCsv drivers @('name', 'display_name', 'state', 'start_mode', 'path')
     foreach ($d in @(Get-Rows -Name drivers -Props @('Name', 'DisplayName', 'State', 'StartMode', 'PathName') -Command { Get-Wmi Win32_SystemDriver })) {
         Row $f @($d.Name, $d.DisplayName, $d.State, $d.StartMode, $d.PathName)
-        if ($d.State -ne 'Running') { continue }
         $p = Lc $d.PathName
         if ($p -eq '') { continue }
-        if ((Test-Susp $p) -ne '') { Flag HIGH $d.Name ("driver loaded from an unusual folder: {0}" -f $d.PathName) }
+        if ($d.State -ne 'Running') {
+            if ((Test-Susp $p) -ne '') { Flag MED $d.Name ("driver registered (not running now) from an unusual folder: {0}. Some hardware-monitor, RGB and anti-cheat tools do this; so does an attacker loading a vulnerable driver" -f $d.PathName) }
+            continue
+        }
+        if ((Test-Susp $p) -ne '') { Flag HIGH $d.Name ("driver loaded from an unusual folder: {0}. Some hardware-monitor, RGB and anti-cheat tools do this; so does an attacker loading a vulnerable driver" -f $d.PathName) }
         elseif ($p -notmatch '\\windows\\' -and $p -notmatch '^\\systemroot\\' -and $p -notmatch '^system32\\') { Flag MED $d.Name ("driver loaded from outside Windows: {0}" -f $d.PathName) }
     }
 }
@@ -1293,8 +1315,10 @@ function S-rights {
     })
     # Who may hold the powerful rights by default: Administrators, Backup
     # Operators, SYSTEM, LOCAL SERVICE, NETWORK SERVICE, SERVICE, IIS_IUSRS,
-    # Server Operators, per-service accounts (S-1-5-80-*), app pools (S-1-5-82-*).
-    $okSid = '^\*?(S-1-5-32-544|S-1-5-32-551|S-1-5-32-549|S-1-5-18|S-1-5-19|S-1-5-20|S-1-5-6|S-1-5-32-568|S-1-5-80-[0-9-]+|S-1-5-82-[0-9-]+|S-1-5-83-0|S-1-5-90-0)$'
+    # Server Operators, and the virtual accounts Windows makes for services
+    # (S-1-5-80, -99 restricted services), app pools (-82), VMs (-83), drivers
+    # (-84 UMDF, -96 font hosts), DWM (-90) and tasks (-87).
+    $okSid = '^\*?(S-1-5-32-544|S-1-5-32-551|S-1-5-32-549|S-1-5-18|S-1-5-19|S-1-5-20|S-1-5-6|S-1-5-32-568|S-1-5-(80|82|83|84|87|90|96|99)-[0-9-]+)$'
     $powerful = @('SeDebugPrivilege', 'SeImpersonatePrivilege', 'SeAssignPrimaryTokenPrivilege', 'SeTcbPrivilege', 'SeCreateTokenPrivilege', 'SeLoadDriverPrivilege', 'SeTakeOwnershipPrivilege', 'SeBackupPrivilege', 'SeRestorePrivilege', 'SeTrustedCredManAccessPrivilege')
     $n = 0
     foreach ($l in $lines) {

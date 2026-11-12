@@ -58,6 +58,7 @@ Txt $bad hosts @"
 127.0.0.1       localhost
 10.6.6.6        update.microsoft.com windowsupdate.com
 10.0.0.20       intranet.corp.local
+100.105.236.63  laptop.tail1e12ea.ts.net. laptop
 "@
 Csv $bad users @('Name','SID','Disabled','Lockout','PasswordRequired','PasswordExpires','Description') @(
     @('Administrator','S-1-5-21-1-2-3-500','False','False','True','False','Built-in account'),
@@ -157,7 +158,11 @@ Csv $bad registry @('Key','Name','Value') @(
     @('HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules','{AAAA-6}','v2.31|Action=Allow|Active=TRUE|Dir=In|Protocol=6|App=C:\Users\jsmith\AppData\Local\Discord\Discord.exe|Name=Discord|'),
     @('HKLM\SOFTWARE\Policies\Microsoft\WindowsFirewall\FirewallRules','{BBBB-1}','v2.31|Action=Allow|Active=TRUE|Dir=In|Name=GPO allow all|')
 )
-Csv $bad startup_files @('Path','LastWrite') @(,@('C:\Users\jsmith\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\run.bat','2026-11-11 09:00'))
+Csv $bad startup_files @('Path','LastWrite','Target') @(
+    @('C:\Users\jsmith\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\run.bat','2026-11-11 09:00',''),
+    @('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\Tailscale.lnk','2026-11-01 09:00','C:\Program Files\Tailscale\tailscale-ipn.exe'),
+    @('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\Helper.lnk','2026-11-11 09:00','C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -w hidden -nop -f C:\Users\Public\h.ps1')
+)
 Csv $bad wmi_consumers @('Class','Name','Command') @(,@('CommandLine','Updater','C:\Windows\System32\cmd.exe /c C:\ProgramData\u.bat'))
 Csv $bad system_files @('Name','Path','Size','Sha256') @(
     @('sethc.exe','C:\Windows\System32\sethc.exe','289792','aaaa'),
@@ -172,6 +177,7 @@ Txt $bad schtasks @"
 "DC01","\SysHealth","11/12/2026 9:05:00 AM","Ready","Interactive/Background","N/A","1","CORP\jsmith","powershell.exe -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA","N/A","N/A","Enabled","Disabled","","SYSTEM","Disabled","72:00:00","Scheduling data is not available in this format.","Daily","9:00:00 AM","1/1/2026","N/A","Every 1 day(s)","N/A","Disabled","Disabled","Disabled","Disabled"
 "HostName","TaskName","Next Run Time","Status","Logon Mode","Last Run Time","Last Result","Author","Task To Run","Start In","Comment","Scheduled Task State","Idle Time","Power Management","Run As User","Delete Task If Not Rescheduled","Stop Task If Runs X Hours and X Mins","Schedule","Schedule Type","Start Time","Start Date","End Date","Days","Months","Repeat: Every","Repeat: Until: Time","Repeat: Until: Duration","Repeat: Stop If Still Running"
 "DC01","\Microsoft\Windows\Defrag\ScheduledDefrag","N/A","Ready","Interactive/Background","N/A","1","Microsoft","%windir%\system32\defrag.exe -c -h -o -$","N/A","N/A","Enabled","Disabled","","SYSTEM","Disabled","72:00:00","Scheduling data is not available in this format.","Weekly","1:00:00 AM","1/1/2026","N/A","SUN","N/A","Disabled","Disabled","Disabled","Disabled"
+"DC01","\Odd <chars>","N/A","Ready","Interactive/Background","N/A","1","Vendor","C:\Program Files\Vendor\tool.exe <arg> ""quoted|piped""","N/A","N/A","Enabled","Disabled","","SYSTEM","Disabled","72:00:00","x","Daily","9:00:00 AM","1/1/2026","N/A","Every 1 day(s)","N/A","Disabled","Disabled","Disabled","Disabled"
 "DC01","\Cleanup","N/A","Ready","Interactive/Background","N/A","1","CORP\jsmith","C:\Users\Public\clean.exe","N/A","N/A","Enabled","Disabled","","SYSTEM","Disabled","72:00:00","Scheduling data is not available in this format.","Daily","9:00:00 AM","1/1/2026","N/A","Every 1 day(s)","N/A","Disabled","Disabled","Disabled","Disabled"
 "@
 Txt $bad auditpol @"
@@ -224,14 +230,15 @@ Csv $bad events @('Time','Log','Id','Detail') @(
 )
 Csv $bad drivers @('Name','DisplayName','State','StartMode','PathName') @(
     @('disk','Disk Driver','Running','Boot','C:\Windows\system32\drivers\disk.sys'),
-    @('evil','evil','Running','System','C:\Users\Public\evil.sys')
+    @('evil','evil','Running','System','C:\Users\Public\evil.sys'),
+    @('D','D','Stopped','Manual','\??\C:\Windows\TEMP\D.sys')
 )
 Txt $bad user_rights @"
 [Unicode]
 Unicode=yes
 [Privilege Rights]
 SeDebugPrivilege = *S-1-5-32-544,*S-1-5-21-1-2-3-1106
-SeImpersonatePrivilege = *S-1-5-19,*S-1-5-20,*S-1-5-32-544,*S-1-5-6
+SeImpersonatePrivilege = *S-1-5-19,*S-1-5-20,*S-1-5-32-544,*S-1-5-6,*S-1-5-99-216390572-1995538116-3857911515-2404958512-2623887229
 SeRemoteInteractiveLogonRight = *S-1-5-32-544,*S-1-1-0
 "@
 Csv $bad features @('ID','Name') @(@('10','Active Directory Domain Services'), @('13','DNS Server'))
@@ -303,6 +310,7 @@ T-Has $sum 'Listening TCP' 'summary: listening ports'
 # system
 T-Has $fl '"HIGH","system","hosts: update.microsoft.com windowsupdate.com"' 'hosts file redirecting Microsoft update is HIGH'
 T-Has $fl '"MED","system","hosts: intranet.corp.local"' 'other hosts entries are MED'
+T-Has $fl '"LOW","system","hosts: laptop.tail1e12ea.ts.net. laptop"' 'Tailscale hosts entries are LOW'
 # users
 T-Has $fl '"HIGH","users","Guest","the Guest account is enabled"' 'Guest enabled'
 T-Has $fl '"HIGH","users","svc_backup$"' 'hidden $ account'
@@ -337,7 +345,9 @@ T-Has $fl 'unknown package loaded into lsass: evilssp' 'unknown LSA package'
 T-HasNot $fl 'into lsass: wdigest' 'default LSA packages not flagged'
 T-Has $fl '"MED","autostart","helper","unknown netsh helper DLL' 'unknown netsh helper'
 T-HasNot $fl '"ifmon"' 'default netsh helper not flagged'
-T-Has $fl '"MED","autostart","run.bat"' 'startup folder file'
+T-Has $fl '"HIGH","autostart","run.bat"' 'a script in a Startup folder is HIGH'
+T-Has $fl '"LOW","autostart","Tailscale.lnk"' 'a shortcut to an installed program is LOW'
+T-Has $fl '"HIGH","autostart","Helper.lnk"' 'a shortcut that starts hidden PowerShell is HIGH'
 T-Has $fl '"HIGH","autostart","WMI Updater"' 'WMI subscription'
 T-Has $fl '"HIGH","autostart","utilman.exe","C:\Windows\System32\utilman.exe has been replaced by cmd.exe' 'utilman replaced by cmd'
 T-HasNot $fl '"osk.exe"' 'unchanged accessibility program not flagged'
@@ -347,7 +357,8 @@ T-Has $fl '"HIGH","tasks","\Cleanup","task runs a program from an unusual folder
 T-Has $fl '"LOW","tasks","\GoogleUpdateTaskMachineCore"' 'third-party task is LOW'
 T-HasNot $fl 'ScheduledDefrag' 'Microsoft task not flagged'
 T-HasNot $fl '"TaskName"' 'repeated header lines are not tasks'
-T-Has $sum 'Scheduled tasks: 4 (3 outside \Microsoft\)' 'task count'
+T-Has $sum 'Scheduled tasks: 5 (4 outside \Microsoft\)' 'task count (a command with < > | and quotes does not stop the section)'
+T-HasNot $sum 'stopped early' 'no section stops early'
 # security
 T-Has $fl '"HIGH","security","WDigest UseLogonCredential"' 'WDigest on'
 T-Has $fl '"HIGH","security","UAC EnableLUA"' 'UAC off'
@@ -403,10 +414,11 @@ T-Has $fl '"LOW","users","Guest","an empty password is allowed' 'password-not-re
 T-Has $fl '"MED","events","2026-11-11 09:01:00 added to a local group","added to a local group: Account Name=jsmith; Group Name=Administrators"' 'admin added'
 T-Has $fl '"HIGH","events","2026-11-11 09:02:00 service installed"' 'suspicious service install is HIGH'
 T-Has $fl '"HIGH","events","service installed x3 (2026-11-11 13:06:38 to 2026-11-11 14:21:39)","service installed: Service Name=D; Service File Name=C:\Windows\TEMP\D.sys (a driver loaded from a temp folder' 'repeated events become one flag with a count'
-T-Eq ([regex]::Matches($fl, 'TEMP\\D\.sys').Count) 1 'only one flag for the repeated driver install'
+T-Eq ([regex]::Matches($fl, '"events","[^"]*","service installed: Service Name=D;').Count) 1 'only one events flag for the repeated driver install'
 T-Has $fl '"LOW","events","2026-11-11 09:03:00 service installed"' 'ordinary service install (an update) is LOW'
 T-Has $fl '"HIGH","drivers","evil"' 'driver from Users\Public'
 T-HasNot $fl '"drivers","disk"' 'normal driver not flagged'
+T-Has $fl '"MED","drivers","D","driver registered (not running now) from an unusual folder' 'a registered temp-folder driver is MED even when not running'
 T-Has $fl '"MED","rights","SeDebugPrivilege *S-1-5-21-1-2-3-1106"' 'debug right for a user'
 T-HasNot $fl 'SeImpersonatePrivilege' 'default impersonate holders not flagged'
 T-Has $fl '"HIGH","rights","SeRemoteInteractiveLogonRight *S-1-1-0"' 'RDP logon for Everyone'
