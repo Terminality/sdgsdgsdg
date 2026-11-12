@@ -2,6 +2,65 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-11: Network config backup and diff
+
+**Added**
+
+- NW-01 Network config backup and diff (`roles/network/NW-01-config-backup.sh`): SSH fetch of the running config for Cisco IOS, Cisco ASA, Palo Alto, FortiGate, VyOS, pfSense, OPNsense, MikroTik and Linux; per-vendor clean-up of self-changing lines; diff against the previous copy with HIGH/MED flags and masked secrets; own known_hosts with a HIGH flag on a changed host key; automatic retry with old SSH algorithms; passwords only through sshpass's environment variable.
+- `tests/nw01.test.sh`; the host list example explains how to name a device's vendor.
+
+**Tested**
+
+- End to end against a real OpenSSH server. Every vendor against sample output under dash, bash, busybox sh, ksh93, mksh and yash (37 checks each). Real network devices still to do.
+
+## 2026-11-11: Database backup
+
+**Added**
+
+- SV-14 Database backup (`roles/applications/SV-14-db-backup.sh`): one dump per MySQL/MariaDB database including `mysql`, PostgreSQL roles plus a custom-format dump per database, SQLite files from web roots; each dump verified; SHA256SUMS; RESTORE.txt; `--copy-to`, `--keep`, `--max-mb`.
+- `tests/sv14.test.sh` (the dump-drop-restore checks run only with `CCDC_TEST_DB=1`, so the suite never creates databases on a real server).
+
+**Tested**
+
+- Under dash, bash, busybox sh, ksh93, mksh and yash with MariaDB 10.11 and PostgreSQL 16 (15 checks each): a table dropped after the backup came back with its row in both engines. Testing found that the PostgreSQL restore command must feed the dump on stdin; RESTORE.txt now does.
+
+## 2026-11-11: Brute-force and spam banning
+
+**Added**
+
+- SV-26 Brute-force and spam banning (`roles/linux/SV-26-banning.sh`): counts failures per address from SSH, FTP, SMTP (SASL and relay), IMAP/POP, web login and PAM log lines; bans with self-expiring entries (nft set timeouts, ipset timeouts, or tracked iptables rules); never bans protected hosts, `--ignore`, own addresses, loopback or the default gateway; reports mailboxes sending to many recipients. Reads only new log lines each run, so no date parsing.
+- `tests/sv26.test.sh`.
+
+**Tested**
+
+- Sample logs and stand-in firewalls under dash, bash, busybox sh, ksh93, mksh and yash (28 checks each). The busybox run found that some busybox awks lack the `^` operator; the network-size calculation now multiplies instead. Live: real failed SSH logins from a separate network namespace were banned in nftables and the ban expired after its time.
+
+## 2026-11-11: Linux change watch
+
+**Added**
+
+- LX-40 Linux change watch (`roles/linux/LX-40-change-watch.sh`): baseline and repeated checks of accounts, passwords (as a checksum, never the hash), groups, sudo/PAM/preload and startup files, cron and timers, unit files, SSH keys, listening ports, SUID files, web root files and kernel modules; one alert per change in `alerts.log`; `--loop`, `--accept`, `--alert-cmd`.
+- `tests/lx40.test.sh`.
+
+**Fixed**
+
+- LX-20: reading shadow and passwd together now tells the files apart by name, so an empty shadow file cannot be mistaken for passwd (the same awk trap found while building LX-40).
+
+**Tested**
+
+- Fake root under dash, bash, busybox sh, ksh93, mksh and yash (21 checks each). Live on Ubuntu 24.04: every planted change reported once, and the second check was quiet.
+
+## 2026-11-11: Linux firewall builder
+
+**Added**
+
+- LX-25 Linux firewall builder (`roles/linux/LX-25-firewall.sh`): incoming traffic limited to loopback, replies, ICMP, DHCP, SSH, scored ports, ports listening now (backdoor-style ports excluded) and admin/scoring hosts; IPv6 dropped; own nftables table or iptables chains; `nft -c` check; detached rollback timer cancelled by `keep-firewall.sh` from a new session; `--save`, `--remove`, `--strict`, `--restrict-out`, `--ssh-from`.
+- `tests/lx25.test.sh`.
+
+**Tested**
+
+- Stand-in nft, iptables and ss under dash, bash, busybox sh, ksh93, mksh and yash (30 checks each). Live on Ubuntu 24.04 with nftables 1.0.9 and iptables 1.8.10, probing from a separate network namespace: allowed ports answer, a backdoor port and (with `--strict`) unlisted ports are dropped, `--ssh-from` limits SSH, and the timer removed the rules when nobody confirmed.
+
 ## 2026-11-11: SSH hardening and key cleanup
 
 **Added**

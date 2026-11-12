@@ -25,6 +25,11 @@ Contents:
 15. Linux safe fixes, `roles/linux/LX-39-safe-fixes.sh` (LX-39)
 16. Linux password rotation, `roles/linux/LX-20-password-rotation.sh` (LX-20)
 17. SSH hardening and key cleanup, `roles/linux/LX-22-ssh-hardening.sh` (LX-22)
+18. Linux firewall builder, `roles/linux/LX-25-firewall.sh` (LX-25)
+19. Linux change watch, `roles/linux/LX-40-change-watch.sh` (LX-40)
+20. Brute-force and spam banning, `roles/linux/SV-26-banning.sh` (SV-26)
+21. Database backup, `roles/applications/SV-14-db-backup.sh` (SV-14)
+22. Network config backup and diff, `roles/network/NW-01-config-backup.sh` (NW-01)
 
 ---
 
@@ -1080,3 +1085,392 @@ On the admin workstation, the team's public key is usually `~/.ssh/id_ed25519.pu
 | `FAILED: sshd stopped listening; old config restored` | sshd did not come back after the reload | The script restored the old config; check `ss -ltnp`, start sshd by hand if needed, read the log |
 | A teammate cannot log in by key any more | Their key was not on `--allow-keys` | Add it and run again, or restore the file from the undo log |
 | `could not rewrite it (immutable?)` | `chattr +i` on the key file | `chattr -i FILE` and run again |
+
+---
+
+## 18. Linux firewall builder, `roles/linux/LX-25-firewall.sh` (LX-25)
+
+Drops every incoming connection the box does not need. Run it LAST of the Linux hardening, after the backup, safe fixes, passwords and SSH, and keep a second session open.
+
+### How to run it
+
+```sh
+sudo sh LX-25-firewall.sh --out /root/ccdc-out --protected /root/protected.csv                  # dry run: prints the rules
+sudo sh LX-25-firewall.sh --out /root/ccdc-out --protected /root/protected.csv --apply --admin 10.0.0.5
+# then, from a NEW ssh session, within 2 minutes:
+sudo sh /root/ccdc-out/LX-25_web01_<time>/keep-firewall.sh
+# once scoring is confirmed green, keep the rules across a reboot:
+sudo sh LX-25-firewall.sh --out /root/ccdc-out --save --apply
+```
+
+| Option | What it does |
+| --- | --- |
+| `--allow SPEC` | Also allow `80`, `80/tcp`, `53/udp` or `8000-8100/tcp` (repeat or comma-separate) |
+| `--admin CIDR` | Allow everything from this address or network (the team's workstations). Repeat for more |
+| `--ssh-from CIDR` | SSH only from these addresses. Leave it out if the scoring engine checks SSH |
+| `--strict` | Allow only scored ports, `--allow`, SSH and DHCP; NOT every port that is listening |
+| `--restrict-out` | Also limit outgoing traffic to DNS, DHCP, NTP, HTTP(S), replies and the admin addresses. Stops reverse shells; can break software that calls out |
+| `--keep-ipv6` | Do not drop IPv6 |
+| `--backend nft\|iptables` | Default: nft when it works |
+| `--confirm-timeout N` | Seconds before the automatic rollback (default 120). `0` = no timer: only when you are at the console |
+| `--save` | With `--apply`: save the live ccdc rules for reboot |
+| `--remove` | With `--apply`: remove the ccdc rules |
+
+### What it allows
+
+| Allowed | Why |
+| --- | --- |
+| Loopback, replies to the box's own connections | Nothing works without them |
+| ICMP (ping, errors) | Scoring often pings; path MTU needs ICMP errors |
+| UDP 68 (and 546 with `--keep-ipv6`) | DHCP replies: without them a DHCP box loses its address at lease renewal |
+| SSH, on the port `sshd -T` reports | Team access (limited with `--ssh-from`) |
+| Every port on the protected list (type `port`) | Scored services, even if down right now |
+| Every port listening on a network address now | Running services keep working. Not with `--strict` |
+| Everything from `--admin` and protected hosts (type `host`) | The team and the scoring engine |
+
+Not allowed, and listed under "NOT allowed": ports listening on backdoor-style numbers (1337, 4444, 4445, 5555, 6666, 6667, 12345, 31337, 54321, 2375 Docker API), and listeners on 127.0.0.1 only (they need no rule). IPv6 is dropped except loopback.
+
+### Safety
+
+- **Own rules only.** nftables: table `inet ccdc`. iptables: chains `CCDC-IN`/`CCDC-OUT`, jumped to from the top of `INPUT`/`OUTPUT`. Nothing else is flushed, so Docker, fail2ban, firewalld and ufw keep their rules. `FORWARD` is never touched.
+- **Checked first.** The nft ruleset is checked with `nft -c` before loading; if loading fails, whatever loaded is removed.
+- **Rollback timer.** After `--apply`, a detached timer removes the rules after `--confirm-timeout` seconds unless `keep-firewall.sh` is run. Run it from a NEW ssh session: that proves new connections still get in, which an open session cannot (open sessions survive any rule). At a terminal the script also asks; answering `y` removes the rules at once.
+- **Not saved for reboot** until you run `--save --apply`. Until then a reboot is a last-resort undo.
+
+### What it produces
+
+In `<out>/LX-25_<host>_<UTC time>/`:
+
+| File | Contents |
+| --- | --- |
+| `summary.txt` | State (live, rolled back, dry run), allowed ports and why, what is not allowed, the confirm command |
+| `ports.csv` | `proto,port,allowed,reason` |
+| `ruleset.nft` or `ruleset.iptables.sh` | The exact rules |
+| `rollback.sh` | Removes the rules (also in the undo log) |
+| `keep-firewall.sh` | Cancels the rollback timer |
+| `ROLLED_BACK` | Appears when the timer removed the rules |
+
+Dropped packets are logged with the prefix `CCDC-DROP` (`journalctl -k | grep CCDC-DROP`, or `dmesg`), limited to 10 a minute.
+
+### What to watch for
+
+- **A scored service that is down right now** is not listening, so its port opens only if it is on the protected list or in `--allow`. Keep the protected list complete.
+- **Port 2024, 8000 and other unknown listeners** are opened by default because they are listening. Read the allowed list; anything you do not recognise is worth a look with the collector (SH-05) before you `--save`. `--strict` is the tight option once the protected list is right.
+- **Other firewalls still apply.** A port allowed here can still be blocked by ufw or firewalld rules.
+- **Fan-out:** without a terminal the script does not ask; confirm from the admin workstation with `ssh root@box sh .../keep-firewall.sh`, which is itself the "new connection" test.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `nft rejected the ruleset` (exit 5) | A rule this nft version does not understand | Read the log line; try `--backend iptables` |
+| Scoring went red right after applying | A scored port was not open | Wait for the timer or run `rollback.sh`; add the port to the protected list or `--allow`; apply again |
+| `too late: the rules were already rolled back` | `keep-firewall.sh` ran after the timer | Apply again and confirm sooner, or use a longer `--confirm-timeout` |
+| SSH locked out | `--ssh-from` without your address | Wait for the timer (that is what it is for); from the console run `rollback.sh` |
+| Rules gone after a reboot | `--save --apply` was not run | Apply, confirm, then `--save --apply` |
+| Under yash, output only appears when the timer ends | yash waits for the detached timer when the script's output is piped | Run it at a terminal, or with another shell |
+
+---
+
+## 19. Linux change watch, `roles/linux/LX-40-change-watch.sh` (LX-40)
+
+Takes a quick baseline of every place a red team uses to keep access, then checks again, once or every minute, and raises one alert per change. Start it once the box is hardened, and send the alerts off the box.
+
+It changes nothing on the host. A check takes about a second (a few seconds with the SUID scan on a big disk).
+
+### How to run it
+
+```sh
+sudo sh LX-40-change-watch.sh --out /root/ccdc-out --baseline      # after hardening
+sudo sh LX-40-change-watch.sh --out /root/ccdc-out                 # one check
+# keep it running, alerts copied to the admin workstation:
+nohup sudo sh LX-40-change-watch.sh --out /root/ccdc-out --loop 60 \
+    --alert-cmd "ssh admin@10.0.0.5 'cat >>/srv/alerts/web01.log'" >/root/ccdc-out/watch.out 2>&1 &
+sudo sh LX-40-change-watch.sh --out /root/ccdc-out --accept        # after changing things on purpose
+```
+
+| Option | What it does |
+| --- | --- |
+| `--baseline` / `--accept` | Take a new baseline from the current state. Use `--accept` after reviewing changes the team made |
+| `--loop N` | Check every N seconds (at least 10) until stopped |
+| `--count N` | With `--loop`: stop after N checks |
+| `--webroot DIR` | Also watch DIR (the usual web roots are watched already) |
+| `--no-suid` | Skip the SUID/SGID scan, which reads the whole root file system |
+| `--alert-cmd CMD` | After a check that found changes, run CMD with the new alert lines on its stdin (`ssh ... 'cat >>file'`, `logger -t ccdc`, `mail ...`) |
+| `--state DIR` | Where the baseline lives (default `<out>/watch-<host>`) |
+
+The first check with no baseline takes one.
+
+### What it watches
+
+| Section | What | Severity |
+| --- | --- | --- |
+| users | Accounts added, removed, or changed (an account turned into UID 0 is HIGH) | added HIGH |
+| passwords | A password changed: compared as a short checksum of the shadow field, never the hash | MED |
+| groups | Members of every group; `sudo`, `wheel`, `admin`, `root`, `adm`, `docker`, `lxd`, `disk`, `shadow` changes are HIGH | HIGH / LOW |
+| files | sudoers, PAM, `/etc/security`, `ld.so.preload` and `ld.so.conf`, profile and shell startup files, `/etc/environment`, hosts, resolv.conf, nsswitch, sshd config, sysctl files | HIGH for sudo/PAM/preload or any new file, else MED |
+| cron | `/etc/crontab`, cron folders, user crontabs, at and anacron spools, systemd timers | added or changed HIGH |
+| units | systemd unit files, init.d scripts, `rc.local` | added HIGH, changed MED |
+| keys | Every account's `authorized_keys` (hash and key count) | added or changed HIGH |
+| ports | Listening TCP/UDP ports and their programs | backdoor-style port HIGH, else MED; a port that stopped is MED (a scored service may be down) |
+| suid | SUID/SGID programs | added HIGH |
+| web | Files in web roots by size and time | new program file HIGH, new or removed file MED, changed LOW/MED |
+| modules | Loaded kernel modules | added HIGH |
+
+### What it produces
+
+In the state folder (`<out>/watch-<host>/`):
+
+| File | Contents |
+| --- | --- |
+| `alerts.log` | Every alert ever raised: `time SEVERITY section change item - detail`, HIGH first within each check |
+| `changes-since-baseline.txt` | Everything that differs from the baseline now |
+| `baseline/`, `last/` | The snapshots, one plain-text file per section, no secrets |
+
+Each check alerts only on what changed since the previous check, so one change is reported once; `changes-since-baseline.txt` keeps the running total.
+
+### What to watch for
+
+- **Your own changes show up too.** After the team changes something on purpose, run `--accept`.
+- **Send alerts off the box.** A red team with root can stop this script or edit its files. `--alert-cmd` is the way out.
+- **Web files are compared by size and time**, not content, to stay fast. A careful attacker can keep both the same; the backup's hash list (LX-31) catches that: `sha256sum -c files.sha256`.
+- **"stopped listening" on a scored port** means the service is down: check it first.
+- **Package updates** change unit files and programs. Check the package log before treating those as an attack.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Hundreds of alerts on the first check | The baseline was taken before hardening | `--accept`, then watch |
+| `passwords` and `keys` never change | Not root, so shadow and other homes cannot be read | Run as root |
+| Checks are slow | The SUID scan on a large disk | `--no-suid`, or a longer `--loop` |
+| `--alert-cmd failed` warning | The command failed (no SSH key, host down) | Alerts are still in `alerts.log`; test the command by hand: `echo test \| CMD` |
+| The loop stopped when the session closed | Started without `nohup` | Use `nohup ... &`, `tmux` or `screen` |
+
+---
+
+## 20. Brute-force and spam banning, `roles/linux/SV-26-banning.sh` (SV-26)
+
+Reads the login logs, counts failures per source address, and bans an address that passes the limit. The ban removes itself after `--ban-time` minutes, so a mistake fixes itself. Spam from a compromised mailbox is reported, not banned.
+
+### How to run it
+
+```sh
+sudo sh SV-26-banning.sh --out /root/ccdc-out --protected /root/protected.csv                 # dry run
+sudo sh SV-26-banning.sh --out /root/ccdc-out --protected /root/protected.csv --apply --loop 60
+sudo sh SV-26-banning.sh --out /root/ccdc-out --list                                           # current bans
+sudo sh SV-26-banning.sh --out /root/ccdc-out --apply --unban 10.6.6.66
+```
+
+Keep it running with `nohup ... &`, `tmux` or `screen`. Put the scoring engine on the protected list as a `host`: after a password change it fails logins too.
+
+| Option | What it does |
+| --- | --- |
+| `--max-fails N` | Failures (SSH, FTP, mail, PAM) in the window that earn a ban (default 10) |
+| `--web-max N` | Web login attempts that earn a ban (default 30; real users log in once, a guesser hundreds of times) |
+| `--window MIN` | Counting window (default 10) |
+| `--ban-time MIN` | Ban length (default 30) |
+| `--mail-max N` | Recipients per sender in the window before a spam warning (default 200) |
+| `--ignore CIDR` | Never ban this address or network (repeat) |
+| `--log FILE` | Read ONLY these logs (repeat), not the usual ones or the journal |
+| `--history N` | Lines read from each log on the very first run (default 2000) |
+| `--loop N` / `--count N` | Run every N seconds; stop after N runs |
+| `--backend` | `nft` (default when it works), `ipset`, or `iptables` |
+| `--list` / `--unban IP` | Show bans / remove one (with `--apply`) |
+
+### What it counts
+
+| Service | Log lines |
+| --- | --- |
+| SSH | `Failed password for ...`, invalid-user scans that disconnect before a password, `maximum authentication attempts exceeded` |
+| FTP | vsftpd `FAIL LOGIN`, proftpd `Login failed`, pure-ftpd `Authentication failed` |
+| SMTP | postfix `SASL ... authentication failed`, `Relay access denied` |
+| IMAP/POP | dovecot `auth failed ... rip=` |
+| Web | `POST` to `wp-login.php`, `xmlrpc.php`, Joomla `/administrator`, `/user/login`, Roundcube, phpMyAdmin, `/login`, `/admin`; any HTTP 401 |
+| Other | any PAM `authentication failure ... rhost=` |
+| Spam (report only) | postfix `from=<sender> ... nrcpt=N`, summed per sender |
+
+Logs read by default: `/var/log/auth.log` or `/var/log/secure`, FTP logs, `/var/log/mail.log` or `maillog`, Apache and nginx access logs. When there is no SSH log file, the journal is read instead.
+
+**How the window works without parsing dates:** each run reads only what was added to each log since the last run, and stores those counts with the run's time. The window is the sum of runs in the last `--window` minutes. A log that got shorter (rotated) is read from the start again.
+
+### Never banned
+
+Protected hosts (type `host`), `--ignore` addresses, this box's own addresses, loopback, and the **default gateway**. When the network NATs traffic, every outside client looks like the gateway, and banning it would cut off the scoring engine. These show as `NOT BANNED` when they pass the limit, so you can decide.
+
+### What it produces
+
+In `<out>/ban-<host>/`:
+
+| File | Contents |
+| --- | --- |
+| `bans.csv` | `time,address,services,failures,accounts_tried,until,action` |
+| `events.log` | One line per run, bans, the `NOT BANNED` and `SPAM?` warnings |
+| `hits`, `offsets` | The window counts and how far each log was read |
+
+Firewall: nftables table `inet ccdc_ban` (two address sets with per-entry timeouts, one drop rule); or ipset `ccdc_ban` plus one iptables rule; or one iptables rule per address, removed by a later run when due. The undo log removes it all. A dry run keeps no state, so it can be repeated.
+
+### What to watch for
+
+- **Accounts tried** in `bans.csv` tell you what the red team is guessing: if a real team account is on the list, change its password.
+- **`SPAM?`** means a local mailbox is sending to many people: its password is probably known. Change it (SV-12 / LX-20) and check the mail queue.
+- **Many addresses, few tries each** stay under the limit. Lower `--max-fails`, or block the range with the firewall builder.
+- **First run.** It reads the last 2000 lines of each log, so old failures can trigger bans straight away. Do a dry run first.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `0 new failure line(s)` while an attack runs | The service logs somewhere else, or in a different format | Find the log, pass it with `--log`, run with `--debug`; send the line format to whoever maintains the kit |
+| The scoring engine got banned | Not on the protected list | `--unban` it, add it as `host` to the protected list |
+| `NOT BANNED (default gateway ...)` | Traffic arrives NATed through the gateway | Ban by hand only if you are sure; better, firewall at the edge |
+| `no firewall tool found` (exit 3) | No nft, ipset or iptables | Install nftables |
+| Bans gone after a reboot | They are timed and not saved, on purpose | Keep it running in a loop |
+
+---
+
+## 21. Database backup, `roles/applications/SV-14-db-backup.sh` (SV-14)
+
+Dumps every database on a Linux or Unix host, checks each dump can be read back, hashes them, and can copy them off the box. Copying a running database's files does not give a usable backup; a dump does. Run it in the first minutes, next to the Linux backup (LX-31).
+
+### How to run it
+
+```sh
+sudo sh SV-14-db-backup.sh --out /root/ccdc-out
+sudo sh SV-14-db-backup.sh --out /root/ccdc-out --copy-to admin@10.0.0.5:/srv/backups/db01/
+sudo sh SV-14-db-backup.sh --out /root/ccdc-out --mysql-cnf /root/my.cnf --keep 3
+```
+
+| Option | What it does |
+| --- | --- |
+| `--only mysql,postgres,sqlite` | Which engines (default: all that are found) |
+| `--mysql-cnf FILE` | MySQL client file with a user and password (`[client]` section), when root cannot log in through the socket |
+| `--sqlite FILE` | Also back up this SQLite file (repeat) |
+| `--max-mb N` | Refuse if the databases add up to more than N MB (default 4096); also refuses when the disk is too full |
+| `--keep N` | Keep only the newest N SV-14 backups of this host in the output folder |
+| `--copy-to DEST` | Copy the dumps, hashes and restore notes off the box with `scp` |
+
+It changes nothing in the databases or on the host, so it needs no `--apply`.
+
+### What it dumps
+
+| Engine | Files | How |
+| --- | --- | --- |
+| MySQL / MariaDB | `mysql_<db>.sql.gz`, one per database, including `mysql` (accounts and grants) | `mysqldump`/`mariadb-dump --single-transaction --routines --triggers --events`; checked with `gzip -t` and the "Dump completed" line |
+| PostgreSQL | `pg_globals.sql.gz` (roles), `pg_<db>.dump` per database | `pg_dumpall --globals-only` and `pg_dump -Fc` as the `postgres` account; checked with `pg_restore -l` |
+| SQLite | `sqlite_<n>_<name>` | Files in web roots, `/var/lib/grafana` and `/opt` that start with the SQLite header, and `--sqlite` files; `sqlite3 .backup` when available, else a copy |
+
+Login for MySQL follows SV-01: `--mysql-cnf`, then root through the socket, then `/etc/mysql/debian.cnf`, then the client's defaults. It never prompts.
+
+### What it produces
+
+In `<out>/SV-14_<host>_<UTC time>/` (mode 700, files 600): the dumps, `SHA256SUMS`, `dumps.csv` (`engine,database,file,size_kb,status`), `RESTORE.txt` with the commands for each dump, and `summary.txt`.
+
+### Restoring
+
+```sh
+cd /root/ccdc-out/SV-14_db01_<time>
+sha256sum -c SHA256SUMS
+gzip -dc mysql_wordpress.sql.gz | mysql                                           # REPLACES the database
+sudo -u postgres pg_restore --clean --if-exists -d shopdb < pg_shopdb.dump         # REPLACES its objects
+sudo -u postgres createdb restore_check && sudo -u postgres pg_restore -d restore_check < pg_shopdb.dump   # compare first
+```
+
+PostgreSQL dumps are fed on stdin (`<`): the `postgres` account cannot open files in the private backup folder itself. `RESTORE.txt` also shows how to load a MySQL dump under another name to compare, and how to cut one table out of a dump.
+
+### What to watch for
+
+- **The dumps hold every password hash and every row**, including the `mysql` system database. Keep them private and copy them only to the team's machine.
+- **Restoring a whole database undoes everything since the dump**, including legitimate changes (orders, posts). Restore one table, or compare first, when you can.
+- **The `mysql` database dump restores accounts too.** Load it only to undo account changes, and change the passwords again afterwards.
+- **MyISAM tables** are dumped without a lock; one that is written during the dump can be a moment inconsistent.
+- **MongoDB, Redis and MSSQL** are not covered.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `MySQL/MariaDB is running but could not log in` | root needs a password and there is no `debian.cnf` | `--mysql-cnf` with a working account |
+| `PostgreSQL is running: run as root` | Not root | `sudo` |
+| A MySQL dump `FAILED` | Disk full, a crashed table, or no rights to a database | Read the log; `mysqlcheck` the database; check free space |
+| `the databases add up to about N MB` (exit 3) | Bigger than `--max-mb` | Raise `--max-mb`, or `--out` on a bigger disk |
+| `pg_restore: could not open input file ... Permission denied` | Passing the file name to `pg_restore` run as postgres | Feed it on stdin: `pg_restore ... < FILE` |
+| SQLite marked "may be inconsistent" | No `sqlite3`, and the app may write while it is copied | Install `sqlite3`, or stop the app for the copy |
+
+---
+
+## 22. Network config backup and diff, `roles/network/NW-01-config-backup.sh` (NW-01)
+
+Logs in to every firewall, router and switch over SSH, saves its running configuration, and shows what changed since the last saved copy. Run it first (the copy you restore from) and again every few minutes (the change watch for network gear).
+
+It only sends "show" commands. Nothing on the devices changes.
+
+### How to run it
+
+```sh
+sh NW-01-config-backup.sh --out ~/ccdc-out --hosts config/hosts.csv                        # SSH keys
+CCDC_NET_PASS='...' sh NW-01-config-backup.sh --out ~/ccdc-out --hosts config/hosts.csv --password-env
+sh NW-01-config-backup.sh --out ~/ccdc-out --device fw01,10.0.2.1,paloalto,admin --ask-password
+# every 5 minutes:
+while :; do sh NW-01-config-backup.sh --out ~/ccdc-out --hosts config/hosts.csv --password-env; sleep 300; done
+```
+
+Run it from the admin workstation (a Linux box that can reach the devices' management addresses).
+
+| Option | What it does |
+| --- | --- |
+| `--hosts FILE` | Host list. Rows with `os` = `network` take the vendor from the notes ("Palo Alto", "Cisco IOS", "Cisco ASA", "FortiGate", "VyOS", "pfSense", "OPNsense", "MikroTik") or a `vendor` column; a vendor name in `os` works too |
+| `--device SPEC` | `NAME,ADDRESS,VENDOR[,USER[,PORT]]` (repeat) |
+| `--user NAME` | Login name when the list gives none (default `admin`) |
+| `--password-env` | Password from `$CCDC_NET_PASS`, handed to `sshpass -e` in the environment (never on a command line) |
+| `--ask-password` | Ask once, without echo |
+| `--enable-env` | Cisco: send `enable` with `$CCDC_NET_ENABLE` when the login is below privilege 15 |
+| `--legacy-ssh` | Allow old SSH algorithms from the start. Also tried automatically when a device refuses the modern ones |
+
+Without a password option, SSH keys are used and the script never prompts.
+
+### Vendors
+
+| Vendor | Commands sent | Log in as |
+| --- | --- | --- |
+| `cisco-ios` | `terminal length 0`, `show running-config` | A privilege 15 account (or `--enable-env`) |
+| `cisco-asa` | `terminal pager 0`, `show running-config` | An admin, usually with `--enable-env` |
+| `paloalto` | `set cli pager off`, `show config running` | An admin |
+| `fortigate` | `show` | An admin |
+| `vyos` | `show configuration commands` | The VyOS user |
+| `pfsense`, `opnsense` | `cat /conf/config.xml` | `root` (admin lands in the menu) |
+| `mikrotik` | `/export` | An admin |
+| `linux` | `iptables-save`, `nft list ruleset`, `ip addr`, `ip route` | root (named with a `vendor` column or `--device`) |
+
+Before comparing, lines that change by themselves are dropped: prompts and echoed commands, Cisco "Last configuration change" and NVRAM lines, ASA checksums and serial lines, the FortiGate file version, nftables packet counters.
+
+### What it produces
+
+| Where | What |
+| --- | --- |
+| `<out>/NW-01_<host>_<time>/summary.txt` | Per device: lines, lines added and removed, status; then the flags |
+| `.../devices.csv` | `device,address,vendor,status,lines,added,removed,sha256` |
+| `.../<device>.diff` | Unified diff against the previous copy (holds secrets; mode 600) |
+| `.../flags.csv` | One flag per changed line, secrets masked |
+| `<out>/net-configs/<device>/<time>.cfg` | Every saved config as received (mode 600) |
+| `<out>/net-configs/known_hosts` | The devices' SSH host keys |
+
+A changed line about accounts, passwords, SNMP, NAT, permits/allows/accepts, telnet, the web management server, AAA, crypto, tunnels, routes, rules, policies or SSH is HIGH. Any other change is MED.
+
+### What to watch for
+
+- **The saved configs hold password hashes, SNMP communities and VPN keys.** Everything printed is masked; the files are not.
+- **Check the first copy of each device looks complete.** A short file usually means the account cannot see the whole config (Cisco below privilege 15).
+- **A changed SSH host key is HIGH and stops that device's backup.** The device was replaced or reinstalled, or someone is in the middle. Find out which, then delete its line from `known_hosts`.
+- **The vendor commands are written from the vendors' documentation and tested against sample output, not real devices.** Run it once on the real gear before relying on it, and send any surprise to whoever maintains the kit.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `backup FAILED: Permission denied` | Wrong user or password, or keys not installed | Check by hand: `ssh USER@ADDRESS`; for passwords use `--password-env` |
+| `password logins need sshpass` (exit 3) | sshpass not installed on the admin box | `apt install sshpass`, or use keys |
+| `empty answer (no rights to show the config?)` | Account cannot run the show command, or pfSense admin menu | Use a privilege 15 / admin account; pfSense: `root` |
+| `no matching key exchange method` in the log | Very old device | Retried automatically; if it still fails, check `ssh -Q kex` on the admin box |
+| `os is network but the vendor is unknown` | Notes do not name a vendor | Add the vendor to the notes or a `vendor` column |
+| Every run shows the same lines changed | A line that changes by itself (a clock, a counter) | Send the line format to whoever maintains the kit; it belongs in the clean-up list |
