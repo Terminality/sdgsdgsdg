@@ -9,6 +9,13 @@ What changed, newest first. Each entry names the scripts touched and how they we
 - SH-06 Windows collector (`roles/windows-ad/SH-06-windows-collector.ps1`): 20 sections in three profiles; every source is saved under `raw\` and can be replayed with `-FromRaw`; password-like account descriptions and the Winlogon password are never copied; attack strings in the checks are split up so antivirus does not flag the file.
 - `tests/sh06.Tests.ps1`.
 
+**Changed after the first live run (Windows 11, not elevated)**
+
+- Process owners come from one `tasklist /v` call instead of one WMI call per process (73 s down to seconds).
+- Firewall rules are read from the registry, which shows what limits a rule (app package, interface, addresses); `netsh` hid those, so Store-app rules looked like allow-all.
+- Per-user folders (AppData, user Temp, Downloads) are MED instead of HIGH; Users\Public, Windows\Temp, PerfLogs and the Recycle Bin stay HIGH.
+- Service-install events are flagged only when the program looks suspicious.
+
 **Tested**
 
 - The library on real Windows PowerShell 5.1 (71 checks). SH-06 by replaying a planted-problem domain controller and a clean workstation under PowerShell 7.4 (114 checks). Not yet run live on Windows.
