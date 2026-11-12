@@ -23,6 +23,7 @@ Contents:
 13. Web and database inventory, `roles/applications/SV-01-web-db-inventory.sh` (SV-01)
 14. Backup, `roles/linux/LX-31-backup.sh` (LX-31)
 15. Linux safe fixes, `roles/linux/LX-39-safe-fixes.sh` (LX-39)
+16. Linux password rotation, `roles/linux/LX-20-password-rotation.sh` (LX-20)
 
 ---
 
@@ -930,3 +931,77 @@ To undo only this script, keep the lines whose second field is `LX-39`.
 | `skipped (not on this kernel)` | Old or trimmed kernel without that setting | Harmless |
 | A service stopped answering on IPv6 | It was bound to a specific IPv6 address (listed under "check by hand") | Undo the two `disable_ipv6` lines, or bind the service to its IPv4 address |
 | `logging` shows nothing | No rsyslog, syslog-ng or auditd installed | Install one if logs matter for the box |
+
+---
+
+## 16. Linux password rotation, `roles/linux/LX-20-password-rotation.sh` (LX-20)
+
+New random passwords for every account that has a usable password, root included. With a team list, it also locks every human account that is not on it. The new passwords go to one private file for the captain, never to the screen or the log.
+
+Run the backup (LX-31) first. **Put every account the scoring engine logs in with on the protected list**, or scoring breaks.
+
+### How to run it
+
+```sh
+sudo sh LX-20-password-rotation.sh --out /root/ccdc-out                                 # dry run
+sudo sh LX-20-password-rotation.sh --out /root/ccdc-out --apply --protected /root/protected.csv
+sudo sh LX-20-password-rotation.sh --out /root/ccdc-out --apply --protected /root/protected.csv --keep /root/team.txt --kick
+```
+
+| Option | What it does |
+| --- | --- |
+| `--keep FILE` | The team's account list, one name per line. Human accounts (UID at or above `UID_MIN`, usually 1000) and any extra UID 0 account NOT on it are locked and expired. Expiry also blocks SSH key logins, which a locked password alone does not |
+| `--users a,b` | Rotate (and lock) only these accounts |
+| `--exclude a,b` | Never touch these accounts |
+| `--passwords FILE` | Use these passwords instead of random ones: `user,password` lines, for a sheet made in advance. Passwords must be 8+ characters with no `:` |
+| `--length N` | Random password length (default 16, minimum 12) |
+| `--no-root` | Leave root's password alone |
+| `--include-me` | Also rotate the account that ran `sudo`. Skipped by default so you can still use `sudo` |
+| `--kick` | Also end every running process of a locked account (logs out a red team session) |
+| `--print` | Show the new passwords on screen at the end |
+
+Random passwords use letters and digits without look-alikes (`0 O 1 l I`) plus `_` and `-`, so they survive being typed into shells, SQL and web forms.
+
+### What it does to each account
+
+| Account | Action |
+| --- | --- |
+| Usable password (hash set, or EMPTY) | New password |
+| On the protected list | Skipped; listed as `skipped (protected)` |
+| Human account not on `--keep` | Locked and expired (password kept, so unlocking restores it) |
+| Extra UID 0 account not on `--keep` | Locked and expired: it is root under another name |
+| Password hash in `/etc/passwd` itself | Moved into `/etc/shadow` with `pwconv`, then rotated. A hash there is used instead of the shadow one, so changing only shadow would leave the old password working |
+| System account without a password (`*`, `!`) | Left alone |
+| Service account with a password but no login shell | Rotated, with a note: check no service logs in with its old password |
+
+Accounts below `UID_MIN` are never locked: services and cron jobs run as them.
+
+### What it produces
+
+In `<out>/LX-20_<host>_<UTC time>/`:
+
+| File | Contents |
+| --- | --- |
+| `summary.txt` | Counts, every account and what happened, warnings (empty passwords, extra UID 0, Samba accounts). No passwords |
+| `accounts.csv` | `user,uid,shell,password_state,action,note`. No passwords |
+| `passwords.csv` | `host,user,password,time`, mode 600, written only with `--apply` |
+
+`/etc/shadow` and `/etc/passwd` are backed up before the first change. The undo log restores them from that backup, which also brings back the OLD passwords: that way no password hash is ever written into a log.
+
+### What to watch for
+
+- **The passwords file is the most sensitive thing on the box.** Copy it to the captain (or read it out), then `rm` it. Its path is in the summary.
+- **Scored accounts.** If the competition requires a scored account's password to change, change it through their password-change process and put the account on the protected list here.
+- **Samba has its own passwords.** The summary lists Samba accounts if `pdbedit` exists; change those with `smbpasswd` if needed.
+- **LDAP, Active Directory and NIS accounts** are not in `/etc/shadow` and are not touched.
+- **Locking does not end open sessions.** Use `--kick`, and check `w` / `who` afterwards.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `chpasswd not found` (exit 3) | Minimal image without shadow-utils | Install the `passwd` / `shadow` package, or busybox |
+| `cannot read /etc/shadow` (exit 3) | Not root | `sudo` |
+| An account shows `failed` | `chpasswd` refused (PAM password-quality rules can reject some passwords) | Rerun; a new random password is made each time. Check the log for the message |
+| You cannot `sudo` any more | You rotated your own account with `--include-me` | Your new password is in `passwords.csv`; read it from the root shell you still have |
+| Scoring broke right after | A scored account was rotated | Put it on the protected list and set the old password back: the undo log restores `/etc/shadow` |

@@ -2,6 +2,18 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-11: Linux password rotation
+
+**Added**
+
+- LX-20 Linux password rotation (`roles/linux/LX-20-password-rotation.sh`): new random (or pre-chosen) passwords for every account with a usable password, skipping protected accounts and the account that ran sudo; with `--keep`, locks and expires human and extra UID 0 accounts not on the team list; moves hashes hidden in `/etc/passwd` into `/etc/shadow`; writes new passwords only to a mode-600 file.
+- `cc_which` in `lib/lib.sh`: full path of a program, so busybox sh cannot swap in its built-in version.
+- `tests/lx20.test.sh`.
+
+**Tested**
+
+- Stand-in chpasswd, usermod and pwconv on a fake root under dash, bash, busybox sh, ksh93, mksh and yash (32 checks each), including a check that no password reaches the log, summary, accounts file or undo log. Live with the real tools on throwaway accounts: new passwords verify, old ones are rejected, the unlisted account is locked and expired.
+
 ## 2026-11-11: Linux safe fixes
 
 **Added**
