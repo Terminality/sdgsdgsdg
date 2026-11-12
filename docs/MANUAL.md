@@ -33,6 +33,7 @@ Contents:
 23. Network config audit, `roles/network/NW-07-config-audit.sh` (NW-07)
 24. Device password rotation, `roles/network/NW-10-device-passwords.sh` (NW-10)
 25. Windows collector, `roles/windows-ad/SH-06-windows-collector.ps1` (SH-06)
+26. Windows backup, `roles/windows-ad/WN-35-backup.ps1` (WN-35)
 
 ---
 
@@ -1669,3 +1670,58 @@ powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-collector.ps1 
 | Firewall or audit sections empty on a non-English Windows | netsh and auditpol text is read in English | The raw files still hold the output; read them by hand |
 | `users` is very long on a DC | A DC's "local" users are the domain's users | Expected; use `-Skip users` for a quick look |
 | A flag is legitimate (a Defender exclusion for SQL, a vendor task) | Flags are pointers, not verdicts | Check it, then move on |
+
+---
+
+## 26. Windows backup, `roles/windows-ad/WN-35-backup.ps1` (WN-35)
+
+Saves the settings and files a hardening step or the red team is most likely to break, each with the command that puts it back. Run it right after the collector (SH-06) and before anything is changed. Run it in an elevated window. It changes nothing on the host.
+
+### How to run it
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\ccdc-out -CopyTo \\10.0.0.5\backups
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\ccdc-out -Path C:\xampp\htdocs,C:\App\config
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\ccdc-out -Only firewall,secpolicy
+```
+
+| Option | What it does |
+| --- | --- |
+| `-CopyTo DEST` | Copy the finished backup to a share or folder. Do this: a red team with admin rights can delete a backup kept on the box |
+| `-Path a,b` | Also back up these files or folders (application folders, XAMPP, config files) |
+| `-NoWebRoots` | Leave website files out; IIS settings are still saved |
+| `-MaxMB N` | Skip any single folder bigger than N MB (default 500). It is listed as not saved |
+| `-AdDatabase` | Domain controller: also save the AD database (ntdsutil IFM). It holds every domain password hash: copy it off and delete it from the DC |
+| `-Only a,b` / `-List` | Run only some items |
+
+### What it saves
+
+| Item | When | What | How it is put back (RESTORE.txt) |
+| --- | --- | --- | --- |
+| registry | always | services, Run keys, Winlogon, debugger keys, LSA, RDP, Session Manager, netsh helpers, Defender, policies | `reg import` per area |
+| firewall | always | every rule and profile setting | `netsh advfirewall import` |
+| secpolicy | always | password and lockout policy, user rights, security options | `secedit /configure` (puts back every setting: read first) |
+| auditpol | always | every audit subcategory | `auditpol /restore` |
+| tasks | always | every scheduled task's XML | `schtasks /create /xml` |
+| hosts | always | `drivers\etc` | copy back |
+| users, services | always | lists (no passwords) for comparison | recreate by hand |
+| iis, web | IIS installed | settings folder; every site's folder from `applicationHost.config` | copy back between `iisreset /stop` and `/start` |
+| dns | DNS server | every zone (dnscmd export), server settings | `dnscmd /zoneadd ... /load` |
+| dhcp | DHCP server | scopes, options, reservations, leases | `netsh dhcp server import` |
+| gpo | domain controller | every GPO (`Backup-GPO`) and an HTML report | `Restore-GPO` |
+| sysvol | domain controller | logon scripts and policy files | copy one file back |
+| ad | domain controller | lists of every user, group, computer and OU; AD Recycle Bin state | Recycle Bin (it reports the command to turn it on; that cannot be undone, so it is not done) |
+| addb | only with `-AdDatabase` | AD database (install-from-media) | authoritative restore |
+
+Every saved file is hashed in `SHA256SUMS.txt`. The backup folder is limited to Administrators and SYSTEM.
+
+### Problems and fixes
+
+| What you see | Why | Fix |
+| --- | --- | --- |
+| Most items FAILED | Not an elevated window | Run as administrator |
+| `web ... over -MaxMB` | A site folder is bigger than the limit | Raise `-MaxMB`, or copy that folder by hand |
+| `gpo` failed on a DC | GroupPolicy module missing | Install the Group Policy Management feature, or skip it with `-Only` |
+| A DNS zone FAILED | dnscmd could not export it (cache or system zones are skipped on purpose) | The DNS settings and the dns folder copy are still saved |
+| `COPY FAILED` | The share is unreachable or not writable | Check the path and rights; the backup on the box is complete |
+| `addb` failed: space in the path | ntdsutil cannot take it | Use `-Out C:\ccdc-out` |

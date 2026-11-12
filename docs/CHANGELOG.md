@@ -2,6 +2,17 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-12: Windows backup
+
+**Added**
+
+- WN-35 Windows backup (`roles/windows-ad/WN-35-backup.ps1`): 17 items with a restore command each, hashes, `-CopyTo`, `-MaxMB`; the AD database only with `-AdDatabase`; the AD Recycle Bin reported, not turned on.
+- `tests/wn35.Tests.ps1`.
+
+**Tested**
+
+- PowerShell 7.4 on Linux with stand-in programs (57 checks). Not yet run on Windows.
+
 ## 2026-11-12: Windows collector
 
 **Added**
