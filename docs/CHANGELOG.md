@@ -2,6 +2,17 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-11: SSH hardening and key cleanup
+
+**Added**
+
+- LX-22 SSH hardening and key cleanup (`roles/linux/LX-22-ssh-hardening.sh`): lists every authorized key of every account and removes keys not on the team's list (removed lines kept as evidence); a settings block at the top of `sshd_config`; `sshd -t` before installing; reload with a listening check and automatic restore; `~/.ssh/rc` and `/etc/ssh/sshrc` quarantined; loosening `Match` blocks, key commands and extra sshd processes reported.
+- `tests/lx22.test.sh`.
+
+**Tested**
+
+- Fake root and stand-in sshd under dash, bash, busybox sh, ksh93, mksh and yash (34 checks each). Live with OpenSSH 9.6: after `--apply` the team key still logs in, the planted and forced-command keys are refused, and password login still works.
+
 ## 2026-11-11: Linux password rotation
 
 **Added**

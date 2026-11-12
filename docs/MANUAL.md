@@ -24,6 +24,7 @@ Contents:
 14. Backup, `roles/linux/LX-31-backup.sh` (LX-31)
 15. Linux safe fixes, `roles/linux/LX-39-safe-fixes.sh` (LX-39)
 16. Linux password rotation, `roles/linux/LX-20-password-rotation.sh` (LX-20)
+17. SSH hardening and key cleanup, `roles/linux/LX-22-ssh-hardening.sh` (LX-22)
 
 ---
 
@@ -1005,3 +1006,77 @@ In `<out>/LX-20_<host>_<UTC time>/`:
 | An account shows `failed` | `chpasswd` refused (PAM password-quality rules can reject some passwords) | Rerun; a new random password is made each time. Check the log for the message |
 | You cannot `sudo` any more | You rotated your own account with `--include-me` | Your new password is in `passwords.csv`; read it from the root shell you still have |
 | Scoring broke right after | A scored account was rotated | Put it on the protected list and set the old password back: the undo log restores `/etc/shadow` |
+
+---
+
+## 17. SSH hardening and key cleanup, `roles/linux/LX-22-ssh-hardening.sh` (LX-22)
+
+A changed password does not stop a red team that planted an SSH key. This lists every authorized key on the box, removes the ones not on the team's list, puts safe settings at the top of `sshd_config`, and reloads sshd without dropping open sessions. If sshd stops listening after the reload, it puts the old config back by itself.
+
+Password logins are left on: scoring engines usually log in with passwords.
+
+### How to run it
+
+```sh
+sudo sh LX-22-ssh-hardening.sh --out /root/ccdc-out                                   # dry run: lists every key
+sudo sh LX-22-ssh-hardening.sh --out /root/ccdc-out --apply --protected /root/protected.csv
+sudo sh LX-22-ssh-hardening.sh --out /root/ccdc-out --apply --protected /root/protected.csv --allow-keys /root/team.pub
+```
+
+Keep a second root session open while applying, as with any SSH change.
+
+| Option | What it does |
+| --- | --- |
+| `--allow-keys FILE` | The team's public keys (`authorized_keys` format) or fingerprints (`SHA256:...`). Every other key is removed from every account |
+| `--remove-all-keys` | Remove every authorized key |
+| `--no-root-login` | `PermitRootLogin no`. The default is `prohibit-password`: root by key only |
+| `--keep-root-login` | Leave `PermitRootLogin` alone |
+| `--no-forwarding` | Also `AllowTcpForwarding no`, `PermitTunnel no`, `GatewayPorts no` (stops pivoting through the box) |
+| `--allow-users LIST` | `AllowUsers`: only these accounts may log in by SSH. Accounts on the protected list are added automatically. Easy to lock yourself out with |
+| `--banner FILE` | Shown before login |
+| `--no-reload` | Install the config but do not reload sshd |
+
+Without `--allow-keys` or `--remove-all-keys`, keys are only listed.
+
+### What it does
+
+| Part | Detail |
+| --- | --- |
+| Keys | Reads every `AuthorizedKeysFile` (from `sshd -T`) of EVERY account, including service accounts such as `www-data`, a favourite hiding place. Keys not allowed are removed; comments and allowed keys stay exactly as they were. The removed lines are saved under the quarantine folder as evidence. Accounts on the protected list keep their keys |
+| Settings | A marked block at the very top of `sshd_config` (sshd uses the first value it reads, so the block wins over the rest of the file and `sshd_config.d`): `PermitEmptyPasswords no`, `PermitRootLogin prohibit-password`, `HostbasedAuthentication no`, `IgnoreRhosts yes`, `PermitUserEnvironment no`, `X11Forwarding no`, `AllowAgentForwarding no`, `MaxAuthTries 4`, `LoginGraceTime 30`. Running it again replaces the block; it never adds a second |
+| Test, then reload | The new file is tested with `sshd -t` and installed only if it passes. sshd is reloaded (open sessions stay up), then checked: if it is no longer listening, the old config goes back and sshd is reloaded or started again |
+| Login scripts | `~/.ssh/rc` and `/etc/ssh/sshrc` run commands at every login; they are moved to quarantine |
+| Reported | `Match` blocks that loosen login settings, `AuthorizedKeysCommand` and similar, extra sshd processes on other ports or configs, keys with forced commands or environment options, `~/.ssh/environment` files, symlinked key files |
+
+### What it produces
+
+In `<out>/LX-22_<host>_<UTC time>/`:
+
+| File | Contents |
+| --- | --- |
+| `summary.txt` | Config status, reload result, each setting before and after, the effective values from `sshd -T`, every key and what happened to it, things to check by hand |
+| `keys.csv` | `user,file,type,fingerprint,comment,options,action` |
+| `settings.csv` | `setting,before,after,status` |
+
+`sshd_config` and every rewritten key file are backed up first; the undo log restores them.
+
+### Getting the team's keys
+
+On the admin workstation, the team's public key is usually `~/.ssh/id_ed25519.pub`. Put every teammate's public key (or its `SHA256:` fingerprint from `ssh-keygen -lf key.pub`) in one file and pass it with `--allow-keys`.
+
+### What to watch for
+
+- **Check the key list before removing.** Run once without `--allow-keys`: `keys.csv` shows every key with its comment. Fan-out tools (the team's own automation) use keys too.
+- **A scoring engine that logs in with a key** needs that account on the protected list.
+- **`Match` blocks are reported, not changed.** A red team can add `Match User x` with looser settings at the end of the file; read the report.
+- **Immutable key files.** A red team can `chattr +i` an `authorized_keys` file. Rewriting it then fails and the report says so: `lsattr` it, `chattr -i` it, run again.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `sshd rejected the new config` (exit 5) | The existing config has an error, or this sshd is too old for a setting | Read the log for the line; fix it and run again. The config was NOT changed |
+| `sshd not found ... sshd_config NOT changed` | No sshd on PATH or in the sbin folders | Keys are still handled; check the SSH server package |
+| `FAILED: sshd stopped listening; old config restored` | sshd did not come back after the reload | The script restored the old config; check `ss -ltnp`, start sshd by hand if needed, read the log |
+| A teammate cannot log in by key any more | Their key was not on `--allow-keys` | Add it and run again, or restore the file from the undo log |
+| `could not rewrite it (immutable?)` | `chattr +i` on the key file | `chattr -i FILE` and run again |
