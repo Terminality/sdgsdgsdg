@@ -76,4 +76,10 @@ rm "$R/var/www/html/index.html"
 out=$(run --out "$O" --state "$ST" --root "$R" --loop 10 --count 1 2>&1)
 t_has "$out" "MED  web       removed /var/www/html/index.html" "--loop runs a check; removed web file MED"
 run --loop 5 >/dev/null 2>&1; t_eq "$?" 2 "--loop under 10 seconds exits 2"
+t_start "in a loop the SUID scan runs on every Nth check only"
+run --out "$O" --state "$ST" --root "$R" --accept >/dev/null 2>&1
+cp "$R/usr/bin/tool2" "$R/usr/bin/tool3"; chmod 4755 "$R/usr/bin/tool3"
+out=$(run --out "$O" --state "$ST" --root "$R" --loop 10 --count 2 --suid-every 2 2>&1)
+t_eq "$(printf '%s\n' "$out" | grep -c 'suid      added   /usr/bin/tool3')" 1 "the new SUID file is reported once, by the check that scans"
+run --suid-every 0 >/dev/null 2>&1; t_eq "$?" 2 "--suid-every 0 exits 2"
 t_done

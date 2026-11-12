@@ -22,7 +22,9 @@ case "$1" in
     -n) awk -F= -v k="$2" '$1 == k { print $2; f = 1 } END { exit !f }' "$S" || exit 255 ;;
     -w) k=${2%%=*}; v=${2#*=}
         grep -q "^$k=" "$S" || exit 255
-        awk -F= -v k="$k" -v v="$v" '$1 == k { $0 = k "=" v } { print }' "$S" >"$S.t" && mv "$S.t" "$S"
+        # Like the kernel: "all.disable_ipv6" also changes every interface,
+        # loopback included.
+        awk -F= -v k="$k" -v v="$v" '$1 == k || (k == "net.ipv6.conf.all.disable_ipv6" && $1 == "net.ipv6.conf.lo.disable_ipv6") { $0 = $1 "=" v } { print }' "$S" >"$S.t" && mv "$S.t" "$S"
         echo "$k = $v" ;;
     *)  exit 1 ;;
 esac
@@ -64,7 +66,7 @@ plant() {
     printf '+ +\n' >"$R/home/bob/.rhosts"
     printf 'trusted.example\n' >"$R/etc/hosts.equiv"
     printf '127.0.0.1 localhost\n10.6.6.6 security.ubuntu.com\n' >"$R/etc/hosts"
-    printf 'net.ipv4.tcp_syncookies=0\nkernel.randomize_va_space=0\nnet.ipv4.conf.all.accept_redirects=1\nnet.ipv6.conf.all.disable_ipv6=0\nnet.ipv6.conf.default.disable_ipv6=0\nnet.ipv4.ip_forward=1\nfs.suid_dumpable=2\n' >"$SYSCTL_STATE"
+    printf 'net.ipv4.tcp_syncookies=0\nkernel.randomize_va_space=0\nnet.ipv4.conf.all.accept_redirects=1\nnet.ipv6.conf.all.disable_ipv6=0\nnet.ipv6.conf.default.disable_ipv6=0\nnet.ipv6.conf.lo.disable_ipv6=0\nnet.ipv4.ip_forward=1\nfs.suid_dumpable=2\n' >"$SYSCTL_STATE"
 }
 
 t_start "options"
@@ -106,6 +108,8 @@ t_has "$(cat "$R/etc/sysctl.d/99-zz-ccdc-safe.conf")" "net.ipv6.conf.all.disable
 t_eq "$(sysctl -n net.ipv4.tcp_syncookies)" 1 "SYN cookies on"
 t_eq "$(sysctl -n kernel.randomize_va_space)" 2 "ASLR full"
 t_eq "$(sysctl -n net.ipv6.conf.all.disable_ipv6)" 1 "IPv6 off"
+t_eq "$(sysctl -n net.ipv6.conf.lo.disable_ipv6)" 0 "but still on for loopback (::1 stays)"
+t_eq "$(tail -n 1 "$R/etc/sysctl.d/99-zz-ccdc-safe.conf")" "net.ipv6.conf.lo.disable_ipv6 = 0" "boot file switches loopback back on, after the all setting"
 t_eq "$(sysctl -n fs.suid_dumpable)" 0 "setuid core dumps off"
 t_eq "$(sysctl -n net.ipv4.ip_forward)" 1 "forwarding left on without --no-forwarding"
 t_has "$(cat "$R/etc/hosts")" "10.6.6.6" "/etc/hosts never changed"

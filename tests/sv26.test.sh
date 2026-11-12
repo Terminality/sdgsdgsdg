@@ -112,4 +112,32 @@ t_has "$(cat "$FW_LOG")" "iptables -I INPUT 1 -m set --match-set ccdc_ban src -j
 run --out "$O" --state "$ST" --backend iptables --apply --no-protected --log "$L/auth.log" >/dev/null 2>&1
 t_has "$(cat "$FW_LOG")" "iptables -I INPUT 1 -s 10.3.3.33 -j DROP -m comment --comment ccdc_ban" "plain iptables ban"
 t_file "$ST/iptables-expiry" "expiry recorded for plain iptables"
+t_start "an attacker cannot choose who gets banned (log injection)"
+: >"$BANNED"; rm -f "$BANNED.table"; : >"$FW_LOG"
+: >"$L/inj.log"
+i=0; while [ $i -lt 12 ]; do
+    # Account names that try to look like "from ADDRESS port N".
+    echo "Nov 11 12:00:00 web01 sshd[5$i]: Failed password for invalid user x from 10.2.2.22 port 1 from 10.1.1.11 port 6$i ssh2" >>"$L/inj.log"
+    echo "Nov 11 12:00:00 web01 sshd[6$i]: Failed password for invalid user y from 0.0.0.0/0 port 1 from 10.1.1.11 port 7$i ssh2" >>"$L/inj.log"
+    echo "Nov 11 12:00:00 web01 sshd[7$i]: Connection closed by invalid user z 10.2.2.23 port 9 10.1.1.11 port 8$i [preauth]" >>"$L/inj.log"
+    echo "Nov 11 12:00:00 web01 sshd[8$i]: Failed password for root from evil.example.com port 9$i ssh2" >>"$L/inj.log"
+    i=$((i + 1))
+done
+out=$(run --out "$O" --state "$T_TMP/state-inj" --log "$L/inj.log" --backend iptables --apply --no-protected 2>&1)
+t_has "$out" "BAN     10.1.1.11" "the real source address is banned"
+t_hasnt "$out" "10.2.2.22" "the address inside the account name is not"
+t_hasnt "$out" "10.2.2.23" "nor the one in a 'Connection closed' line"
+t_hasnt "$(cat "$FW_LOG")" "0.0.0.0/0" "a network never reaches the firewall"
+t_hasnt "$(cat "$FW_LOG")" "evil.example.com" "nor does a host name"
+
+t_start "web: only login pages count, not every admin request"
+: >"$L/web2.log"
+i=0; while [ $i -lt 40 ]; do
+    echo "10.8.8.81 - - [11/Nov/2026:12:05:00 +0000] \"POST /wp-admin/admin-ajax.php HTTP/1.1\" 200 50 \"-\" \"Mozilla\"" >>"$L/web2.log"
+    echo "10.8.8.82 - - [11/Nov/2026:12:05:00 +0000] \"POST /user/login?next=/ HTTP/1.1\" 200 50 \"-\" \"curl\"" >>"$L/web2.log"
+    i=$((i + 1))
+done
+out=$(run --out "$O" --state "$T_TMP/state-web2" --log "$L/web2.log" --no-protected 2>&1)
+t_hasnt "$out" "10.8.8.81" "a signed-in admin's requests are not counted"
+t_has "$out" "BAN     10.8.8.82" "a flood on a login page still is"
 t_done

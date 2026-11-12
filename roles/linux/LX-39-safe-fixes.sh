@@ -4,7 +4,7 @@
 # NAME:     Linux safe fixes
 # ROLE:     Linux  (wave 2, first 15 minutes)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   The Linux twin of WN-43: only fixes that cannot break a scored service,
@@ -80,6 +80,9 @@
 #   - Kernel settings are made permanent in a file named 99-zz-... so it is
 #     read last at boot, after /etc/sysctl.conf; a file named later still
 #     (for example 99-zzz.conf) would win - the change watch shows new files.
+#   - The ipv6 fix has only run against a stand-in sysctl: the test machine's
+#     kernel has no IPv6.  After the first real --apply check "ip -6 addr
+#     show lo" still lists ::1.
 #   - Inside a container some kernel settings are read-only; those show as
 #     failed in fixes.csv and the rest still apply.
 #   - The preload fix trusts the package database.  On a box where the red
@@ -260,6 +263,7 @@ want_sysctl() {
 # report ITEM TEXT -> something to check by hand (summary and fixes.csv).
 report() { printf '%s|%s|%s\n' "$FIX" "$1" "$2" >>"$W/report"; row "$1" "" "$2" "check by hand"; }
 
+KEEPLO=0    # 1 = the ipv6 fix ran: keep IPv6 on the loopback interface
 fix_sysctl() {
     [ "$CC_OS_KERNEL" = linux ] || { row "(all)" "" "" "skipped (not Linux)"; return 0; }
     want_sysctl net.ipv4.tcp_syncookies 1
@@ -299,6 +303,10 @@ fix_ipv6() {
     fi
     want_sysctl net.ipv6.conf.all.disable_ipv6 1
     want_sysctl net.ipv6.conf.default.disable_ipv6 1
+    # "all" also switches IPv6 off on loopback and removes ::1.  It is
+    # switched back on there AFTER the two settings above (see the kernel
+    # settings step), so services bound to ::1 keep starting.
+    "$SYSCTL" -n net.ipv6.conf.lo.disable_ipv6 >/dev/null 2>&1 && KEEPLO=1
 }
 
 fix_forwarding() {
@@ -507,6 +515,8 @@ if [ -s "$W/sysctl_want" ]; then
     {
         printf '# Written by LX-39 (CCDC kit). Read last at boot (99-zz). Undo log has the old values.\n'
         awk -F'|' '{ print $2 " = " $3 }' "$W/sysctl_want"
+        # Must come after "all": the last value written to an interface wins.
+        [ "$KEEPLO" = 1 ] && printf '# loopback keeps IPv6 (::1) so services bound to it still start\nnet.ipv6.conf.lo.disable_ipv6 = 0\n'
     } >"$W/sysctl.conf"
     FIX=sysctl
     if ! cc_guard path "$_sfi"; then
@@ -525,13 +535,28 @@ if [ -s "$W/sysctl_want" ]; then
         }
     fi
     # Running values: change only what differs; undo restores the old value.
+    _v6set=0
     while IFS='|' read -r FIX _k _v _cur; do
         if [ "$_cur" = "$_v" ]; then row "$_k" "$_cur" "$_v" "already ok"; continue; fi
+        [ "$_k" = net.ipv6.conf.all.disable_ipv6 ] && _v6set=1
         cc_run "kernel setting $_k $_cur -> $_v" "$SYSCTL" -w "$_k=$_v"
         _rc=$?
         [ "$_rc" -eq 0 ] && cc_undo_add "restore $_k" "$SYSCTL -w $_k=$_cur"
         row "$_k" "$_cur" "$_v" "$(result "$_rc")"
     done <"$W/sysctl_want"
+    # Loopback: switched back on after "all" switched everything off.  Needed
+    # when "all" was just changed (that also changed loopback) or when
+    # loopback is off from an earlier change.
+    if [ "$KEEPLO" = 1 ]; then
+        FIX=ipv6; _k=net.ipv6.conf.lo.disable_ipv6
+        _cur=$("$SYSCTL" -n "$_k" 2>/dev/null)
+        if [ "$_v6set" = 1 ] || [ "$_cur" != 0 ]; then
+            cc_run "keep IPv6 on loopback (::1 stays)" "$SYSCTL" -w "$_k=0"
+            row "$_k" "$_cur" 0 "$(result $?)"
+        else
+            row "$_k" "$_cur" 0 "already ok"
+        fi
+    fi
 fi
 
 # ---- Summary ------------------------------------------------------------------

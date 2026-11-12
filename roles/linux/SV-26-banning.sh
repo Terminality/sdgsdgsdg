@@ -4,7 +4,7 @@
 # NAME:     Brute-force and spam banning
 # ROLE:     Linux  (wave 2)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Reads the login logs, counts failures per source address, and bans an
@@ -346,35 +346,55 @@ PARSE='
 function clean(a) { gsub(/[][()"]/, "", a); sub(/^::ffff:/, "", a); sub(/%.*/, "", a); return a }  # awk, not shell: posix-ok
 function after(s, word,   i) { i = index(s, word); return i ? substr(s, i + length(word)) : "" }  # awk, not shell: posix-ok
 function first(s,   f) { split(s, f, /[ \t,;>]/); return f[1] }  # awk, not shell: posix-ok
+# isip(a): one plain IPv4 or IPv6 address - no network ("/"), no name.  Every
+# address is checked before it is counted: a ban of "0.0.0.0/0" or of a host
+# name the attacker chose must never reach the firewall.
+function isip(a,   o, i) {  # awk, not shell: posix-ok
+    if (a ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) { split(a, o, "."); for (i = 1; i <= 4; i++) if (o[i] + 0 > 255) return 0; return 1 }
+    return (a ~ /^[0-9a-fA-F:]+$/ && a ~ /:.*:/)
+}
+# emit(service, address, account): print one failure, if the address is real.
+function emit(s, a, u) { a = clean(a); if (isip(a)) print s "|" a "|" u }  # awk, not shell: posix-ok
+# sshfrom(line): the address sshd itself wrote - the LAST "ADDRESS port N" on
+# the line.  The account name comes before it and is chosen by the attacker:
+# logging in as "x from 10.0.0.5 port 1" must not get 10.0.0.5 banned.
+function sshfrom(s,   a) {  # awk, not shell: posix-ok
+    a = ""
+    while (match(s, / [^ ]+ port [0-9]+/)) { a = substr(s, RSTART + 1, RLENGTH - 1); sub(/ port [0-9]+$/, "", a); s = substr(s, RSTART + RLENGTH) }
+    return a
+}
 {
     l = $0
     if (l ~ /sshd(-session)?\[[0-9]+\]:/) {
         if (l ~ /Failed password for/) {
             u = after(l, "Failed password for "); sub(/^invalid user /, "", u); u = first(u)
-            print "ssh|" clean(first(after(l, " from "))) "|" u; next
+            emit("ssh", sshfrom(l), u); next
         }
         if (l ~ /(Connection closed by|Disconnected from) invalid user/) {
-            u = after(l, "invalid user "); split(u, f, " "); print "ssh|" clean(f[2]) "|" f[1]; next
+            u = after(l, "invalid user "); split(u, f, " "); emit("ssh", sshfrom(l), f[1]); next
         }
-        if (l ~ /maximum authentication attempts exceeded/) { print "ssh|" clean(first(after(l, " from "))) "|" ; next }
+        if (l ~ /maximum authentication attempts exceeded/) { emit("ssh", sshfrom(l), ""); next }
         next
     }
-    if (l ~ /FAIL LOGIN: Client "/) { a = after(l, "Client \""); sub(/".*/, "", a); u = ""; if (match(l, /\[[^]]+\] FAIL/)) u = substr(l, RSTART + 1, RLENGTH - 7); print "ftp|" clean(a) "|" u; next }
-    if (l ~ /proftpd/ && l ~ /Login failed|no such user/) { if (match(l, /\[[0-9a-fA-F.:]+\]/)) print "ftp|" clean(substr(l, RSTART, RLENGTH)) "|"; next }
-    if (l ~ /pure-ftpd/ && l ~ /Authentication failed for user/) { if (match(l, /\?@[0-9a-fA-F.:]+/)) print "ftp|" clean(substr(l, RSTART + 2, RLENGTH - 2)) "|" first(after(l, "user [")); next }
-    if (l ~ /SASL [A-Z0-9-]+ authentication failed/) { if (match(l, /\[[0-9a-fA-F.:]+\]: SASL/)) { a = substr(l, RSTART, RLENGTH - 6); print "smtp|" clean(a) "|" } ; next }
-    if (l ~ /Relay access denied/) { if (match(l, /from [^[]*\[[0-9a-fA-F.:]+\]/)) { a = substr(l, RSTART, RLENGTH); sub(/.*\[/, "", a); print "smtp-relay|" clean(a) "|" } ; next }
+    if (l ~ /FAIL LOGIN: Client "/) { a = after(l, "Client \""); sub(/".*/, "", a); u = ""; if (match(l, /\[[^]]+\] FAIL/)) u = substr(l, RSTART + 1, RLENGTH - 7); emit("ftp", a, u); next }
+    if (l ~ /proftpd/ && l ~ /Login failed|no such user/) { if (match(l, /\[[0-9a-fA-F.:]+\]/)) emit("ftp", substr(l, RSTART, RLENGTH), ""); next }
+    if (l ~ /pure-ftpd/ && l ~ /Authentication failed for user/) { if (match(l, /\?@[0-9a-fA-F.:]+/)) emit("ftp", substr(l, RSTART + 2, RLENGTH - 2), first(after(l, "user ["))); next }
+    if (l ~ /SASL [A-Z0-9-]+ authentication failed/) { if (match(l, /\[[0-9a-fA-F.:]+\]: SASL/)) { a = substr(l, RSTART, RLENGTH - 6); emit("smtp", a, "") } ; next }
+    if (l ~ /Relay access denied/) { if (match(l, /from [^[]*\[[0-9a-fA-F.:]+\]/)) { a = substr(l, RSTART, RLENGTH); sub(/.*\[/, "", a); emit("smtp-relay", a, "") } ; next }
     if (l ~ /dovecot/ && (l ~ /auth failed/ || l ~ /authentication failure/) && l ~ /rip=/) {
-        a = first(after(l, "rip=")); u = first(after(l, "user=<")); print "imap-pop|" clean(a) "|" u; next }
+        a = first(after(l, "rip=")); u = first(after(l, "user=<")); emit("imap-pop", a, u); next }
     if (l ~ /qmgr\[[0-9]+\]: [0-9A-Za-z]+: from=</ && l ~ /nrcpt=/) {
         s = first(after(l, "from=<")); n = first(after(l, "nrcpt=")) + 0; if (s != "") print "mailout|" s "|" n; next }
-    if (l ~ /authentication failure;/ && l ~ /rhost=[0-9a-fA-F.:]+/) { a = first(after(l, "rhost=")); u = first(after(l, " user=")); print "pam|" clean(a) "|" u; next }
+    if (l ~ /authentication failure;/ && l ~ /rhost=[0-9a-fA-F.:]+/) { a = first(after(l, "rhost=")); u = first(after(l, " user=")); emit("pam", a, u); next }
     # Web access logs: address first, then the request in quotes.
     if (l ~ /^[0-9a-fA-F.:]+ [^ ]+ [^ ]+ \[[^]]+\] "[A-Z]+ /) {
         split(l, q, "\""); split(q[2], rq, " "); split(q[3], st, " ")
         p = tolower(rq[2])
-        if ((rq[1] == "POST" && p ~ /(wp-login\.php|xmlrpc\.php|\/administrator\/(index\.php)?$|\/user\/login|_task=login|phpmyadmin.*index\.php|\/login|\/admin)/) || st[1] == "401")
-            print "web|" clean($1) "|"
+        # Login pages only.  Not "/admin" in general: a signed-in admin posts
+        # there all day (WordPress admin-ajax.php every few seconds).
+        sub(/[?#].*/, "", p)
+        if ((rq[1] == "POST" && (p ~ /(wp-login\.php|xmlrpc\.php|\/administrator\/(index\.php)?$|\/user\/login$|phpmyadmin\/index\.php$|\/(login|signin|sign-in)(\.[a-z]+)?\/?$)/ || tolower(rq[2]) ~ /_task=login/)) || st[1] == "401")
+            emit("web", $1, "")
     }
 }'
 
