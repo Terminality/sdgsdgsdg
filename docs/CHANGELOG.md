@@ -2,6 +2,17 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-12: Windows password rotation
+
+**Added**
+
+- WN-20 Windows password rotation (`roles/windows-ad/WN-20-password-rotation.ps1`): local accounts, or domain users on a DC, through ADSI; `-Exclude`/`-Users` with the typo stop, `-Passwords` sheet, service-account and SPN detection, protected list, logon test after each change, pending file against an interrupted change.
+- `tests/wn20.Tests.ps1` (stand-in accounts via `CCDC_WN20_FAKE`).
+
+**Tested**
+
+- PowerShell 7.4 on Linux against stand-in accounts (49 checks). Not yet run on Windows.
+
 ## 2026-11-12: Windows backup
 
 **Added**
