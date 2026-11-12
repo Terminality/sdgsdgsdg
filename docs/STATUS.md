@@ -1,6 +1,6 @@
 # Build status
 
-19 of 142 scripts are built.
+20 of 142 scripts are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -8,7 +8,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | --- | --- | --- | --- |
 | 0 | Foundation | 2 | 5 |
 | 1 | Know what we have and what is scored | 9 | 32 |
-| 2 | Evict and lock, all at once | 6 | 27 |
+| 2 | Evict and lock, all at once | 7 | 27 |
 | 3 | Close what should not be open | 2 | 30 |
 | 4 | Hunt, recover and report | 0 | 25 |
 | 5 | Nice to have, and everything if-present | 0 | 23 |
@@ -30,6 +30,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LX-31 | Backup | Linux | built | `roles/linux/LX-31-backup.sh` |
 | LX-39 | Linux safe fixes | Linux | built | `roles/linux/LX-39-safe-fixes.sh` |
 | LX-40 | Linux change watch | Linux | built | `roles/linux/LX-40-change-watch.sh` |
+| WN-20 | Windows password rotation | Windows / AD | built | `roles/windows-ad/WN-20-password-rotation.ps1` |
 | WN-35 | Backup | Windows / AD | built | `roles/windows-ad/WN-35-backup.ps1` |
 | SV-14 | Database backup | Applications | built | `roles/applications/SV-14-db-backup.sh` |
 | NW-07 | Device config audit | Network | built | `roles/network/NW-07-config-audit.sh` |

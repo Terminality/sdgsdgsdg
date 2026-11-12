@@ -34,6 +34,7 @@ Contents:
 24. Device password rotation, `roles/network/NW-10-device-passwords.sh` (NW-10)
 25. Windows collector, `roles/windows-ad/SH-06-windows-collector.ps1` (SH-06)
 26. Windows backup, `roles/windows-ad/WN-35-backup.ps1` (WN-35)
+27. Windows password rotation, `roles/windows-ad/WN-20-password-rotation.ps1` (WN-20)
 
 ---
 
@@ -1725,3 +1726,47 @@ Every saved file is hashed in `SHA256SUMS.txt`. The backup folder is limited to 
 | A DNS zone FAILED | dnscmd could not export it (cache or system zones are skipped on purpose) | The DNS settings and the dns folder copy are still saved |
 | `COPY FAILED` | The share is unreachable or not writable | Check the path and rights; the backup on the box is complete |
 | `addb` failed: space in the path | ntdsutil cannot take it | Use `-Out C:\ccdc-out` |
+
+---
+
+## 27. Windows password rotation, `roles/windows-ad/WN-20-password-rotation.ps1` (WN-20)
+
+Gives every enabled account a new password: local accounts on any Windows box, and every domain user when run on a domain controller. The new passwords go to one file for the captain, never to the screen or the log. Dry run unless `-Apply`. Run in an elevated window; on a DC as a domain admin.
+
+### How to run it
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-password-rotation.ps1 -Out C:\ccdc-out                         # dry run: read the list
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-password-rotation.ps1 -Out C:\ccdc-out -Apply -Exclude mark.jacobs,admin
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-password-rotation.ps1 -Out C:\ccdc-out -Apply -Passwords C:\team\sheet.csv
+```
+
+| Option | What it does |
+| --- | --- |
+| `-Exclude a,b` | Never touch these accounts. One comma-separated list (PowerShell does not allow the option twice) |
+| `-Users a,b` | Change only these accounts |
+| `-IgnoreMissing` | A name in `-Exclude` or `-Users` that is not an account here normally STOPS the script before anything changes (a typo would change the account you meant to keep). This only warns instead |
+| `-Passwords FILE` | `account,password` lines: chosen passwords for those accounts, random for the rest. Spaces around both are dropped; a password may contain commas. Names not here and disabled accounts are listed and not changed |
+| `-Length N` | Random password length (default 16, at least 12). Random passwords always have upper case, lower case and digits, so they pass Windows' complexity rule |
+| `-IncludeMe` | Also change the account running the script |
+| `-IncludeDisabled` | Also give disabled accounts a new password (they stay disabled) |
+| `-IncludeServices` | Also change accounts that run services, tasks or IIS app pools here, or have an SPN |
+| `-Print` | Show the new passwords on screen at the end |
+
+### What it never changes
+
+Guest, DefaultAccount, WDAGUtilityAccount and krbtgt (that has its own two-step reset, WN-22); accounts on the protected list; the account running the script; disabled accounts; and accounts that run a service, scheduled task or IIS app pool on this box or have an SPN (changing those breaks the service until it is given the new password). Each is listed in `accounts.csv` with the reason. It never enables, disables or unlocks an account, and never sets "must change password at next logon" (that would break scored logins).
+
+### What you get
+
+`accounts.csv` (account, scope, state, action, note), `summary.txt`, and with `-Apply` `passwords.csv` (host, account, password, time) readable by Administrators and SYSTEM only. Each change is followed by a logon test with the new password; a failed test is marked in `accounts.csv`. If the script is stopped while changing one account, `pending-password.csv` is left behind: that account has either its old password or the one in that file.
+
+### Problems and fixes
+
+| What you see | Why | Fix |
+| --- | --- | --- |
+| `no such account here: ...` | A name in `-Exclude` / `-Users` is misspelled or not on this box | Fix it, or add `-IgnoreMissing` |
+| `FAILED ... does not meet the password policy requirements` | The domain's policy rejected the password (length, complexity, history) | Use a longer `-Length`, or a different sheet password; the old password still works |
+| A service stopped working after the change | Its account was changed with `-IncludeServices` or runs it from another box | Give the service the new password from `passwords.csv` (`sc.exe config NAME password= ...` or the Services console) |
+| `the new password did not work in a test logon` | A policy, a lockout or replication delay on a DC | Wait a minute and log on by hand; on a DC check replication |
+| Refused: no protected list | `-Apply` needs one | Build `protected.csv` (accounts the scoring engine uses), or pass `-NoProtected` |
