@@ -1,6 +1,6 @@
 # Build status
 
-9 of 142 scripts are built.
+10 of 142 scripts are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -8,7 +8,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | --- | --- | --- | --- |
 | 0 | Foundation | 2 | 5 |
 | 1 | Know what we have and what is scored | 4 | 29 |
-| 2 | Evict and lock, all at once | 2 | 29 |
+| 2 | Evict and lock, all at once | 3 | 29 |
 | 3 | Close what should not be open | 1 | 31 |
 | 4 | Hunt, recover and report | 0 | 25 |
 | 5 | Nice to have, and everything if-present | 0 | 23 |
@@ -23,6 +23,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | SH-05 | Linux collector | Linux | built | `roles/linux/SH-05-linux-collector.sh` |
 | SV-01 | Web and database inventory | Applications | built | `roles/applications/SV-01-web-db-inventory.sh` |
 | LX-20 | Password rotation | Linux | built | `roles/linux/LX-20-password-rotation.sh` |
+| LX-22 | SSH hardening and key cleanup | Linux | built | `roles/linux/LX-22-ssh-hardening.sh` |
 | LX-31 | Backup | Linux | built | `roles/linux/LX-31-backup.sh` |
 | LX-39 | Linux safe fixes | Linux | built | `roles/linux/LX-39-safe-fixes.sh` |
 | SH-04 | Scan diff | Network | built | `roles/network/SH-04-scan-diff.sh` |
