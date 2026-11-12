@@ -3,7 +3,7 @@
 # NAME:     Windows collector
 # ROLE:     Windows / AD  (wave 1)
 # KIND:     readonly - changes nothing on the host
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   One run shows what a Windows host is and what is on it: who can log in and
@@ -73,7 +73,8 @@
 #
 # KNOWN LIMITS / WHAT TO WATCH FOR
 #   - Flags are pointers, not verdicts.  Some will be legitimate on your box.
-#   - Text from netsh, schtasks and auditpol is read in its English form.  On
+#   - Firewall profile state and the audit policy are read from netsh and
+#     auditpol in their English form (firewall rules come from the registry).  On
 #     a Windows installed in another language some firewall and audit checks
 #     come back empty (the raw files still have everything); the summary says
 #     when a section could not be read.
@@ -249,7 +250,9 @@ function Get-Rows {
         else { $lines = @(ConvertTo-CcCsvLine -Values $names) }
         [IO.File]::WriteAllLines($file, [string[]]$lines)
         $rows = @(Read-CsvFile $file)
-        Write-CcLog -Level DEBUG -Message ("source {0}: {1} rows in {2:N1}s" -f $Name, $rows.Count, ([DateTime]::UtcNow - $t0).TotalSeconds)
+        $took = ([DateTime]::UtcNow - $t0).TotalSeconds
+        Write-CcLog -Level DEBUG -Message ("source {0}: {1} rows in {2:N1}s" -f $Name, $rows.Count, $took)
+        if ($took -ge 5) { Note ("slow: {0} took {1:N0}s" -f $Name, $took) }
     }
     $script:SrcCache[$Name] = $rows
     return $rows
@@ -267,6 +270,7 @@ function Get-Text {
         if (Test-Path -LiteralPath $src) { $lines = @([IO.File]::ReadAllLines($src)); Copy-Item -LiteralPath $src -Destination $file }
         else { Note "$Name not in the replay folder" }
     } else {
+        $t0 = [DateTime]::UtcNow
         try {
             # A program writing to stderr must not stop the collector.
             $ErrorActionPreference = 'Continue'
@@ -276,6 +280,9 @@ function Get-Text {
             Note ("{0} could not be read" -f $Name)
         }
         [IO.File]::WriteAllLines($file, [string[]]$lines)
+        $took = ([DateTime]::UtcNow - $t0).TotalSeconds
+        Write-CcLog -Level DEBUG -Message ("source {0}: {1} lines in {2:N1}s" -f $Name, $lines.Count, $took)
+        if ($took -ge 5) { Note ("slow: {0} took {1:N0}s" -f $Name, $took) }
     }
     $script:SrcCache[$key] = $lines
     return $lines
@@ -291,6 +298,10 @@ function Get-Wmi([string]$Class, [string]$Filter = '', [string]$Namespace = 'roo
     if ($Filter) { return Get-CimInstance -Namespace $Namespace -ClassName $Class -Filter $Filter -ErrorAction Stop }  # ps2-ok
     return Get-CimInstance -Namespace $Namespace -ClassName $Class -ErrorAction Stop  # ps2-ok
 }
+
+# Leaf path -> the last part of a path.  [IO.Path]::GetFileName throws on
+# characters such as " < > | that real task and service command lines contain.
+function Leaf($p) { $t = (Nz $p).Trim().Trim('"'); return @($t -split '[\\/]')[-1] }
 
 # Join an array property into one text field.
 function J($v) { if ($null -eq $v) { return '' }; return ((@($v) | ForEach-Object { [string]$_ }) -join ' ') }
@@ -365,6 +376,8 @@ function Read-AllRegistry {
     Read-RegKey "$CCS\Services\mrxsmb10" 0 @('Start')
     Read-RegKey "$CCS\Services\Netlogon\Parameters" 0 @('FullSecureChannelProtection', 'vulnerable_channel_allowlist', 'RequireSignOrSeal')
     Read-RegKey "$CCS\Services\PortProxy" 2
+    Read-RegKey "$CCS\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules"
+    Read-RegKey 'HKLM\SOFTWARE\Policies\Microsoft\WindowsFirewall\FirewallRules'
     Read-RegKey 'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' 0 @('EnableMulticast')
     Read-RegKey 'HKLM\SOFTWARE\Policies\Microsoft\Windows\Installer' 0 @('AlwaysInstallElevated')
     Read-RegKey 'HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging' 0 @('EnableScriptBlockLogging')
@@ -409,15 +422,22 @@ function RegKeys([string]$Key) {
 # look (weak).  Some words are joined from pieces so that antivirus scanning
 # this file does not take the check for the attack it looks for.
 $p1 = 'download' + 'str'; $p2 = 'net' + '\.web' + 'client'; $p3 = 'from' + 'base64'; $p4 = 'invoke-' + 'expression'
-$StrongRe = '(-e(nc|ncodedcommand)?\s+[a-z0-9+/=]{24,}|' + $p1 + '|downloadfile|' + $p2 + '|' + $p3 + '|' + $p4 + '|\biex\b|invoke-webrequest|\biwr\b|start-bitstransfer|bitsadmin.*/transfer|certutil.*(urlcache|-decode)|mshta(\.exe)?\s+(http|javascript|vbscript)|regsvr32.*/i:|rundll32.*(javascript|http)|-w(indowstyle)?\s+h(idden)?\b.*-nop|-nop.*-w(indowstyle)?\s+h(idden)?\b|\bnc(at|64)?(\.exe)?\s+.*-e\s|https?://)'  # ps2-ok (a pattern, not a call)
-$WeakRe = '(\\appdata\\|\\temp\\|\\tmp\\|\\users\\public\\|\\perflogs\\|\\windows\\tasks\\|\\windows\\debug\\|\$recycle\.bin|\\programdata\\[^\\]+\.(exe|dll|ps1|bat|cmd|vbs|js|hta)$)'
+$StrongRe = '(-e(nc|ncodedcommand)?\s+[a-z0-9+/=]{24,}|' + $p1 + '|downloadfile|' + $p2 + '|' + $p3 + '|' + $p4 + '|\biex\b|invoke-webrequest|\biwr\b|start-bitstransfer|bitsadmin.*/transfer|certutil.*(urlcache|-decode)|mshta(\.exe)?\s+(http|javascript|vbscript)|regsvr32.*/i:|rundll32.*(javascript|http)|-w(indowstyle)?\s+h(idden)?\b.*-nop|-nop.*-w(indowstyle)?\s+h(idden)?\b|\bnc(at|64)?(\.exe)?\s+.*-e\s|\b(powershell|pwsh|cmd|mshta|wscript|cscript|rundll32|regsvr32|certutil|bitsadmin|curl|wget)(\.exe)?\b.*https?://)'  # ps2-ok (a pattern, not a call)
+# Folders almost nothing legitimate runs from (odd), and per-user folders
+# where some desktop programs do live - Discord, Teams, VS Code - (user).
+$OddRe = '(\\users\\public\\|\\perflogs\\|\\windows\\temp\\|\\windows\\tasks\\|\\windows\\debug\\|\\windows\\fonts\\.*\.(exe|dll)|\$recycle\.bin|\\programdata\\[^\\]+\.(exe|dll|ps1|bat|cmd|vbs|js|hta)$)'
+$UserRe = '(\\appdata\\|\\temp\\|\\tmp\\|\\downloads\\|%(local)?appdata%|%temp%|%tmp%|%userprofile%)'
+# Test-Susp text -> 'strong' | 'odd' | 'user' | ''
 function Test-Susp([string]$s) {
     $l = Lc $s
     if ($l -eq '') { return '' }
     if ($l -match $StrongRe) { return 'strong' }
-    if ($l -match $WeakRe) { return 'weak' }
+    if ($l -match $OddRe) { return 'odd' }
+    if ($l -match $UserRe) { return 'user' }
     return ''
 }
+# Sev text -> HIGH for strong or odd, MED for a per-user folder, '' otherwise.
+function Sev([string]$s) { switch (Test-Susp $s) { 'strong' { return 'HIGH' } 'odd' { return 'HIGH' } 'user' { return 'MED' } }; return '' }
 $ShellNames = @('cmd.exe', 'powershell.exe', 'pwsh.exe', 'powershell_ise.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe', 'rundll32.exe', 'regsvr32.exe', 'certutil.exe', 'bitsadmin.exe', 'msbuild.exe', 'installutil.exe')
 $NetToolNames = @('nc.exe', 'nc64.exe', 'ncat.exe', 'socat.exe', 'plink.exe', 'chisel.exe', 'ngrok.exe', 'frpc.exe')
 $BadPorts = @(4444, 4445, 1337, 31337, 5555, 6666, 6667, 6697, 9001, 9999, 12345, 54321)
@@ -426,12 +446,24 @@ $ServerParents = @('w3wp.exe', 'httpd.exe', 'nginx.exe', 'php-cgi.exe', 'java.ex
 # Processes (shared by ports, connections and processes).
 function Get-Procs {
     return @(Get-Rows -Name processes -Props @('ProcessId', 'ParentProcessId', 'Name', 'ExecutablePath', 'CommandLine', 'CreationDate', 'Owner') -Command {
-        foreach ($p in @(Get-Wmi Win32_Process)) {
-            $owner = ''
-            if ($p.PSObject.Methods['GetOwner']) {
-                try { $o = $p.GetOwner(); if ($o.User) { $owner = $o.Domain + '\' + $o.User } } catch { }
+        # Owners for every process in one call: asking WMI process by process
+        # (GetOwner) took over a minute on a desktop with 300 processes.
+        # tasklist /v columns by position: 1 PID, 6 user name ("N/A" when unknown).
+        # Not elevated, Windows will not say who owns other users' processes,
+        # and asking anyway made the first live runs slow, so owners are only
+        # read in an elevated window: Get-Process -IncludeUserName (PowerShell
+        # 4 and later), else tasklist /v (columns by position: 1 PID, 6 user).
+        $owners = @{}
+        if ($IsAdmin -and (Get-Command Get-Process).Parameters.ContainsKey('IncludeUserName')) {
+            foreach ($gp in @(Get-Process -IncludeUserName -ErrorAction SilentlyContinue)) { if ($gp.UserName) { $owners[[string]$gp.Id] = $gp.UserName } }
+        } elseif ($IsAdmin) {
+            $hdr = @(); for ($i = 0; $i -lt 10; $i++) { $hdr += ('c' + $i) }
+            foreach ($t in @(Get-Text -Name tasklist -Command { tasklist /v /fo csv /nh } | Where-Object { $_ -match '^"' } | ConvertFrom-Csv -Header $hdr)) {
+                if ($t.c6 -and $t.c6 -ne 'N/A') { $owners[[string]$t.c1] = $t.c6 }
             }
-            $p | Add-Member -MemberType NoteProperty -Name Owner -Value $owner -Force -PassThru
+        }
+        foreach ($p in @(Get-Wmi Win32_Process)) {
+            $p | Add-Member -MemberType NoteProperty -Name Owner -Value ([string]$owners[[string]$p.ProcessId]) -Force -PassThru
         }
     })
 }
@@ -556,6 +588,8 @@ function S-system {
         Row $h @($parts[0], $names)
         if ((Lc $names) -match '(microsoft|windowsupdate|windows\.com|update|defender|virustotal|symantec|mcafee|kaspersky|sophos|crowdstrike|sentinelone)') {
             Flag HIGH "hosts: $names" ("hosts file sends {0} to {1}" -f $names, $parts[0])
+        } elseif ((Lc $names) -match '\.ts\.net\.?(\s|$)') {
+            Flag LOW "hosts: $names" ("hosts file entry written by Tailscale: {0} -> {1}" -f $names, $parts[0])
         } elseif ((Lc $names) -notmatch '^localhost') {
             Flag MED "hosts: $names" ("hosts file entry {0} -> {1}" -f $names, $parts[0])
         }
@@ -583,7 +617,9 @@ function S-users {
         if ($rid -eq '501' -and $en) { Flag HIGH $u.Name 'the Guest account is enabled' }
         if ($rid -eq '500' -and $en) { Flag LOW $u.Name 'the built-in Administrator account is enabled' }
         if ($en -and (Nz $u.Name).EndsWith('$')) { Flag HIGH $u.Name 'enabled account whose name ends in $ (hidden from some listings)' }
-        if ($en -and (Nz $u.PasswordRequired) -eq 'False') { Flag MED $u.Name 'account may have an empty password (password not required)' }
+        # PASSWD_NOTREQD is set on many ordinary accounts; it means an empty
+        # password would be ALLOWED, not that the password is empty.
+        if ($en -and (Nz $u.PasswordRequired) -eq 'False') { Flag LOW $u.Name 'an empty password is allowed for this account (password not required flag); LX/WN password rotation sets one' }
         if ((Lc $u.Description) -match $PwRe) { Flag HIGH $u.Name 'the description field looks like it holds a password (it is not copied here; read it in Windows, then clear it)' }
     }
     Say ('Enabled accounts ({0}): {1}' -f $enabled.Count, (($enabled | Select-Object -First 15) -join ', '))
@@ -643,7 +679,7 @@ function S-ports {
         $ln = Lc $name
         if ($ShellNames -contains $ln -or $NetToolNames -contains $ln) { Flag HIGH $item "$name is listening on a port: a shell or tunnel waiting for connections" }
         elseif ($BadPorts -contains $port) { Flag HIGH $item "port $port is a common backdoor port" }
-        elseif ((Test-Susp $exe) -ne '') { Flag HIGH $item "listening program runs from an unusual folder: $exe" }
+        elseif ((Sev $exe) -ne '') { Flag (Sev $exe) $item "listening program runs from an unusual folder: $exe" }
         elseif ($port -eq 23 -and $s.Proto -eq 'TCP') { Flag MED $item 'Telnet is listening (passwords sent in clear text)' }
         elseif ($port -eq 21 -and $s.Proto -eq 'TCP') { Flag LOW $item 'FTP is listening' }
         elseif ($s.Proto -eq 'TCP' -and -not $p -and $s.Pid -ne '4' -and $s.Pid -ne '0' -and $s.LAddr -ne '127.0.0.1') { Flag LOW $item "listening process $($s.Pid) not found (ended, or hidden)" }
@@ -662,10 +698,12 @@ function S-services {
         if ($s.State -eq 'Running') { $running++ }
         $item = $s.Name
         $sus = Test-Susp $s.PathName
-        $ln = Lc ([IO.Path]::GetFileName($exe))
+        $ln = Lc (Leaf ($exe))
         if ($sus -eq 'strong' -or $ShellNames -contains $ln -or $NetToolNames -contains $ln) {
             Flag HIGH $item ("service runs a command line, not a service program: {0}" -f $s.PathName)
-        } elseif ($sus -eq 'weak') {
+        } elseif ($sus -ne '') {
+            # A service runs as SYSTEM or a service account: even a per-user
+            # folder is wrong for it.
             Flag HIGH $item ("service program is in an unusual folder: {0}" -f $exe)
         } else {
             # Unquoted path with a space, outside Windows: anyone who can write
@@ -702,14 +740,14 @@ function S-autostart {
         Row $f @($r.Key, $r.Name, $r.Value)
         $s = Test-Susp $r.Value
         if ($s -eq 'strong') { Flag HIGH $r.Name ("Run key starts a suspicious command: {0}" -f $r.Value) }
-        elseif ($s -eq 'weak') { Flag HIGH $r.Name ("Run key starts a program in an unusual folder: {0}" -f $r.Value) }
+        elseif ($s -ne '') { Flag (Sev $r.Value) $r.Name ("Run key starts a program in an unusual folder: {0}" -f $r.Value) }
         else { Flag LOW $r.Name ("starts at logon: {0}" -f $r.Value) }
     }
     foreach ($r in @(RegRows 'HKU' -Under)) {
         if ((Lc $r.Key) -notmatch '\\(run|runonce)$') { continue }
         Row $f @($r.Key, $r.Name, $r.Value)
         $s = Test-Susp $r.Value
-        if ($s -ne '') { Flag HIGH $r.Name ("user Run key starts: {0}" -f $r.Value) }
+        if ($s -ne '') { Flag (Sev $r.Value) $r.Name ("user Run key starts: {0}" -f $r.Value) }
         else { Flag LOW $r.Name ("starts at this user's logon: {0}" -f $r.Value) }
     }
     # Winlogon.
@@ -739,10 +777,10 @@ function S-autostart {
     $be = Reg "$CCS\Control\Session Manager" 'BootExecute'
     if ($be -and (Lc $be).Trim() -ne 'autocheck autochk *') { Row $f @('BootExecute', '', $be); Flag MED 'BootExecute' "runs at boot before Windows starts: $be" }
     # netsh helper DLLs load whenever netsh runs.
-    $defaultNetsh = @('authfwcfg.dll', 'dhcpcmonitor.dll', 'dot3cfg.dll', 'fwcfg.dll', 'hnetmon.dll', 'ifmon.dll', 'napmontr.dll', 'netiohlp.dll', 'netprofm.dll', 'nettrace.dll', 'nshhttp.dll', 'nshipsec.dll', 'nshwfp.dll', 'p2pnetsh.dll', 'rasmontr.dll', 'rpcnsh.dll', 'wcnnetsh.dll', 'whhelper.dll', 'wlancfg.dll', 'wshelper.dll', 'wwancfg.dll', 'peerdistsh.dll', 'mprmsg.dll', 'dhcpmonitor.dll', 'wcnnetsh.dll', 'ipmontr.dll', 'ippromon.dll', 'ipxmontr.dll', 'ipxpromn.dll', 'nshhttp.dll')
+    $defaultNetsh = @('authfwcfg.dll', 'dhcpcmonitor.dll', 'dot3cfg.dll', 'fwcfg.dll', 'hnetmon.dll', 'ifmon.dll', 'napmontr.dll', 'netiohlp.dll', 'netprofm.dll', 'nettrace.dll', 'nshhttp.dll', 'nshipsec.dll', 'nshwfp.dll', 'p2pnetsh.dll', 'rasmontr.dll', 'rpcnsh.dll', 'wcnnetsh.dll', 'whhelper.dll', 'wlancfg.dll', 'wshelper.dll', 'wwancfg.dll', 'peerdistsh.dll', 'nshdnsclient.dll', 'netiohlp.dll', 'mprmsg.dll', 'dhcpmonitor.dll', 'wcnnetsh.dll', 'ipmontr.dll', 'ippromon.dll', 'ipxmontr.dll', 'ipxpromn.dll', 'nshhttp.dll')
     foreach ($r in @(RegRows 'HKLM\SOFTWARE\Microsoft\NetSh')) {
         Row $f @('netsh helper', $r.Name, $r.Value)
-        if (-not ($defaultNetsh -contains (Lc ([IO.Path]::GetFileName($r.Value))))) { Flag MED $r.Name "unknown netsh helper DLL: $($r.Value)" }
+        if (-not ($defaultNetsh -contains (Lc (Leaf ($r.Value))))) { Flag MED $r.Name "unknown netsh helper DLL: $($r.Value)" }
     }
     # LSA packages load into lsass.exe and can read passwords.
     $defLsa = @('kerberos', 'msv1_0', 'schannel', 'wdigest', 'tspkg', 'pku2u', 'cloudap', 'negoexts', 'livessp', 'scecli', 'rassfm', '""', '')
@@ -753,7 +791,7 @@ function S-autostart {
         foreach ($pk in @($v -split '\s*\|\s*|\s+')) { if ($pk -ne '' -and -not ($defLsa -contains (Lc $pk))) { Flag MED "LSA $n" "unknown package loaded into lsass: $pk" } }
     }
     # Startup folders.
-    foreach ($s in @(Get-Rows -Name startup_files -Props @('Path', 'LastWrite') -Command {
+    foreach ($s in @(Get-Rows -Name startup_files -Props @('Path', 'LastWrite', 'Target') -Command {
             $dirs = @((Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\StartUp'))
             $ud = Split-Path -Parent $env:PUBLIC
             foreach ($u in @(Get-ChildItem -LiteralPath $ud -Force -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer })) {
@@ -762,13 +800,26 @@ function S-autostart {
             foreach ($d in $dirs) {
                 if (Test-Path -LiteralPath $d) {
                     foreach ($i in @(Get-ChildItem -LiteralPath $d -Force -ErrorAction SilentlyContinue)) {
-                        if (-not $i.PSIsContainer -and $i.Name -ne 'desktop.ini') { New-Object PSObject -Property @{ Path = $i.FullName; LastWrite = $i.LastWriteTime.ToString('yyyy-MM-dd HH:mm') } }
+                        if (-not $i.PSIsContainer -and $i.Name -ne 'desktop.ini') {
+                            # A shortcut is judged by what it starts.
+                            $target = ''
+                            if ($i.Extension -eq '.lnk') { try { $sh = New-Object -ComObject WScript.Shell; $lnk = $sh.CreateShortcut($i.FullName); $target = (($lnk.TargetPath + ' ' + $lnk.Arguments).Trim()) } catch { } }
+                            New-Object PSObject -Property @{ Path = $i.FullName; LastWrite = $i.LastWriteTime.ToString('yyyy-MM-dd HH:mm'); Target = $target }
+                        }
                     }
                 }
             }
         })) {
-        Row $f @('Startup folder', (Split-Path -Leaf $s.Path), $s.Path)
-        Flag MED (Split-Path -Leaf $s.Path) ("in a Startup folder (runs at logon): {0}" -f $s.Path)
+        $name = Leaf $s.Path; $what = Nz $s.Target; if ($what -eq '') { $what = $s.Path }
+        Row $f @('Startup folder', $name, $what)
+        # A shortcut to an installed program is normal; a script, a shell or
+        # something in an odd folder is not.  Unresolved files are MED.
+        $sv = Sev $what
+        if ($sv -eq '' -and (Nz $s.Target) -eq '') { $sv = 'MED' }
+        $ln = Lc (Leaf (Get-ExePath $what))
+        if ($ShellNames -contains $ln -or $NetToolNames -contains $ln -or (Lc $name) -match '\.(bat|cmd|ps1|vbs|js|hta|exe|scr)$') { $sv = 'HIGH' }
+        if ($sv -eq '') { $sv = 'LOW' }
+        Flag $sv $name ("in a Startup folder (runs at logon): {0}" -f $what)
     }
     # WMI event subscriptions run code on a trigger and survive reboots.
     foreach ($c in @(Get-Rows -Name wmi_consumers -Props @('Class', 'Name', 'Command') -Command {
@@ -817,9 +868,9 @@ function S-tasks {
         if (-not $ms) { $nonMs++ }
         $s = Test-Susp $t.c8
         if ($s -eq 'strong') { Flag HIGH $t.c1 ("task runs a suspicious command: {0}" -f $t.c8) }
-        elseif ($s -eq 'weak') { Flag HIGH $t.c1 ("task runs a program from an unusual folder: {0}" -f $t.c8) }
+        elseif ($s -ne '') { Flag (Sev $t.c8) $t.c1 ("task runs a program from an unusual folder: {0}" -f $t.c8) }
         elseif (-not $ms) {
-            $ln = Lc ([IO.Path]::GetFileName((Get-ExePath $t.c8)))
+            $ln = Lc (Leaf ((Get-ExePath $t.c8)))
             if ($ShellNames -contains $ln) { Flag MED $t.c1 ("task outside \Microsoft\ runs {0} as {1}: {2}" -f $ln, $t.c14, $t.c8) }
             else { Flag LOW $t.c1 ("task outside \Microsoft\ as {0}: {1}" -f $t.c14, $t.c8) }
         }
@@ -950,31 +1001,55 @@ function S-firewall {
     if ($found -eq 0) { Note 'firewall profiles not read (English netsh output expected)' }
     else { Say ('Firewall: ' + ((@('Domain', 'Private', 'Public') | Where-Object { $st.ContainsKey($_) } | ForEach-Object { $_ + ' ' + $st[$_].state }) -join ', ')) }
 
-    # Inbound allow rules.  "verbose" adds the program.
-    $r = NewCsv firewall_rules @('name', 'enabled', 'direction', 'action', 'profiles', 'protocol', 'local_port', 'remote_ip', 'program')
-    $rules = @(); $cur = $null
-    foreach ($l in @(Get-Text -Name fw_rules -Command { netsh advfirewall firewall show rule name=all dir=in verbose })) {
-        if ($l -match '^Rule Name:\s*(.*)$') { if ($cur) { $rules += $cur }; $cur = @{ name = $matches[1].Trim() }; continue }
-        if ($cur -and $l -match '^([A-Za-z ]+):\s*(.*)$') { $cur[$matches[1].Trim()] = $matches[2].Trim() }
-    }
-    if ($cur) { $rules += $cur }
-    $allow = 0
-    foreach ($x in $rules) {
-        if ($x['Direction'] -ne 'In' -or $x['Action'] -ne 'Allow') { continue }
-        Row $r @($x.name, $x['Enabled'], $x['Direction'], $x['Action'], $x['Profiles'], $x['Protocol'], $x['LocalPort'], $x['RemoteIP'], $x['Program'])
-        if ($x['Enabled'] -ne 'Yes') { continue }
-        $allow++
-        $prog = Nz $x['Program']; $lp = Nz $x['LocalPort']; $proto = Nz $x['Protocol']
-        if (($proto -eq 'Any') -and ($lp -eq 'Any' -or $lp -eq '') -and ($prog -eq '' -or $prog -eq 'Any') -and ((Nz $x['RemoteIP']) -eq 'Any') -and ((Nz $x['Service']) -eq '' -or (Nz $x['Service']) -eq 'Any')) {
-            Flag HIGH $x.name 'enabled inbound rule allows every port, protocol and address'
-        } elseif ((Test-Susp $prog) -ne '' -or $ShellNames -contains (Lc ([IO.Path]::GetFileName($prog))) -or $NetToolNames -contains (Lc ([IO.Path]::GetFileName($prog)))) {
-            Flag HIGH $x.name "inbound allow rule for an unusual program: $prog"
-        } else {
-            $ports = @($lp -split ',' | ForEach-Object { $_.Trim() })
-            foreach ($bp in $BadPorts) { if ($ports -contains [string]$bp) { Flag HIGH $x.name "inbound allow rule opens backdoor port $bp" } }
+    # Inbound allow rules, read from the registry rather than netsh: the
+    # registry shows what limits a rule (to one app package, one interface,
+    # some addresses), which netsh leaves out, and it reads the same in every
+    # Windows language.  Each value is one rule:
+    #   v2.31|Action=Allow|Active=TRUE|Dir=In|Protocol=6|LPort=80|App=...|Name=...|
+    $r = NewCsv firewall_rules @('name', 'source', 'enabled', 'action', 'profiles', 'protocol', 'local_port', 'remote_address', 'program', 'limited_by')
+    $allow = 0; $n = 0
+    $stores = @(@('local', "$CCS\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules"), @('policy', 'HKLM\SOFTWARE\Policies\Microsoft\WindowsFirewall\FirewallRules'))
+    $protoName = @{ '1' = 'ICMPv4'; '6' = 'TCP'; '17' = 'UDP'; '58' = 'ICMPv6'; '47' = 'GRE'; '41' = 'IPv6' }
+    foreach ($st2 in $stores) {
+        foreach ($v in @(RegRows $st2[1])) {
+            $x = @{}
+            foreach ($part in @((Nz $v.Value) -split '\|')) {
+                $kv = @($part -split '=', 2)
+                if ($kv.Count -lt 2) { continue }
+                if ($x.ContainsKey($kv[0])) { $x[$kv[0]] += ',' + $kv[1] } else { $x[$kv[0]] = $kv[1] }
+            }
+            if ($x['Dir'] -ne 'In' -or $x['Action'] -ne 'Allow') { continue }
+            $n++
+            # A readable name: indirect names (@FirewallAPI.dll,-123) and
+            # package names (@{Microsoft.LockApp_10...}) are shortened.
+            $name = Nz $x['Name']
+            if ($name -match '^@\{([^_]+)_') { $name = $matches[1] }
+            elseif ($name.StartsWith('@')) { if ($x['App']) { $name = Leaf ($x['App']) + ' rule' } elseif ($x['Svc']) { $name = $x['Svc'] + ' rule' } else { $name = $v.Name } }
+            $proto = Nz $x['Protocol']; if ($protoName.ContainsKey($proto)) { $proto = $protoName[$proto] }
+            $lport = @(@($x['LPort'], $x['LPort2_10'], $x['LPort2_20']) | Where-Object { $_ }) -join ','
+            $raddr = @(@($x['RA4'], $x['RA6'], $x['RA42'], $x['RA62'], $x['RMauth']) | Where-Object { $_ }) -join ','
+            $prog = Nz $x['App']; if ($x['Svc']) { $prog = ($prog + ' service ' + $x['Svc']).Trim() }
+            $limits = @()
+            foreach ($k in @('AppPkgId', 'PFN', 'IF', 'IFType', 'LA4', 'LA6', 'RA4', 'RA6', 'RA42', 'RA62', 'LUAuth', 'RUAuth', 'RMauth', 'Security', 'Security2', 'Security2_9')) { if ($x[$k]) { $limits += $k } }
+            $active = ((Nz $x['Active']) -eq 'TRUE')
+            Row $r @($name, $st2[0], $active, 'Allow', (Nz $x['Profile']), $proto, $lport, $raddr, $prog, ($limits -join ' '))
+            if (-not $active) { continue }
+            $allow++
+            $leaf = Lc (Leaf ((Nz $x['App'])))
+            if ($proto -eq '' -and $lport -eq '' -and -not $x['App'] -and -not $x['Svc'] -and $limits.Count -eq 0) {
+                Flag HIGH $name ('enabled inbound rule ({0}) allows every port, protocol, program and address' -f $st2[0])
+            } elseif ($ShellNames -contains $leaf -or $NetToolNames -contains $leaf -or (Test-Susp $x['App']) -eq 'odd' -or (Test-Susp $x['App']) -eq 'strong') {
+                Flag HIGH $name "inbound allow rule for an unusual program: $($x['App'])"
+            } elseif ((Test-Susp $x['App']) -eq 'user') {
+                Flag LOW $name "inbound allow rule for a program in a per-user folder: $($x['App'])"
+            } else {
+                $ports = @($lport -split ',' | ForEach-Object { $_.Trim() })
+                foreach ($bp in $BadPorts) { if ($ports -contains [string]$bp) { Flag HIGH $name "inbound allow rule opens backdoor port $bp" } }
+            }
         }
     }
-    if ($rules.Count -gt 0) { Say ('Firewall inbound allow rules enabled: ' + $allow) }
+    if ($n -gt 0) { Say ('Firewall inbound allow rules enabled: ' + $allow) }
+    elseif (-not $Replay) { Note 'no firewall rules read from the registry' }
 }
 
 function S-defender {
@@ -1040,7 +1115,8 @@ function S-processes {
         $s = Test-Susp $p.CommandLine
         if ($NetToolNames -contains $ln) { Flag HIGH $item ("netcat-style tool running: {0}" -f $p.CommandLine) }
         elseif ($s -eq 'strong') { Flag HIGH $item ("suspicious command line: {0}" -f $p.CommandLine) }
-        elseif ((Test-Susp $p.ExecutablePath) -eq 'weak') { Flag MED $item ("runs from an unusual folder: {0}" -f $p.ExecutablePath) }
+        elseif ((Test-Susp $p.ExecutablePath) -eq 'odd') { Flag HIGH $item ("runs from a folder programs almost never run from: {0}" -f $p.ExecutablePath) }
+        elseif ((Test-Susp $p.ExecutablePath) -eq 'user') { Flag LOW $item ("runs from a per-user folder: {0}" -f $p.ExecutablePath) }
         if ($ShellNames -contains $ln) {
             $par = $byPid[[string]$p.ParentProcessId]
             if ($par -and $ServerParents -contains (Lc $par.Name)) { Flag HIGH $item ("{0} was started by {1}: a web shell or database command execution" -f $p.Name, $par.Name) }
@@ -1067,7 +1143,7 @@ function S-connections {
         $ln = Lc $name
         if ($ShellNames -contains $ln -or $NetToolNames -contains $ln) { Flag HIGH $item ("{0} has a live connection to {1}:{2} (reverse shell?)" -f $name, $s.RAddr, $s.RPort) }
         elseif ($BadPorts -contains $rp) { Flag HIGH $item "connection to common backdoor port $rp" }
-        elseif ((Test-Susp $exe) -ne '') { Flag MED $item "program in an unusual folder has a live connection: $exe" }
+        elseif ((Test-Susp $exe) -eq 'odd') { Flag HIGH $item "program in an unusual folder has a live connection: $exe" }
     }
     Say ('Established connections: ' + $n)
 }
@@ -1185,15 +1261,31 @@ function S-events {
         }
     })
     $counts = @{}
+    # The same event repeated (a tool loading its driver every few minutes)
+    # becomes one flag with a count, not one per event.
+    $groups = @{}; $order = @()
     foreach ($e in $rows) {
         $id = [string]$e.Id
         $w = $what[$id]; if (-not $w) { $w = 'event ' + $id }
         Row $f @($e.Time, $e.Log, $id, $w, $e.Detail)
         $counts[$w] = 1 + [int]$counts[$w]
-        $item = ('{0} {1}' -f $e.Time, $w)
-        if ($id -eq '1102' -or $id -eq '104') { Flag HIGH $item ("{0} at {1}: someone hid their tracks" -f $w, $e.Time) }
-        elseif ($id -eq '7040') { if ((Lc $e.Detail) -match '(windefend|eventlog|mpssvc|wscsvc)') { Flag MED $item $e.Detail } }
-        else { Flag MED $item ('{0}: {1}' -f $w, $e.Detail) }
+        $k = $id + '|' + $e.Detail
+        if ($groups.ContainsKey($k)) { $groups[$k].n++; if ($e.Time -lt $groups[$k].first) { $groups[$k].first = $e.Time }; if ($e.Time -gt $groups[$k].last) { $groups[$k].last = $e.Time } }
+        else { $groups[$k] = @{ id = $id; w = $w; d = (Nz $e.Detail); n = 1; first = $e.Time; last = $e.Time }; $order += $k }
+    }
+    foreach ($k in $order) {
+        $g = $groups[$k]; $id = $g.id; $w = $g.w
+        $when = $g.first; if ($g.n -gt 1) { $when = ('{0} x{1} ({2} to {3})' -f $w, $g.n, $g.first, $g.last) } else { $when = ('{0} {1}' -f $g.first, $w) }
+        $item = $when
+        if ($id -eq '1102' -or $id -eq '104') { Flag HIGH $item ("{0}: someone hid their tracks" -f $w) }
+        elseif ($id -eq '7040') { if ((Lc $g.d) -match '(windefend|eventlog|mpssvc|wscsvc)') { Flag MED $item $g.d } }
+        elseif ($id -eq '7045' -or $id -eq '4697') {
+            # Updates install services all the time; only a suspicious program counts.
+            $sv = Sev $g.d; if ($sv -eq '') { $sv = 'LOW' } elseif ($sv -eq 'MED') { $sv = 'HIGH' }
+            $extra = ''; if ($sv -eq 'HIGH' -and (Lc $g.d) -match '\.sys') { $extra = ' (a driver loaded from a temp folder: some hardware-monitor, RGB and anti-cheat tools do this; so does an attacker loading a vulnerable driver - check what was running then)' }
+            Flag $sv $item ('{0}: {1}{2}' -f $w, $g.d, $extra)
+        }
+        else { Flag MED $item ('{0}: {1}' -f $w, $g.d) }
     }
     if ($rows.Count -gt 0) { Say (('Events in the last {0}h: ' -f $EventHours) + (($counts.Keys | ForEach-Object { '{0} x{1}' -f $_, $counts[$_] }) -join ', ')) }
     if (-not $Replay -and -not $IsAdmin) { Note 'not elevated: Security log not read' }
@@ -1203,10 +1295,13 @@ function S-drivers {
     $f = NewCsv drivers @('name', 'display_name', 'state', 'start_mode', 'path')
     foreach ($d in @(Get-Rows -Name drivers -Props @('Name', 'DisplayName', 'State', 'StartMode', 'PathName') -Command { Get-Wmi Win32_SystemDriver })) {
         Row $f @($d.Name, $d.DisplayName, $d.State, $d.StartMode, $d.PathName)
-        if ($d.State -ne 'Running') { continue }
         $p = Lc $d.PathName
         if ($p -eq '') { continue }
-        if ((Test-Susp $p) -ne '') { Flag HIGH $d.Name ("driver loaded from an unusual folder: {0}" -f $d.PathName) }
+        if ($d.State -ne 'Running') {
+            if ((Test-Susp $p) -ne '') { Flag MED $d.Name ("driver registered (not running now) from an unusual folder: {0}. Some hardware-monitor, RGB and anti-cheat tools do this; so does an attacker loading a vulnerable driver" -f $d.PathName) }
+            continue
+        }
+        if ((Test-Susp $p) -ne '') { Flag HIGH $d.Name ("driver loaded from an unusual folder: {0}. Some hardware-monitor, RGB and anti-cheat tools do this; so does an attacker loading a vulnerable driver" -f $d.PathName) }
         elseif ($p -notmatch '\\windows\\' -and $p -notmatch '^\\systemroot\\' -and $p -notmatch '^system32\\') { Flag MED $d.Name ("driver loaded from outside Windows: {0}" -f $d.PathName) }
     }
 }
@@ -1220,8 +1315,10 @@ function S-rights {
     })
     # Who may hold the powerful rights by default: Administrators, Backup
     # Operators, SYSTEM, LOCAL SERVICE, NETWORK SERVICE, SERVICE, IIS_IUSRS,
-    # Server Operators, per-service accounts (S-1-5-80-*), app pools (S-1-5-82-*).
-    $okSid = '^\*?(S-1-5-32-544|S-1-5-32-551|S-1-5-32-549|S-1-5-18|S-1-5-19|S-1-5-20|S-1-5-6|S-1-5-32-568|S-1-5-80-[0-9-]+|S-1-5-82-[0-9-]+|S-1-5-83-0|S-1-5-90-0)$'
+    # Server Operators, and the virtual accounts Windows makes for services
+    # (S-1-5-80, -99 restricted services), app pools (-82), VMs (-83), drivers
+    # (-84 UMDF, -96 font hosts), DWM (-90) and tasks (-87).
+    $okSid = '^\*?(S-1-5-32-544|S-1-5-32-551|S-1-5-32-549|S-1-5-18|S-1-5-19|S-1-5-20|S-1-5-6|S-1-5-32-568|S-1-5-(80|82|83|84|87|90|96|99)-[0-9-]+)$'
     $powerful = @('SeDebugPrivilege', 'SeImpersonatePrivilege', 'SeAssignPrimaryTokenPrivilege', 'SeTcbPrivilege', 'SeCreateTokenPrivilege', 'SeLoadDriverPrivilege', 'SeTakeOwnershipPrivilege', 'SeBackupPrivilege', 'SeRestorePrivilege', 'SeTrustedCredManAccessPrivilege')
     $n = 0
     foreach ($l in $lines) {

