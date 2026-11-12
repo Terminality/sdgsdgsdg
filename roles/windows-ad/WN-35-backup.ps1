@@ -65,9 +65,11 @@
 #   and ADSI on domain controllers; ntdsutil for -AdDatabase.
 #
 # TESTED ON
-#   PowerShell 7 on Linux with stand-in programs (tests/wn35.Tests.ps1): every
-#   item's flow, RESTORE.txt, hashes, size limit, -CopyTo, failures.
-#   NOT yet run on real Windows: run it on a test VM first.
+#   Windows 11 (build 26200), Windows PowerShell 5.1, elevated: the eight
+#   workstation items saved in 6 seconds.  PowerShell 7 on Linux with stand-in
+#   programs (tests/wn35.Tests.ps1): every item's flow including IIS, DNS,
+#   DHCP and DC items, RESTORE.txt, hashes, size limit, -CopyTo, failures.
+#   NOT yet run on a real server or domain controller.
 #
 # KNOWN LIMITS / WHAT TO WATCH FOR
 #   - Local password hashes are NOT saved (the SAM is not copied); restoring
