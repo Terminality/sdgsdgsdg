@@ -15,6 +15,7 @@ What changed, newest first. Each entry names the scripts touched and how they we
 - Firewall rules are read from the registry, which shows what limits a rule (app package, interface, addresses); `netsh` hid those, so Store-app rules looked like allow-all.
 - Per-user folders (AppData, user Temp, Downloads) are MED instead of HIGH; Users\Public, Windows\Temp, PerfLogs and the Recycle Bin stay HIGH.
 - Service-install events are flagged only when the program looks suspicious.
+- Second live run: process owners are read only when elevated (`Get-Process -IncludeUserName`, else `tasklist /v`); any source taking 5 s or more is named in the summary; a URL in a command line counts only beside a shell or download tool (Chromium apps pass crash-report URLs); repeated identical events are one flag with a count; "password not required" is LOW.
 
 **Tested**
 

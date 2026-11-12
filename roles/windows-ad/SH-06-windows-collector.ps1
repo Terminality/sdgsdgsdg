@@ -250,7 +250,9 @@ function Get-Rows {
         else { $lines = @(ConvertTo-CcCsvLine -Values $names) }
         [IO.File]::WriteAllLines($file, [string[]]$lines)
         $rows = @(Read-CsvFile $file)
-        Write-CcLog -Level DEBUG -Message ("source {0}: {1} rows in {2:N1}s" -f $Name, $rows.Count, ([DateTime]::UtcNow - $t0).TotalSeconds)
+        $took = ([DateTime]::UtcNow - $t0).TotalSeconds
+        Write-CcLog -Level DEBUG -Message ("source {0}: {1} rows in {2:N1}s" -f $Name, $rows.Count, $took)
+        if ($took -ge 5) { Note ("slow: {0} took {1:N0}s" -f $Name, $took) }
     }
     $script:SrcCache[$Name] = $rows
     return $rows
@@ -268,6 +270,7 @@ function Get-Text {
         if (Test-Path -LiteralPath $src) { $lines = @([IO.File]::ReadAllLines($src)); Copy-Item -LiteralPath $src -Destination $file }
         else { Note "$Name not in the replay folder" }
     } else {
+        $t0 = [DateTime]::UtcNow
         try {
             # A program writing to stderr must not stop the collector.
             $ErrorActionPreference = 'Continue'
@@ -277,6 +280,9 @@ function Get-Text {
             Note ("{0} could not be read" -f $Name)
         }
         [IO.File]::WriteAllLines($file, [string[]]$lines)
+        $took = ([DateTime]::UtcNow - $t0).TotalSeconds
+        Write-CcLog -Level DEBUG -Message ("source {0}: {1} lines in {2:N1}s" -f $Name, $lines.Count, $took)
+        if ($took -ge 5) { Note ("slow: {0} took {1:N0}s" -f $Name, $took) }
     }
     $script:SrcCache[$key] = $lines
     return $lines
@@ -412,7 +418,7 @@ function RegKeys([string]$Key) {
 # look (weak).  Some words are joined from pieces so that antivirus scanning
 # this file does not take the check for the attack it looks for.
 $p1 = 'download' + 'str'; $p2 = 'net' + '\.web' + 'client'; $p3 = 'from' + 'base64'; $p4 = 'invoke-' + 'expression'
-$StrongRe = '(-e(nc|ncodedcommand)?\s+[a-z0-9+/=]{24,}|' + $p1 + '|downloadfile|' + $p2 + '|' + $p3 + '|' + $p4 + '|\biex\b|invoke-webrequest|\biwr\b|start-bitstransfer|bitsadmin.*/transfer|certutil.*(urlcache|-decode)|mshta(\.exe)?\s+(http|javascript|vbscript)|regsvr32.*/i:|rundll32.*(javascript|http)|-w(indowstyle)?\s+h(idden)?\b.*-nop|-nop.*-w(indowstyle)?\s+h(idden)?\b|\bnc(at|64)?(\.exe)?\s+.*-e\s|https?://)'  # ps2-ok (a pattern, not a call)
+$StrongRe = '(-e(nc|ncodedcommand)?\s+[a-z0-9+/=]{24,}|' + $p1 + '|downloadfile|' + $p2 + '|' + $p3 + '|' + $p4 + '|\biex\b|invoke-webrequest|\biwr\b|start-bitstransfer|bitsadmin.*/transfer|certutil.*(urlcache|-decode)|mshta(\.exe)?\s+(http|javascript|vbscript)|regsvr32.*/i:|rundll32.*(javascript|http)|-w(indowstyle)?\s+h(idden)?\b.*-nop|-nop.*-w(indowstyle)?\s+h(idden)?\b|\bnc(at|64)?(\.exe)?\s+.*-e\s|\b(powershell|pwsh|cmd|mshta|wscript|cscript|rundll32|regsvr32|certutil|bitsadmin|curl|wget)(\.exe)?\b.*https?://)'  # ps2-ok (a pattern, not a call)
 # Folders almost nothing legitimate runs from (odd), and per-user folders
 # where some desktop programs do live - Discord, Teams, VS Code - (user).
 $OddRe = '(\\users\\public\\|\\perflogs\\|\\windows\\temp\\|\\windows\\tasks\\|\\windows\\debug\\|\\windows\\fonts\\.*\.(exe|dll)|\$recycle\.bin|\\programdata\\[^\\]+\.(exe|dll|ps1|bat|cmd|vbs|js|hta)$)'
@@ -439,10 +445,18 @@ function Get-Procs {
         # Owners for every process in one call: asking WMI process by process
         # (GetOwner) took over a minute on a desktop with 300 processes.
         # tasklist /v columns by position: 1 PID, 6 user name ("N/A" when unknown).
+        # Not elevated, Windows will not say who owns other users' processes,
+        # and asking anyway made the first live runs slow, so owners are only
+        # read in an elevated window: Get-Process -IncludeUserName (PowerShell
+        # 4 and later), else tasklist /v (columns by position: 1 PID, 6 user).
         $owners = @{}
-        $hdr = @(); for ($i = 0; $i -lt 10; $i++) { $hdr += ('c' + $i) }
-        foreach ($t in @(Get-Text -Name tasklist -Command { tasklist /v /fo csv /nh } | Where-Object { $_ -match '^"' } | ConvertFrom-Csv -Header $hdr)) {
-            if ($t.c6 -and $t.c6 -ne 'N/A') { $owners[[string]$t.c1] = $t.c6 }
+        if ($IsAdmin -and (Get-Command Get-Process).Parameters.ContainsKey('IncludeUserName')) {
+            foreach ($gp in @(Get-Process -IncludeUserName -ErrorAction SilentlyContinue)) { if ($gp.UserName) { $owners[[string]$gp.Id] = $gp.UserName } }
+        } elseif ($IsAdmin) {
+            $hdr = @(); for ($i = 0; $i -lt 10; $i++) { $hdr += ('c' + $i) }
+            foreach ($t in @(Get-Text -Name tasklist -Command { tasklist /v /fo csv /nh } | Where-Object { $_ -match '^"' } | ConvertFrom-Csv -Header $hdr)) {
+                if ($t.c6 -and $t.c6 -ne 'N/A') { $owners[[string]$t.c1] = $t.c6 }
+            }
         }
         foreach ($p in @(Get-Wmi Win32_Process)) {
             $p | Add-Member -MemberType NoteProperty -Name Owner -Value ([string]$owners[[string]$p.ProcessId]) -Force -PassThru
@@ -597,7 +611,9 @@ function S-users {
         if ($rid -eq '501' -and $en) { Flag HIGH $u.Name 'the Guest account is enabled' }
         if ($rid -eq '500' -and $en) { Flag LOW $u.Name 'the built-in Administrator account is enabled' }
         if ($en -and (Nz $u.Name).EndsWith('$')) { Flag HIGH $u.Name 'enabled account whose name ends in $ (hidden from some listings)' }
-        if ($en -and (Nz $u.PasswordRequired) -eq 'False') { Flag MED $u.Name 'account may have an empty password (password not required)' }
+        # PASSWD_NOTREQD is set on many ordinary accounts; it means an empty
+        # password would be ALLOWED, not that the password is empty.
+        if ($en -and (Nz $u.PasswordRequired) -eq 'False') { Flag LOW $u.Name 'an empty password is allowed for this account (password not required flag); LX/WN password rotation sets one' }
         if ((Lc $u.Description) -match $PwRe) { Flag HIGH $u.Name 'the description field looks like it holds a password (it is not copied here; read it in Windows, then clear it)' }
     }
     Say ('Enabled accounts ({0}): {1}' -f $enabled.Count, (($enabled | Select-Object -First 15) -join ', '))
@@ -1226,20 +1242,31 @@ function S-events {
         }
     })
     $counts = @{}
+    # The same event repeated (a tool loading its driver every few minutes)
+    # becomes one flag with a count, not one per event.
+    $groups = @{}; $order = @()
     foreach ($e in $rows) {
         $id = [string]$e.Id
         $w = $what[$id]; if (-not $w) { $w = 'event ' + $id }
         Row $f @($e.Time, $e.Log, $id, $w, $e.Detail)
         $counts[$w] = 1 + [int]$counts[$w]
-        $item = ('{0} {1}' -f $e.Time, $w)
-        if ($id -eq '1102' -or $id -eq '104') { Flag HIGH $item ("{0} at {1}: someone hid their tracks" -f $w, $e.Time) }
-        elseif ($id -eq '7040') { if ((Lc $e.Detail) -match '(windefend|eventlog|mpssvc|wscsvc)') { Flag MED $item $e.Detail } }
+        $k = $id + '|' + $e.Detail
+        if ($groups.ContainsKey($k)) { $groups[$k].n++; if ($e.Time -lt $groups[$k].first) { $groups[$k].first = $e.Time }; if ($e.Time -gt $groups[$k].last) { $groups[$k].last = $e.Time } }
+        else { $groups[$k] = @{ id = $id; w = $w; d = (Nz $e.Detail); n = 1; first = $e.Time; last = $e.Time }; $order += $k }
+    }
+    foreach ($k in $order) {
+        $g = $groups[$k]; $id = $g.id; $w = $g.w
+        $when = $g.first; if ($g.n -gt 1) { $when = ('{0} x{1} ({2} to {3})' -f $w, $g.n, $g.first, $g.last) } else { $when = ('{0} {1}' -f $g.first, $w) }
+        $item = $when
+        if ($id -eq '1102' -or $id -eq '104') { Flag HIGH $item ("{0}: someone hid their tracks" -f $w) }
+        elseif ($id -eq '7040') { if ((Lc $g.d) -match '(windefend|eventlog|mpssvc|wscsvc)') { Flag MED $item $g.d } }
         elseif ($id -eq '7045' -or $id -eq '4697') {
             # Updates install services all the time; only a suspicious program counts.
-            $sv = Sev $e.Detail; if ($sv -eq '') { $sv = 'LOW' } elseif ($sv -eq 'MED') { $sv = 'HIGH' }
-            Flag $sv $item ('{0}: {1}' -f $w, $e.Detail)
+            $sv = Sev $g.d; if ($sv -eq '') { $sv = 'LOW' } elseif ($sv -eq 'MED') { $sv = 'HIGH' }
+            $extra = ''; if ($sv -eq 'HIGH' -and (Lc $g.d) -match '\.sys') { $extra = ' (a driver loaded from a temp folder: some hardware-monitor, RGB and anti-cheat tools do this; so does an attacker loading a vulnerable driver - check what was running then)' }
+            Flag $sv $item ('{0}: {1}{2}' -f $w, $g.d, $extra)
         }
-        else { Flag MED $item ('{0}: {1}' -f $w, $e.Detail) }
+        else { Flag MED $item ('{0}: {1}' -f $w, $g.d) }
     }
     if ($rows.Count -gt 0) { Say (('Events in the last {0}h: ' -f $EventHours) + (($counts.Keys | ForEach-Object { '{0} x{1}' -f $_, $counts[$_] }) -join ', ')) }
     if (-not $Replay -and -not $IsAdmin) { Note 'not elevated: Security log not read' }
