@@ -2,6 +2,17 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-12: Windows safe fixes
+
+**Added**
+
+- WN-43 Windows safe fixes (`roles/windows-ad/WN-43-safe-fixes.ps1`): 20 safe fixes, 8 more with `-Include`, an undo plan written before every change and `-Undo` to replay it; keys are changed only after a successful backup; Defender and sfc results checked afterwards.
+- `tests/wn43.Tests.ps1` (stand-in state via `CCDC_WN43_FAKE`).
+
+**Tested**
+
+- PowerShell 7.4 on Linux against stand-in state (109 checks), including undo back to the exact starting state. Not yet run on Windows.
+
 ## 2026-11-12: Windows password rotation
 
 **Added**

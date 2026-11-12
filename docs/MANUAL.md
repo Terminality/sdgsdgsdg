@@ -35,6 +35,7 @@ Contents:
 25. Windows collector, `roles/windows-ad/SH-06-windows-collector.ps1` (SH-06)
 26. Windows backup, `roles/windows-ad/WN-35-backup.ps1` (WN-35)
 27. Windows password rotation, `roles/windows-ad/WN-20-password-rotation.ps1` (WN-20)
+28. Windows safe fixes, `roles/windows-ad/WN-43-safe-fixes.ps1` (WN-43)
 
 ---
 
@@ -1770,3 +1771,73 @@ Guest, DefaultAccount, WDAGUtilityAccount and krbtgt (that has its own two-step 
 | A service stopped working after the change | Its account was changed with `-IncludeServices` or runs it from another box | Give the service the new password from `passwords.csv` (`sc.exe config NAME password= ...` or the Services console) |
 | `the new password did not work in a test logon` | A policy, a lockout or replication delay on a DC | Wait a minute and log on by hand; on a DC check replication |
 | Refused: no protected list | `-Apply` needs one | Build `protected.csv` (accounts the scoring engine uses), or pass `-NoProtected` |
+
+---
+
+## 28. Windows safe fixes, `roles/windows-ad/WN-43-safe-fixes.ps1` (WN-43)
+
+Fixes the settings red teams weaken or hide in, choosing only fixes that cannot break a scored service. Dry run unless `-Apply`; every change is recorded first so `-Undo` can put the run back exactly. Run it in an elevated **Windows PowerShell** (`powershell.exe`) window; it refuses to run under PowerShell 7.
+
+### How to run it
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\ccdc-out                           # dry run: read the list
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\ccdc-out -Apply                    # the safe fixes
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\ccdc-out -Apply -Include rdpnla    # plus one more
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\ccdc-out -Undo latest -Apply       # put the last run back
+```
+
+| Option | What it does |
+| --- | --- |
+| `-Only a,b` / `-Skip a,b` | Make only these fixes / all safe fixes but these |
+| `-Include a,b` | Also make these "might affect a service" fixes |
+| `-Undo latest\|RUNFOLDER` | Replay that run's `undo-plan.csv` backwards. Dry run unless `-Apply`. A run can be undone once |
+| `-List` | List the fixes |
+
+### The fixes
+
+| Fix | What it does | Undo |
+| --- | --- | --- |
+| wdigest | `UseLogonCredential` 0: passwords not kept readable in memory | yes |
+| smb1 | SMBv1 server off (`Set-SmbServerConfiguration`, or the registry and a reboot on Windows 7 / 2008 R2). Refused when 445/tcp is protected | yes |
+| zerologon | DC only: `FullSecureChannelProtection` 1, `vulnerable_channel_allowlist` removed | yes |
+| uac | `EnableLUA` back to 1 if someone set 0 (after a reboot) | yes |
+| guest | Guest account disabled (not if protected) | yes |
+| debuggers | IFEO `Debugger` removed on the logon-screen programs always, and on any other program when the debugger is a shell or in an odd folder; `SilentProcessExit` monitors removed. A real tool as debugger (Process Explorer) is left and listed | yes |
+| stickykeys | sethc, utilman, osk, magnify, narrator, displayswitch or atbroker that is a copy of cmd, PowerShell or explorer is repaired with `sfc /scanfile`, then re-hashed to check | no, on purpose |
+| portproxy | every `netsh interface portproxy` forward removed (not on a protected port) | yes |
+| defender | real-time protection on; exclusions (cmdlet and policy) removed; policy keys that turn Defender off removed. Checked afterwards: Tamper Protection can ignore a change silently | yes |
+| eventlog | Event Log service running and automatic | yes |
+| auditing | 13 audit subcategories (logon, account and group changes, process creation, task creation, policy changes, Kerberos, credential validation; directory changes on a DC) on for success and failure, by GUID so any language works; command lines and PowerShell script blocks logged; Security log at least 512 MB | yes |
+| anonymous | `EveryoneIncludesAnonymous` 0, `RestrictAnonymousSAM` 1, `RestrictNullSessAccess` 1, `NullSessionShares` removed | yes |
+| lmhash | `NoLMHash` 1 | yes |
+| installer | `AlwaysInstallElevated` 0 for the machine and every loaded user | yes |
+| winlogon | `Userinit` and `Shell` back to Windows' own; stored `DefaultPassword` removed (never shown) and auto-logon off | yes |
+| appinit | `AppInit_DLLs` emptied, `LoadAppInit_DLLs` 0 | yes |
+| netsh | netsh helper DLLs that are not Windows' own removed | yes |
+| wmi | WMI event subscriptions that run commands removed; their definitions saved as MOF | yes (`mofcomp`) |
+| hosts | hosts lines that send Microsoft, update or antivirus names elsewhere removed; every other line kept | yes |
+| llmnr | LLMNR off | yes |
+| **only with `-Include`:** | | |
+| firewall | every firewall profile on, with the rules there are now (WN-25 builds rules) | yes |
+| latfp | `LocalAccountTokenFilterPolicy` 0: remote admin with local accounts stops | yes |
+| ntlm | `LmCompatibilityLevel` 5: NTLMv2 only | yes |
+| lsappl | LSA protection (after a reboot) | yes |
+| rdpnla | RDP requires Network Level Authentication | yes |
+| spooler | DC only: Print Spooler stopped and disabled | yes |
+| remotereg | Remote Registry stopped and disabled | yes |
+| smbsigning | SMB server requires signing | yes |
+
+A registry key is always backed up before it is changed; if the backup fails, that key is not changed. Values the run creates are deleted again by `-Undo`. The run folder (with the backups, one of which can hold the stored logon password) is limited to Administrators and SYSTEM.
+
+### Problems and fixes
+
+| What you see | Why | Fix |
+| --- | --- | --- |
+| "run this with Windows PowerShell" | Started with `pwsh` (PowerShell 7) | Use `powershell.exe` |
+| defender `FAILED: still off afterwards` | Tamper Protection, or another antivirus is installed | Turn Tamper Protection off in Windows Security first, or leave Defender to the other product |
+| `FAILED: the key could not be backed up` | Access denied on that key | Nothing was changed there; run elevated, or fix by hand |
+| A fix comes back after an hour | Domain Group Policy set it again | Fix the GPO as well |
+| stickykeys `sfc did not repair it` | The component store copy is damaged too | `DISM /Online /Cleanup-Image /RestoreHealth`, then run again |
+| `-Undo` refused: already undone | Each run is undone once | Nothing to do |
+| `-Undo` with `-Apply` refused: no protected list | Like any change | Add `-Protected FILE` or `-NoProtected` |
