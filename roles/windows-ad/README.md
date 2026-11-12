@@ -1,6 +1,6 @@
 # Windows / AD — identity + policy
 
-Scripts owned by this role. 3 of 29 are built.
+Scripts owned by this role. 4 of 29 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -21,7 +21,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | WN-35 | Backup | 1 | Medium | built | [`roles/windows-ad/WN-35-backup.ps1`](../../roles/windows-ad/WN-35-backup.ps1) |
 | WN-39 | Certificate template audit | 2 | Hard | planned |  |
 | WN-41 | Privilege escalation check (Windows) | 2 | Medium | planned |  |
-| WN-43 | Windows safe fixes | 2 | Medium | planned |  |
+| WN-43 | Windows safe fixes | 2 | Medium | built | [`roles/windows-ad/WN-43-safe-fixes.ps1`](../../roles/windows-ad/WN-43-safe-fixes.ps1) |
 | WN-21 | Local admin rotation | 3 | Medium | planned |  |
 | WN-22 | krbtgt reset | 3 | Hard | planned |  |
 | WN-24 | Port and service closer | 3 | Hard | planned |  |
