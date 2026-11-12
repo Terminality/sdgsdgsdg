@@ -128,9 +128,11 @@ if (-not $ccDir) { Write-Host 'cannot find lib/lib.ps1 above this script'; exit 
 # <<< CCDC-LIB
 
 # ---- Options ----------------------------------------------------------------
-function Split-Names([string[]]$a) { return @($a | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }) }
-$Exclude = Split-Names $Exclude
-$Users = Split-Names $Users
+# Windows PowerShell 5.1 turns an empty list returned from a function into
+# $null, and piping $null passes ONE blank item - which the typo check then
+# reported as a missing account.  So: no function return, and blanks dropped.
+$Exclude = @(@($Exclude) | Where-Object { $_ } | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+$Users = @(@($Users) | Where-Object { $_ } | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
 if ($Length -lt 12) { Write-Host '-Length must be 12 or more'; exit 2 }
 if ($Passwords -and -not (Test-Path -LiteralPath $Passwords)) { Write-Host "-Passwords: cannot read $Passwords"; exit 2 }
 
@@ -258,12 +260,12 @@ $names = @{}; foreach ($a in $accounts) { $names[(Lc2 $a.Name)] = $a }
 
 # Names typed by hand must exist: a typo in -Exclude would change the account
 # the operator meant to keep.
-$missing = @(($Exclude + $Users) | Where-Object { -not $names.ContainsKey((Lc2 $_)) })
+$missing = @(@($Exclude) + @($Users) | Where-Object { $_ -and -not $names.ContainsKey((Lc2 $_)) })
 if ($missing.Count -gt 0) {
     if ($IgnoreMissing) { Write-CcLog -Level WARN -Message ('not accounts here (ignored because of -IgnoreMissing): ' + ($missing -join ', ')) }
     else { Stop-Cc -Code 2 -Message ('no such account here: ' + ($missing -join ', ') + ' (named in -Exclude or -Users). Nothing was changed. Fix the spelling, or add -IgnoreMissing') }
 }
-$exL = @($Exclude | ForEach-Object { Lc2 $_ }); $usL = @($Users | ForEach-Object { Lc2 $_ })
+$exL = @(@($Exclude) | Where-Object { $_ } | ForEach-Object { Lc2 $_ }); $usL = @(@($Users) | Where-Object { $_ } | ForEach-Object { Lc2 $_ })
 
 # Chosen passwords.
 $given = @{}; $notes = @()
