@@ -1,6 +1,6 @@
 # Build status
 
-16 of 142 scripts are built.
+17 of 142 scripts are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -8,7 +8,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | --- | --- | --- | --- |
 | 0 | Foundation | 2 | 5 |
 | 1 | Know what we have and what is scored | 7 | 31 |
-| 2 | Evict and lock, all at once | 5 | 28 |
+| 2 | Evict and lock, all at once | 6 | 28 |
 | 3 | Close what should not be open | 2 | 30 |
 | 4 | Hunt, recover and report | 0 | 25 |
 | 5 | Nice to have, and everything if-present | 0 | 23 |
@@ -23,6 +23,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | SH-03 | Network scan | Network | built | `roles/network/SH-03-network-scan.sh` |
 | SH-05 | Linux collector | Linux | built | `roles/linux/SH-05-linux-collector.sh` |
 | SV-01 | Web and database inventory | Applications | built | `roles/applications/SV-01-web-db-inventory.sh` |
+| NW-10 | Device password rotation | Network | built | `roles/network/NW-10-device-passwords.sh` |
 | LX-20 | Password rotation | Linux | built | `roles/linux/LX-20-password-rotation.sh` |
 | LX-22 | SSH hardening and key cleanup | Linux | built | `roles/linux/LX-22-ssh-hardening.sh` |
 | LX-31 | Backup | Linux | built | `roles/linux/LX-31-backup.sh` |

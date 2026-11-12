@@ -2,6 +2,17 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-11: Device password rotation
+
+**Added**
+
+- NW-10 Device password rotation (`roles/network/NW-10-device-passwords.sh`): change through an open session (commands fed through a FIFO), test from a second session, then save or revert through the first; Cisco IOS (privilege kept from NW-01's copy, optional enable secret), Cisco ASA, Palo Alto (SHA-256 crypt phash and commit), FortiGate, VyOS (commit and save), MikroTik, Linux; pfSense/OPNsense pointed to the GUI; protected devices and accounts skipped; passwords only in a mode-600 file.
+- `tests/nw10.test.sh`.
+
+**Tested**
+
+- Live against a real OpenSSH server. Every vendor against a stand-in device that keeps password state, under dash, bash, busybox sh, ksh93, mksh and yash (29 checks each), including a device that ignores the change (old password put back and tested).
+
 ## 2026-11-11: Network config audit
 
 **Added**

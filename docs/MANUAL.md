@@ -31,6 +31,7 @@ Contents:
 21. Database backup, `roles/applications/SV-14-db-backup.sh` (SV-14)
 22. Network config backup and diff, `roles/network/NW-01-config-backup.sh` (NW-01)
 23. Network config audit, `roles/network/NW-07-config-audit.sh` (NW-07)
+24. Device password rotation, `roles/network/NW-10-device-passwords.sh` (NW-10)
 
 ---
 
@@ -1529,3 +1530,78 @@ In `<out>/NW-07_<host>_<UTC time>/`: `summary.txt` (per device: vendor, counts, 
 | `vendor not recognised` | A config whose first lines do not identify the vendor | Name it: `--file FILE,VENDOR` |
 | A device has no findings at all | Wrong vendor, or the saved config is incomplete | Check NW-01's copy is the full config; give the vendor |
 | A finding that is wrong for your device | The rule follows the vendor's documented syntax; your version may differ | Send the config line to whoever maintains the kit |
+
+---
+
+## 24. Device password rotation, `roles/network/NW-10-device-passwords.sh` (NW-10)
+
+Changes the password of the account used to log in to each firewall, router and switch (and, for Cisco, optionally the enable secret) without risking a lock-out. Run NW-01 first: Cisco privilege levels are read from its saved configs.
+
+### How it avoids lock-outs
+
+1. It logs in with the current password and sends the change, keeping that session **open**.
+2. It opens a **second, new** session with the new password.
+3. If the new login works, it saves the config through the first session (`write memory` on Cisco; Palo Alto and VyOS commit). If it fails, it sets the **old password back** through the first session, tests the old password, and reports the device as failed.
+
+If the first session closes early (some devices end the session after a password change), the script tests the new password directly and says whether the config may need saving by hand.
+
+### How to run it
+
+```sh
+export CCDC_NET_PASS='current password'
+sh NW-10-device-passwords.sh --out ~/ccdc-out --hosts config/hosts.csv                       # dry run
+sh NW-10-device-passwords.sh --out ~/ccdc-out --device r1,10.0.0.1,cisco-ios,admin --apply   # ONE device first
+sh NW-10-device-passwords.sh --out ~/ccdc-out --hosts config/hosts.csv --apply --protected protected.csv
+```
+
+| Option | What it does |
+| --- | --- |
+| `--hosts FILE` / `--device SPEC` | The devices, as for NW-01 |
+| `--user NAME` | Default login account (`admin`) |
+| `--ask-password` | Ask for the CURRENT password instead of `$CCDC_NET_PASS` |
+| `--new-password-env` | Use `$CCDC_NET_NEWPASS` for every device (letters, digits and `_ . , @ % + = -`, 12+ characters). Default: a new random password per device |
+| `--enable-env` | Cisco: log in through `enable` with `$CCDC_NET_ENABLE` |
+| `--enable-too` | Cisco: also set a new enable secret; the test login must reach privilege 15 with it |
+| `--length N` | Random password length (default 16) |
+| `--wait N` / `--commit-wait N` | Seconds before testing a change (default 5) / for a Palo Alto commit (default 120) |
+| `--configs DIR` | NW-01's saved configs (default `<out>/net-configs`) |
+| `--legacy-ssh` | Allow old SSH algorithms |
+
+Password logins need `sshpass` on the admin workstation. Every password travels in an environment variable or on the session's input, never on a command line, and device output is never logged (it can echo the new password).
+
+### What it sends
+
+| Vendor | Change | Saved by |
+| --- | --- | --- |
+| `cisco-ios` | `username U privilege N secret NEW` (N read from NW-01's copy) | `write memory` after the test |
+| `cisco-asa` | `username U password NEW privilege N` | `write memory` |
+| `paloalto` | `set mgt-config users U phash HASH` (SHA-256 crypt made with `openssl`), `commit` | the commit |
+| `fortigate` | `config system admin` / `edit U` / `set password NEW OLD` | immediate |
+| `vyos` | `set system login user U authentication plaintext-password` (stored hashed), `commit`, `save` | `save` |
+| `mikrotik` | `/user set [find name="U"] password="NEW"` | immediate |
+| `linux` | `chpasswd` (or `sudo -n chpasswd`) | immediate |
+| `pfsense`, `opnsense` | not changed: listed with "change it in the web GUI" | |
+
+### What it produces
+
+In `<out>/NW-10_<host>_<UTC time>/`: `summary.txt`, `devices.csv` (`device,address,vendor,account,status`) and, with `--apply`, `passwords.csv` (mode 600). Give the passwords to the captain, then delete the file. Run NW-01 again afterwards: the changed account lines show up as expected changes.
+
+There is no undo-log line: a password cannot be put back without storing it. The previous password is the team's old one.
+
+### What to watch for
+
+- **Try one device first.** The vendor commands follow each vendor's documentation and were tested against a stand-in device, not real gear.
+- **Scored logins.** If the scoring engine logs in to a device, put that device (type `host`, its address) or account on the protected list, or report the new password the way the competition requires.
+- **AAA logins** (TACACS+, RADIUS, LDAP) are changed on the AAA server, not here. A Cisco account that is not in the saved config is skipped for this reason.
+- **`REVERT NOT CONFIRMED`** means the new password failed AND the old one could not be confirmed. Go to that device's console now.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `could not log in with the current password` | Wrong `CCDC_NET_PASS`, wrong account, device unreachable | Check by hand with `ssh`; nothing was changed |
+| `account not found in NW-01's saved config` | Cisco: NW-01 not run, or AAA login | Run NW-01; change AAA accounts on the AAA server |
+| `new password did not work; old password restored and tested` | The device refused the change (password rules, privilege) | Read the device's password policy; try `--new-password-env` with a password that meets it |
+| `config may not be SAVED` | The device closed the first session early | Log in and save (`write memory`) by hand |
+| Palo Alto shows failed after a long wait | The commit took longer than `--commit-wait` | Raise `--commit-wait` |
+| `sshpass not found` (exit 3) | Not installed | `apt install sshpass` |
