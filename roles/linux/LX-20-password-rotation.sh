@@ -205,7 +205,7 @@ ME=${SUDO_USER:-}
 #   state: set (usable hash) | empty (no password at all) | locked | none
 # A hash in /etc/passwd itself (field 2 not x) is used INSTEAD of shadow by
 # most systems - a known backdoor trick - so that counts too.
-awk -F: 'NR == FNR { sh[$1] = $2; next }
+awk -F: -v shf="$SHADOW" 'FILENAME == shf { sh[$1] = $2; next }
     { u = $1; pf = $2; s = (u in sh) ? sh[u] : "(missing)"
       if (pf != "x" && pf != "*" && pf !~ /^!/) st = (pf == "" ? "empty" : "set")
       else if (s == "") st = "empty"

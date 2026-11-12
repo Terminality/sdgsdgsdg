@@ -26,6 +26,7 @@ Contents:
 16. Linux password rotation, `roles/linux/LX-20-password-rotation.sh` (LX-20)
 17. SSH hardening and key cleanup, `roles/linux/LX-22-ssh-hardening.sh` (LX-22)
 18. Linux firewall builder, `roles/linux/LX-25-firewall.sh` (LX-25)
+19. Linux change watch, `roles/linux/LX-40-change-watch.sh` (LX-40)
 
 ---
 
@@ -1165,3 +1166,80 @@ Dropped packets are logged with the prefix `CCDC-DROP` (`journalctl -k | grep CC
 | SSH locked out | `--ssh-from` without your address | Wait for the timer (that is what it is for); from the console run `rollback.sh` |
 | Rules gone after a reboot | `--save --apply` was not run | Apply, confirm, then `--save --apply` |
 | Under yash, output only appears when the timer ends | yash waits for the detached timer when the script's output is piped | Run it at a terminal, or with another shell |
+
+---
+
+## 19. Linux change watch, `roles/linux/LX-40-change-watch.sh` (LX-40)
+
+Takes a quick baseline of every place a red team uses to keep access, then checks again, once or every minute, and raises one alert per change. Start it once the box is hardened, and send the alerts off the box.
+
+It changes nothing on the host. A check takes about a second (a few seconds with the SUID scan on a big disk).
+
+### How to run it
+
+```sh
+sudo sh LX-40-change-watch.sh --out /root/ccdc-out --baseline      # after hardening
+sudo sh LX-40-change-watch.sh --out /root/ccdc-out                 # one check
+# keep it running, alerts copied to the admin workstation:
+nohup sudo sh LX-40-change-watch.sh --out /root/ccdc-out --loop 60 \
+    --alert-cmd "ssh admin@10.0.0.5 'cat >>/srv/alerts/web01.log'" >/root/ccdc-out/watch.out 2>&1 &
+sudo sh LX-40-change-watch.sh --out /root/ccdc-out --accept        # after changing things on purpose
+```
+
+| Option | What it does |
+| --- | --- |
+| `--baseline` / `--accept` | Take a new baseline from the current state. Use `--accept` after reviewing changes the team made |
+| `--loop N` | Check every N seconds (at least 10) until stopped |
+| `--count N` | With `--loop`: stop after N checks |
+| `--webroot DIR` | Also watch DIR (the usual web roots are watched already) |
+| `--no-suid` | Skip the SUID/SGID scan, which reads the whole root file system |
+| `--alert-cmd CMD` | After a check that found changes, run CMD with the new alert lines on its stdin (`ssh ... 'cat >>file'`, `logger -t ccdc`, `mail ...`) |
+| `--state DIR` | Where the baseline lives (default `<out>/watch-<host>`) |
+
+The first check with no baseline takes one.
+
+### What it watches
+
+| Section | What | Severity |
+| --- | --- | --- |
+| users | Accounts added, removed, or changed (an account turned into UID 0 is HIGH) | added HIGH |
+| passwords | A password changed: compared as a short checksum of the shadow field, never the hash | MED |
+| groups | Members of every group; `sudo`, `wheel`, `admin`, `root`, `adm`, `docker`, `lxd`, `disk`, `shadow` changes are HIGH | HIGH / LOW |
+| files | sudoers, PAM, `/etc/security`, `ld.so.preload` and `ld.so.conf`, profile and shell startup files, `/etc/environment`, hosts, resolv.conf, nsswitch, sshd config, sysctl files | HIGH for sudo/PAM/preload or any new file, else MED |
+| cron | `/etc/crontab`, cron folders, user crontabs, at and anacron spools, systemd timers | added or changed HIGH |
+| units | systemd unit files, init.d scripts, `rc.local` | added HIGH, changed MED |
+| keys | Every account's `authorized_keys` (hash and key count) | added or changed HIGH |
+| ports | Listening TCP/UDP ports and their programs | backdoor-style port HIGH, else MED; a port that stopped is MED (a scored service may be down) |
+| suid | SUID/SGID programs | added HIGH |
+| web | Files in web roots by size and time | new program file HIGH, new or removed file MED, changed LOW/MED |
+| modules | Loaded kernel modules | added HIGH |
+
+### What it produces
+
+In the state folder (`<out>/watch-<host>/`):
+
+| File | Contents |
+| --- | --- |
+| `alerts.log` | Every alert ever raised: `time SEVERITY section change item - detail`, HIGH first within each check |
+| `changes-since-baseline.txt` | Everything that differs from the baseline now |
+| `baseline/`, `last/` | The snapshots, one plain-text file per section, no secrets |
+
+Each check alerts only on what changed since the previous check, so one change is reported once; `changes-since-baseline.txt` keeps the running total.
+
+### What to watch for
+
+- **Your own changes show up too.** After the team changes something on purpose, run `--accept`.
+- **Send alerts off the box.** A red team with root can stop this script or edit its files. `--alert-cmd` is the way out.
+- **Web files are compared by size and time**, not content, to stay fast. A careful attacker can keep both the same; the backup's hash list (LX-31) catches that: `sha256sum -c files.sha256`.
+- **"stopped listening" on a scored port** means the service is down: check it first.
+- **Package updates** change unit files and programs. Check the package log before treating those as an attack.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Hundreds of alerts on the first check | The baseline was taken before hardening | `--accept`, then watch |
+| `passwords` and `keys` never change | Not root, so shadow and other homes cannot be read | Run as root |
+| Checks are slow | The SUID scan on a large disk | `--no-suid`, or a longer `--loop` |
+| `--alert-cmd failed` warning | The command failed (no SSH key, host down) | Alerts are still in `alerts.log`; test the command by hand: `echo test \| CMD` |
+| The loop stopped when the session closed | Started without `nohup` | Use `nohup ... &`, `tmux` or `screen` |
