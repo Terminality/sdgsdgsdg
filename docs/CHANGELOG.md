@@ -2,6 +2,22 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-11: Network config audit
+
+**Added**
+
+- NW-07 Network config audit (`roles/network/NW-07-config-audit.sh`): per-vendor rules for Cisco IOS, Cisco ASA, Palo Alto, FortiGate, VyOS, pfSense/OPNsense and MikroTik over NW-01's saved configs or given files; vendor recognised from the text; secrets masked.
+- NW-01 now records each device's vendor next to its saved configs.
+- `tests/nw07.test.sh`.
+
+**Changed**
+
+- `tests/lint-posix.sh`: the `source` check now needs a path or variable after the word, so config text such as `source any;` is not flagged.
+
+**Tested**
+
+- A planted-problem and a clean config per vendor under dash, bash, busybox sh, ksh93, mksh and yash and with GNU awk, mawk and busybox awk (41 checks each).
+
 ## 2026-11-11: Network config backup and diff
 
 **Added**

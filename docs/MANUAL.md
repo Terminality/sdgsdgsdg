@@ -30,6 +30,7 @@ Contents:
 20. Brute-force and spam banning, `roles/linux/SV-26-banning.sh` (SV-26)
 21. Database backup, `roles/applications/SV-14-db-backup.sh` (SV-14)
 22. Network config backup and diff, `roles/network/NW-01-config-backup.sh` (NW-01)
+23. Network config audit, `roles/network/NW-07-config-audit.sh` (NW-07)
 
 ---
 
@@ -1474,3 +1475,57 @@ A changed line about accounts, passwords, SNMP, NAT, permits/allows/accepts, tel
 | `no matching key exchange method` in the log | Very old device | Retried automatically; if it still fails, check `ssh -Q kex` on the admin box |
 | `os is network but the vendor is unknown` | Notes do not name a vendor | Add the vendor to the notes or a `vendor` column |
 | Every run shows the same lines changed | A line that changes by itself (a clock, a counter) | Send the line format to whoever maintains the kit; it belongs in the clean-up list |
+
+---
+
+## 23. Network config audit, `roles/network/NW-07-config-audit.sh` (NW-07)
+
+Reads the configs NW-01 saved and flags the weaknesses a red team uses first on network gear. It touches no device; run it right after the first NW-01 backup.
+
+### How to run it
+
+```sh
+sh NW-07-config-audit.sh --out ~/ccdc-out                                  # every device NW-01 saved
+sh NW-07-config-audit.sh --out ~/ccdc-out --file r1.cfg --file fw1.txt     # configs copied by hand
+sh NW-07-config-audit.sh --out ~/ccdc-out --file fw1.txt,paloalto          # name the vendor
+```
+
+| Option | What it does |
+| --- | --- |
+| `--configs DIR` | NW-01's saved configs (default `<out>/net-configs`); the newest copy of each device is read |
+| `--file F[,VENDOR]` | Audit this file (repeat). The vendor is recognised from the text when not given |
+| `--max-flags N` | Findings shown on screen (default 40) |
+
+### What it checks
+
+| Vendor | HIGH | MED | LOW / INFO |
+| --- | --- | --- | --- |
+| Cisco IOS | telnet on VTY lines; `no login` on any line; `enable password`; account with type 0/7 password; default or read-write SNMP community | VTY without `access-class`; VTY without `transport input` (older IOS allow telnet); `ip http server`; type 7 line passwords; default-looking account names; no `enable secret`; SSH v1; small servers | HTTPS server; MD5 enable secret; no password encryption, SSH v2 or log server; finger; source routing; local accounts |
+| Cisco ASA | telnet; ASDM (`http`) from 0.0.0.0; unhashed enable or account password; default SNMP community; `permit ip any any` | SSH from 0.0.0.0; `permit tcp/udp any any`; default-looking accounts | no log server; accounts |
+| Palo Alto | `disable-telnet no`; telnet in a management profile; default SNMP community; a security rule with any source, destination and application that allows | `disable-http no`; HTTP in a management profile; the default `admin` account; no `permitted-ip` | SNMP v2c; admin accounts |
+| FortiGate | `telnet` in an interface's `allowaccess`; default SNMP community; a policy accepting all to all for ALL services | `http` in `allowaccess`; an admin without `trusthost` | SNMP v2c; admin accounts |
+| VyOS | telnet service; default or read-write SNMP community; plaintext password | | HTTPS API; SSH on every address; accounts |
+| pfSense / OPNsense | default or read-write SNMP community; a WAN rule passing any to any | web GUI over plain HTTP | accounts |
+| MikroTik | telnet on; default SNMP community | telnet not disabled (on by default); `www`, `ftp` or `api` on | accounts |
+
+Default or guessable SNMP communities: `public`, `private`, `cisco`, `community`, `admin`, `default`, `secret`, `password`, `snmp`, `monitor`, `manager`, `read`, `write`, `test`, `ccdc`.
+
+### What it produces
+
+In `<out>/NW-07_<host>_<UTC time>/`: `summary.txt` (per device: vendor, counts, accounts; then the findings worst first), `findings.csv` (`device,vendor,severity,finding,detail`) and `flags.csv`. Every config line shown has its secrets masked.
+
+### What to watch for
+
+- **A finding is a lead, not a verdict.** An "any to any" rule may be the path the scoring engine uses; check before removing it.
+- **It reads the config, not the running state.** Where a vendor's default is unsafe and does not appear in the config (older Cisco VTY lines, MikroTik telnet), that is reported as MED.
+- **Palo Alto** is read in the brace format NW-01 saves (`show config running`), not the `set` format.
+- **Fix with care.** Turning telnet or HTTP management off from the session you are using can cut you off. NW-11 (management hardening) will do it safely.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `no saved configs` (exit 3) | NW-01 has not run with this `--out` | Run NW-01 first, or give `--file` |
+| `vendor not recognised` | A config whose first lines do not identify the vendor | Name it: `--file FILE,VENDOR` |
+| A device has no findings at all | Wrong vendor, or the saved config is incomplete | Check NW-01's copy is the full config; give the vendor |
+| A finding that is wrong for your device | The rule follows the vendor's documented syntax; your version may differ | Send the config line to whoever maintains the kit |

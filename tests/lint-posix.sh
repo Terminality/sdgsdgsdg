@@ -30,7 +30,7 @@ check "'local' is not in POSIX sh; use a _prefixed global"          '^[[:space:]
 check "'[[ ]]' is bash/ksh only; use [ ]"                           '(^|[[:space:];])\[\[[[:space:]]'
 check "'function name' keyword; write name() { ... }"               '^[[:space:]]*function[[:space:]]'
 check "'echo -n/-e' is not portable; use printf"                    'echo[[:space:]]+-[ne]'
-check "'source' is bash; use '.'"                                   '(^|[[:space:];])source[[:space:]]'
+check "'source' is bash; use '.'"                                   '(^|[[:space:];])source[[:space:]]+["$./~]'
 check "'==' inside [ ]; use a single '='"                           '\[[[:space:]][^]]*[[:space:]]==[[:space:]]'
 check "'&>' redirect; use >file 2>&1"                               '&>'
 check "'<<<' here-string; use printf | or a here-document"          '<<<'

@@ -1,6 +1,6 @@
 # Network — routes + firewall
 
-Scripts owned by this role. 3 of 17 are built.
+Scripts owned by this role. 4 of 17 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -12,7 +12,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | SH-03 | Network scan | 1 | Medium | built | [`roles/network/SH-03-network-scan.sh`](../../roles/network/SH-03-network-scan.sh) |
 | NW-10 | Device password rotation | 2 | Medium | planned |  |
 | NW-04 | Tables collector | 3 | Medium | planned |  |
-| NW-07 | Device account and management audit | 3 | Medium | planned |  |
+| NW-07 | Device config audit | 1 | Medium | built | [`roles/network/NW-07-config-audit.sh`](../../roles/network/NW-07-config-audit.sh) |
 | NW-11 | Management hardening | 3 | Medium | planned |  |
 | NW-12 | IP block list | 3 | Medium | planned |  |
 | NW-13 | Perimeter port closer | 3 | Hard | planned |  |
