@@ -69,7 +69,8 @@
 # TESTED ON
 #   Replayed raw data under PowerShell 7 on Linux (tests/sh06.Tests.ps1), and
 #   the live path there to prove that missing tools only thin a section.
-#   NOT yet run on real Windows: run it on a test VM first.
+#   Live on Windows 11 (build 26200), Windows PowerShell 5.1, elevated and
+#   not: all sections in about 9 seconds.  NOT yet run on a server or DC.
 #
 # KNOWN LIMITS / WHAT TO WATCH FOR
 #   - Flags are pointers, not verdicts.  Some will be legitimate on your box.

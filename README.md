@@ -22,6 +22,7 @@ Blue-team scripts for the Collegiate Cyber Defense Competition, written with Cla
 | Network config audit (NW-07) | Reads the saved device configs and flags telnet or plain-HTTP management, default SNMP communities, clear-text and type 7 passwords, management open to any address, any-to-any allow rules and default admins; lists every account. Touches no device | `sh roles/network/NW-07-config-audit.sh --out ~/ccdc-out` |
 | Device password rotation (NW-10) | Changes the login password on each firewall, router and switch (Cisco enable secret too, optionally) while keeping the first session open, tests the new password from a second session, then saves - or puts the old password back if the new one fails. New passwords only in a mode-600 file | `CCDC_NET_PASS=... sh roles/network/NW-10-device-passwords.sh --out ~/ccdc-out --hosts config/hosts.csv --apply` |
 | Windows collector (SH-06) | Read-only inventory of a Windows host: accounts and admins, listening ports and their programs, services, Run keys, debugger and sticky-keys backdoors, WMI subscriptions, tasks, weak settings (WDigest, UAC, SMBv1, Zerologon, RDP), firewall, Defender exclusions, processes, recent log clears and new admins. One-page summary, worst first | `powershell -NoProfile -ExecutionPolicy Bypass -File roles\windows-ad\SH-06-windows-collector.ps1 -Out C:\ccdc-out` |
+| Windows backup (WN-35) | Run first after the collector. Saves firewall rules, security policy, audit policy, tasks, key registry areas, IIS sites, DNS zones, DHCP, GPOs and SYSVOL, each with the command that puts it back; hashes everything; copies it off the box | `powershell -NoProfile -ExecutionPolicy Bypass -File roles\windows-ad\WN-35-backup.ps1 -Out C:\ccdc-out -CopyTo \\10.0.0.5\backups` |
 
 The two shared libraries (`lib/lib.sh`, `lib/lib.ps1`) are also finished; every other script is built on them. Next up: Windows (collector, backup, safe fixes, passwords, firewall, change watch).
 
@@ -56,6 +57,7 @@ Works with Cisco IOS and ASA, Palo Alto, FortiGate, VyOS, pfSense, OPNsense and 
 Run in an elevated PowerShell window: `powershell -NoProfile -ExecutionPolicy Bypass -File <script> -Out C:\ccdc-out`. More scripts are being added in this order.
 
 1. `SH-06` collector. Read the HIGH flags first.
+2. `WN-35` backup, with `-CopyTo` a share off the box. Before anything changes.
 
 ## Layout
 
@@ -128,7 +130,8 @@ To add a script: copy a template into the right `roles/` folder, rename it to it
 | Network config backup and diff (NW-01) | Against a real OpenSSH server (Linux profile: an added firewall rule shows as HIGH, its removal too); every vendor against sample output from a stand-in ssh under six shells, including unreachable devices, changed host keys, old-algorithm devices and password handling | Real Cisco, Palo Alto, FortiGate, VyOS, pfSense and MikroTik devices |
 | Network config audit (NW-07) | A planted-problem and a clean sample config for each of seven vendors under six shells and three awk versions: every planted weakness found, no HIGH or MED on the clean configs, secrets masked | Configs from real devices |
 | Device password rotation (NW-10) | Live against a real OpenSSH server (new password logs in, old one refused, nothing leaked). Every vendor, the Cisco privilege level, the Palo Alto hash, the enable secret and the automatic revert against a stand-in device under six shells | Real Cisco, Palo Alto, FortiGate, VyOS and MikroTik devices |
-| Windows collector (SH-06) | Replayed Windows data under PowerShell 7: a domain controller with about 70 planted problems (all found) and a clean workstation (no HIGH or MED); the live path where Windows tools are missing | Real Windows (the library itself passes on Windows PowerShell 5.1) |
+| Windows collector (SH-06) | Four live runs on Windows 11 with Windows PowerShell 5.1, elevated and not (all sections in about 9 seconds); replayed data under PowerShell 7: a domain controller with about 70 planted problems (all found) and a clean workstation | A real server or domain controller |
+| Windows backup (WN-35) | Windows 11 with Windows PowerShell 5.1, elevated: all eight workstation items saved in 6 seconds. PowerShell 7 on Linux with stand-in programs and a fake DC with IIS, DNS and DHCP: every item, RESTORE.txt, hashes, size limit, copy off the box, failures | A real server: IIS, DNS, DHCP, GPO and AD items |
 
 The Windows library passes its tests on Windows PowerShell 5.1. It is written to PowerShell 2.0 rules, but has not yet run on 2.0 or 4.0.
 
