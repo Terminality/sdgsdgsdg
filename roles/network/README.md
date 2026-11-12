@@ -1,12 +1,12 @@
 # Network — routes + firewall
 
-Scripts owned by this role. 2 of 17 are built.
+Scripts owned by this role. 3 of 17 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
 | ID | Script | Wave | Level | Status | File |
 | --- | --- | --- | --- | --- | --- |
-| NW-01 | Config backup and diff | 1 | Medium | planned |  |
+| NW-01 | Config backup and diff | 1 | Medium | built | [`roles/network/NW-01-config-backup.sh`](../../roles/network/NW-01-config-backup.sh) |
 | NW-03 | Firewall rule export | 1 | Medium | planned |  |
 | SH-02 | Subnet sweep (Windows) | 1 | Easy | planned |  |
 | SH-03 | Network scan | 1 | Medium | built | [`roles/network/SH-03-network-scan.sh`](../../roles/network/SH-03-network-scan.sh) |

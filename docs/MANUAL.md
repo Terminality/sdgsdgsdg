@@ -29,6 +29,7 @@ Contents:
 19. Linux change watch, `roles/linux/LX-40-change-watch.sh` (LX-40)
 20. Brute-force and spam banning, `roles/linux/SV-26-banning.sh` (SV-26)
 21. Database backup, `roles/applications/SV-14-db-backup.sh` (SV-14)
+22. Network config backup and diff, `roles/network/NW-01-config-backup.sh` (NW-01)
 
 ---
 
@@ -1395,3 +1396,81 @@ PostgreSQL dumps are fed on stdin (`<`): the `postgres` account cannot open file
 | `the databases add up to about N MB` (exit 3) | Bigger than `--max-mb` | Raise `--max-mb`, or `--out` on a bigger disk |
 | `pg_restore: could not open input file ... Permission denied` | Passing the file name to `pg_restore` run as postgres | Feed it on stdin: `pg_restore ... < FILE` |
 | SQLite marked "may be inconsistent" | No `sqlite3`, and the app may write while it is copied | Install `sqlite3`, or stop the app for the copy |
+
+---
+
+## 22. Network config backup and diff, `roles/network/NW-01-config-backup.sh` (NW-01)
+
+Logs in to every firewall, router and switch over SSH, saves its running configuration, and shows what changed since the last saved copy. Run it first (the copy you restore from) and again every few minutes (the change watch for network gear).
+
+It only sends "show" commands. Nothing on the devices changes.
+
+### How to run it
+
+```sh
+sh NW-01-config-backup.sh --out ~/ccdc-out --hosts config/hosts.csv                        # SSH keys
+CCDC_NET_PASS='...' sh NW-01-config-backup.sh --out ~/ccdc-out --hosts config/hosts.csv --password-env
+sh NW-01-config-backup.sh --out ~/ccdc-out --device fw01,10.0.2.1,paloalto,admin --ask-password
+# every 5 minutes:
+while :; do sh NW-01-config-backup.sh --out ~/ccdc-out --hosts config/hosts.csv --password-env; sleep 300; done
+```
+
+Run it from the admin workstation (a Linux box that can reach the devices' management addresses).
+
+| Option | What it does |
+| --- | --- |
+| `--hosts FILE` | Host list. Rows with `os` = `network` take the vendor from the notes ("Palo Alto", "Cisco IOS", "Cisco ASA", "FortiGate", "VyOS", "pfSense", "OPNsense", "MikroTik") or a `vendor` column; a vendor name in `os` works too |
+| `--device SPEC` | `NAME,ADDRESS,VENDOR[,USER[,PORT]]` (repeat) |
+| `--user NAME` | Login name when the list gives none (default `admin`) |
+| `--password-env` | Password from `$CCDC_NET_PASS`, handed to `sshpass -e` in the environment (never on a command line) |
+| `--ask-password` | Ask once, without echo |
+| `--enable-env` | Cisco: send `enable` with `$CCDC_NET_ENABLE` when the login is below privilege 15 |
+| `--legacy-ssh` | Allow old SSH algorithms from the start. Also tried automatically when a device refuses the modern ones |
+
+Without a password option, SSH keys are used and the script never prompts.
+
+### Vendors
+
+| Vendor | Commands sent | Log in as |
+| --- | --- | --- |
+| `cisco-ios` | `terminal length 0`, `show running-config` | A privilege 15 account (or `--enable-env`) |
+| `cisco-asa` | `terminal pager 0`, `show running-config` | An admin, usually with `--enable-env` |
+| `paloalto` | `set cli pager off`, `show config running` | An admin |
+| `fortigate` | `show` | An admin |
+| `vyos` | `show configuration commands` | The VyOS user |
+| `pfsense`, `opnsense` | `cat /conf/config.xml` | `root` (admin lands in the menu) |
+| `mikrotik` | `/export` | An admin |
+| `linux` | `iptables-save`, `nft list ruleset`, `ip addr`, `ip route` | root (named with a `vendor` column or `--device`) |
+
+Before comparing, lines that change by themselves are dropped: prompts and echoed commands, Cisco "Last configuration change" and NVRAM lines, ASA checksums and serial lines, the FortiGate file version, nftables packet counters.
+
+### What it produces
+
+| Where | What |
+| --- | --- |
+| `<out>/NW-01_<host>_<time>/summary.txt` | Per device: lines, lines added and removed, status; then the flags |
+| `.../devices.csv` | `device,address,vendor,status,lines,added,removed,sha256` |
+| `.../<device>.diff` | Unified diff against the previous copy (holds secrets; mode 600) |
+| `.../flags.csv` | One flag per changed line, secrets masked |
+| `<out>/net-configs/<device>/<time>.cfg` | Every saved config as received (mode 600) |
+| `<out>/net-configs/known_hosts` | The devices' SSH host keys |
+
+A changed line about accounts, passwords, SNMP, NAT, permits/allows/accepts, telnet, the web management server, AAA, crypto, tunnels, routes, rules, policies or SSH is HIGH. Any other change is MED.
+
+### What to watch for
+
+- **The saved configs hold password hashes, SNMP communities and VPN keys.** Everything printed is masked; the files are not.
+- **Check the first copy of each device looks complete.** A short file usually means the account cannot see the whole config (Cisco below privilege 15).
+- **A changed SSH host key is HIGH and stops that device's backup.** The device was replaced or reinstalled, or someone is in the middle. Find out which, then delete its line from `known_hosts`.
+- **The vendor commands are written from the vendors' documentation and tested against sample output, not real devices.** Run it once on the real gear before relying on it, and send any surprise to whoever maintains the kit.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `backup FAILED: Permission denied` | Wrong user or password, or keys not installed | Check by hand: `ssh USER@ADDRESS`; for passwords use `--password-env` |
+| `password logins need sshpass` (exit 3) | sshpass not installed on the admin box | `apt install sshpass`, or use keys |
+| `empty answer (no rights to show the config?)` | Account cannot run the show command, or pfSense admin menu | Use a privilege 15 / admin account; pfSense: `root` |
+| `no matching key exchange method` in the log | Very old device | Retried automatically; if it still fails, check `ssh -Q kex` on the admin box |
+| `os is network but the vendor is unknown` | Notes do not name a vendor | Add the vendor to the notes or a `vendor` column |
+| Every run shows the same lines changed | A line that changes by itself (a clock, a counter) | Send the line format to whoever maintains the kit; it belongs in the clean-up list |

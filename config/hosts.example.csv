@@ -6,6 +6,10 @@ host,ip,os,role,connect,port,user,scored_services,notes
 # host             short name, no domain
 # ip               address the admin workstation reaches it on
 # os               linux | windows | bsd | solaris | network
+#                  (network devices: name the vendor in notes - "Palo Alto",
+#                  "Cisco IOS", "Cisco ASA", "FortiGate", "VyOS", "pfSense",
+#                  "OPNsense", "MikroTik" - or put it in the os column, e.g.
+#                  cisco-asa.  NW-01 reads it from there.)
 # role             what the box is for, in a few words
 # connect          ssh | winrm | none  (how fan-out reaches it)
 # port             port for that connection
