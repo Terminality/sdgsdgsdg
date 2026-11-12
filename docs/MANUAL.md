@@ -885,7 +885,7 @@ sudo sh LX-39-safe-fixes.sh --out /root/ccdc-out --apply --no-forwarding   # NOT
 | Fix | What it does | Why it is safe |
 | --- | --- | --- |
 | `sysctl` | SYN cookies on; full address-space randomization; source-routed packets and ICMP redirects refused and not sent; odd-source packets logged; symlink and hardlink protection; kernel pointers and kernel log hidden from normal accounts | None of these change what a service listens on or answers |
-| `ipv6` | IPv6 off on every interface except loopback, with the kernel setting `disable_ipv6`, written for boot too | Services listening on `[::]` keep working for IPv4. NOT the `ipv6.disable=1` boot option, which stops such services from starting at all. Services bound to one specific IPv6 address are listed first under "check by hand" |
+| `ipv6` | IPv6 off on every interface except loopback (`lo` is switched back on after `all` is switched off, so `::1` stays), with the kernel setting `disable_ipv6`, written for boot too. Only tried against a stand-in so far: after the first real run check `ip -6 addr show lo` | Services listening on `[::]` keep working for IPv4. NOT the `ipv6.disable=1` boot option, which stops such services from starting at all. Services bound to one specific IPv6 address are listed first under "check by hand" |
 | `forwarding` | IP forwarding off. Only with `--no-forwarding` | Opt-in because routers, firewalls and Docker need forwarding |
 | `coredumps` | No core dumps from setuid programs; core size limit 0 for every account | A core dump of a login program can hold password hashes |
 | `perms` | Removes group and other write (and other read on secrets) from `/etc/passwd`, `/etc/group`, `/etc/shadow`, `/etc/gshadow`, sudo files, SSH host keys and `sshd_config`, `/root`, cron files, shell startup files, `ld.so` config, PAM and systemd unit folders; removes world-write from anything in `/etc`, program folders and home folders | Only bits are removed. Owners and groups stay, so `shadow` stays readable by the `shadow` group on Debian and by `ssh_keys` on Red Hat |
@@ -959,9 +959,10 @@ sudo sh LX-20-password-rotation.sh --out /root/ccdc-out --apply --protected /roo
 | Option | What it does |
 | --- | --- |
 | `--keep FILE` | The team's account list, one name per line. Human accounts (UID at or above `UID_MIN`, usually 1000) and any extra UID 0 account NOT on it are locked and expired. Expiry also blocks SSH key logins, which a locked password alone does not |
-| `--users a,b` | Rotate (and lock) only these accounts |
-| `--exclude a,b` | Never touch these accounts |
-| `--passwords FILE` | Use these passwords instead of random ones: `user,password` lines, for a sheet made in advance. Passwords must be 8+ characters with no `:` |
+| `--users a,b` | Rotate (and lock) only these accounts. Repeatable; the lists add up |
+| `--exclude a,b` | Never touch these accounts. Repeatable; the lists add up. Comma-separated, no spaces |
+| `--ignore-missing` | A name in `--users` or `--exclude` that is not an account on this box normally STOPS the script before anything changes (a misspelled name would otherwise get the account rotated). This option only warns instead, for one list used on many boxes |
+| `--passwords FILE` | Use these passwords instead of random ones: `user,password` lines, for a sheet made in advance. Passwords must be 8+ characters with no `:`; spaces around the name and password are dropped. Names not on this box, and accounts that are locked or have no password (setting one would unlock them), are listed in the summary and not changed |
 | `--length N` | Random password length (default 16, minimum 12) |
 | `--no-root` | Leave root's password alone |
 | `--include-me` | Also rotate the account that ran `sudo`. Skipped by default so you can still use `sudo` |
@@ -1036,7 +1037,8 @@ Keep a second root session open while applying, as with any SSH change.
 | --- | --- |
 | `--allow-keys FILE` | The team's public keys (`authorized_keys` format) or fingerprints (`SHA256:...`). Every other key is removed from every account |
 | `--remove-all-keys` | Remove every authorized key |
-| `--no-root-login` | `PermitRootLogin no`. The default is `prohibit-password`: root by key only |
+| `--no-root-login` | `PermitRootLogin no`. The default is `prohibit-password`: root by key only. The default is NOT applied when root has a password but no SSH key that stays (root could no longer log in by SSH at all) or when root is on the protected list; root login is then left as it is and the summary says so |
+| `--root-key-only` | `PermitRootLogin prohibit-password` even if root has no key |
 | `--keep-root-login` | Leave `PermitRootLogin` alone |
 | `--no-forwarding` | Also `AllowTcpForwarding no`, `PermitTunnel no`, `GatewayPorts no` (stops pivoting through the box) |
 | `--allow-users LIST` | `AllowUsers`: only these accounts may log in by SSH. Accounts on the protected list are added automatically. Easy to lock yourself out with |
@@ -1198,6 +1200,7 @@ sudo sh LX-40-change-watch.sh --out /root/ccdc-out --accept        # after chang
 | `--count N` | With `--loop`: stop after N checks |
 | `--webroot DIR` | Also watch DIR (the usual web roots are watched already) |
 | `--no-suid` | Skip the SUID/SGID scan, which reads the whole root file system |
+| `--suid-every N` | With `--loop`: run that scan only on every Nth check (default 10). A new SUID file is then reported up to N checks late; the other sections are checked every time |
 | `--alert-cmd CMD` | After a check that found changes, run CMD with the new alert lines on its stdin (`ssh ... 'cat >>file'`, `logger -t ccdc`, `mail ...`) |
 | `--state DIR` | Where the baseline lives (default `<out>/watch-<host>`) |
 
@@ -1245,7 +1248,7 @@ Each check alerts only on what changed since the previous check, so one change i
 | --- | --- | --- |
 | Hundreds of alerts on the first check | The baseline was taken before hardening | `--accept`, then watch |
 | `passwords` and `keys` never change | Not root, so shadow and other homes cannot be read | Run as root |
-| Checks are slow | The SUID scan on a large disk | `--no-suid`, or a longer `--loop` |
+| Checks are slow | The SUID scan on a large disk | It already runs only every 10th check in a loop; raise `--suid-every`, or use `--no-suid` |
 | `--alert-cmd failed` warning | The command failed (no SSH key, host down) | Alerts are still in `alerts.log`; test the command by hand: `echo test \| CMD` |
 | The loop stopped when the session closed | Started without `nohup` | Use `nohup ... &`, `tmux` or `screen` |
 
@@ -1269,7 +1272,7 @@ Keep it running with `nohup ... &`, `tmux` or `screen`. Put the scoring engine o
 | Option | What it does |
 | --- | --- |
 | `--max-fails N` | Failures (SSH, FTP, mail, PAM) in the window that earn a ban (default 10) |
-| `--web-max N` | Web login attempts that earn a ban (default 30; real users log in once, a guesser hundreds of times) |
+| `--web-max N` | Web login attempts that earn a ban (default 30; real users log in once, a guesser hundreds of times). Counted: POSTs to login pages (`wp-login.php`, `xmlrpc.php`, `/login`, `/user/login`, `/administrator/`, phpMyAdmin) and any 401 answer. Other admin pages are not counted |
 | `--window MIN` | Counting window (default 10) |
 | `--ban-time MIN` | Ban length (default 30) |
 | `--mail-max N` | Recipients per sender in the window before a spam warning (default 200) |
@@ -1559,6 +1562,7 @@ sh NW-10-device-passwords.sh --out ~/ccdc-out --hosts config/hosts.csv --apply -
 | `--hosts FILE` / `--device SPEC` | The devices, as for NW-01 |
 | `--user NAME` | Default login account (`admin`) |
 | `--ask-password` | Ask for the CURRENT password instead of `$CCDC_NET_PASS` |
+| `--passwords FILE` | Chosen new passwords: `device,password` lines, by device name or address (same characters as below, 8+). Devices not in the file get a random password. A name that is no device in this run is reported |
 | `--new-password-env` | Use `$CCDC_NET_NEWPASS` for every device (letters, digits and `_ . , @ % + = -`, 12+ characters). Default: a new random password per device |
 | `--enable-env` | Cisco: log in through `enable` with `$CCDC_NET_ENABLE` |
 | `--enable-too` | Cisco: also set a new enable secret; the test login must reach privilege 15 with it |

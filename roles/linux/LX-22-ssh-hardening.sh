@@ -4,7 +4,7 @@
 # NAME:     SSH hardening and key cleanup
 # ROLE:     Linux  (wave 2, first 15 minutes)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   A changed password does not stop a red team that planted an SSH key.  This:
@@ -37,7 +37,12 @@
 #                       key is removed from every account
 #   --remove-all-keys   remove every authorized key (no allow list)
 #   --no-root-login     PermitRootLogin no (default: prohibit-password,
-#                       which still allows root with a key)
+#                       which still allows root with a key).  The default is
+#                       NOT applied - root login is left as it is, and the
+#                       summary says so - when root has a password but no
+#                       SSH key that stays (root could then no longer log in
+#                       at all), or when root is on the protected list
+#   --root-key-only     PermitRootLogin prohibit-password even then
 #   --keep-root-login   leave PermitRootLogin as it is
 #   --no-forwarding     also turn off TCP forwarding, tunnels and gateway
 #                       ports (stops pivoting; check nothing scored uses them)
@@ -101,7 +106,9 @@ LX-22 SSH hardening and key cleanup
 
   --allow-keys FILE   team public keys / fingerprints; every other key is removed
   --remove-all-keys   remove every authorized key
-  --no-root-login     PermitRootLogin no (default: prohibit-password)
+  --no-root-login     PermitRootLogin no (default: prohibit-password, unless
+                      root has no SSH key or is on the protected list)
+  --root-key-only     PermitRootLogin prohibit-password even if root has no key
   --keep-root-login   leave PermitRootLogin alone
   --no-forwarding     also block TCP forwarding and tunnels
   --allow-users LIST  only these accounts may log in by SSH (careful)
@@ -114,14 +121,15 @@ USAGE
     cc_usage_common
 }
 
-ALLOWKEYS=""; RMALL=0; ROOTMODE=prohibit-password; NOFWD=0; ALLOWUSERS=""; BANNER=""; NORELOAD=0; R=""
+ALLOWKEYS=""; RMALL=0; ROOTSET=0; ROOTMODE=prohibit-password; NOFWD=0; ALLOWUSERS=""; BANNER=""; NORELOAD=0; R=""
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
         --allow-keys)      [ $# -ge 2 ] || cc_die 2 "--allow-keys needs a file"; [ -r "$2" ] || cc_die 2 "--allow-keys: cannot read $2"; ALLOWKEYS=$2; shift 2 ;;
         --remove-all-keys) RMALL=1; shift ;;
-        --no-root-login)   ROOTMODE=no; shift ;;
-        --keep-root-login) ROOTMODE=""; shift ;;
+        --no-root-login)   ROOTMODE=no; ROOTSET=1; shift ;;
+        --root-key-only)   ROOTMODE=prohibit-password; ROOTSET=1; shift ;;
+        --keep-root-login) ROOTMODE=""; ROOTSET=1; shift ;;
         --no-forwarding)   NOFWD=1; shift ;;
         --allow-users)     [ $# -ge 2 ] || cc_die 2 "--allow-users needs a list"; ALLOWUSERS=$(printf '%s' "$2" | tr ',' ' '); shift 2 ;;
         --banner)          [ $# -ge 2 ] || cc_die 2 "--banner needs a file"; [ -r "$2" ] || cc_die 2 "--banner: cannot read $2"; BANNER=$(cc_abspath "$2"); shift 2 ;;
@@ -210,7 +218,7 @@ fi
 cc_debug "AuthorizedKeysFile: $AKF"
 
 # ---- 1. Keys ------------------------------------------------------------------
-_nkeys=0; _nrem=0; _nfiles=0
+_nkeys=0; _nrem=0; _nfiles=0; _rootkeys=0
 awk -F: '$6 != "" { print $1 ":" $6 }' "$R/etc/passwd" >"$W/users"
 : >"$W/seen"
 while IFS=: read -r _u _h; do
@@ -244,6 +252,8 @@ while IFS=: read -r _u _h; do
                 cc_log REFUSED "key $_fp in $_f: account $_u is on the protected list - kept"
             fi
             [ "$_act" = remove ] && { printf '%s\n' "$_ln" >>"$W/drop"; _nrem=$((_nrem + 1)); }
+            # Keys root keeps decide below whether key-only root login is safe.
+            [ "$_u" = root ] && [ "$_act" != remove ] && _rootkeys=$((_rootkeys + 1))
             case "$_o" in *command=*|*environment=*) report "$_f ($_u): key ${_fp:-$_c} has options [$_o] - a forced command or environment can be a backdoor" ;; esac
             [ "$_act" = remove ] && [ "$CC_APPLY" != 1 ] && _act="would remove"
             [ "$_act" = remove ] && _act=removed
@@ -296,6 +306,19 @@ else
              print "sshd_config sets " $0 " - keys can come from outside the key files; check it is the team'"'"'s" }' "$CONF" >>"$W/report"
     if [ -z "$R" ]; then
         ps -eo user=,args= 2>/dev/null | awk '$2 ~ /sshd$/ && ($0 ~ / -f / || $0 ~ / -p /) { $1 = ""; print "extra sshd process running:" $0 }' >>"$W/report"
+    fi
+    # Root login: never take away root's only way in, or a scored login.
+    if [ -n "$ROOTMODE" ] && cc_is_protected account root && [ "$CC_FORCE_SCORED" != 1 ]; then
+        ROOTMODE=""
+        report "root is on the protected list: PermitRootLogin was left as it is"
+    elif [ -n "$ROOTMODE" ] && [ "$ROOTSET" = 0 ] && [ "$_rootkeys" -eq 0 ]; then
+        # No readable shadow file counts as "has a password": when unsure, do
+        # not lock root out.
+        _rpw=$(awk -F: '$1 == "root" { print ($2 == "" || $2 ~ /^[!*]/) ? "no" : "yes" }' "$R/etc/shadow" 2>/dev/null)
+        if [ "$_rpw" != no ]; then
+            ROOTMODE=""
+            report "root has a password but no SSH key that stays, so root password login was LEFT ON (turning it off would lock root out of SSH). Give root a team key or check another admin account can log in and use sudo, then run again with --no-root-login or --root-key-only"
+        fi
     fi
     # The block to put at the top.  Each setting is also recorded with the
     # value the current config gives (first occurrence outside Match).

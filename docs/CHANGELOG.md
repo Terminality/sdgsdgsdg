@@ -2,6 +2,29 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-12: Fixes from a full review
+
+**Fixed**
+
+- SV-26 (1.1.0): an attacker could choose which address got banned by logging in with an account name such as `x from 10.0.0.5 port 1`; with the plain iptables backend `0.0.0.0/0` would have blocked everything. The address is now taken from the end of the sshd line and every address must be one plain IPv4 or IPv6 address. The web rule counts login pages only, not every POST under `/admin` or `/login`.
+- LX-25 (1.1.0): the rollback timer of an earlier, unconfirmed run removed the rules of a later run that had been confirmed. A timer now only acts while its own run is the live one.
+- LX-22 (1.1.0): the default `PermitRootLogin prohibit-password` is no longer applied when root has a password but no SSH key that stays, or when root is on the protected list. New `--root-key-only`.
+- LX-39 (1.1.0): `net.ipv6.conf.all.disable_ipv6` also switched IPv6 off on loopback, against what the header and manual said. Loopback is now switched back on afterwards, in the boot file too.
+- NW-10 (1.1.0): the new password is written to `pending-password.csv` before it is sent and removed when the outcome is known, so stopping the script mid-change (Ctrl-C in a two-minute commit) no longer loses it. The Palo Alto hash is made with `openssl passwd -stdin` (the password was briefly on a command line). A protected device is matched by name as well as address. An unconfirmed revert records the tried password.
+- LX-20 (1.1.0): a name in `--users` or `--exclude` that is not an account stops the script (a misspelled `--exclude` used to get the account rotated); `--ignore-missing` turns that into a warning. `--users` and `--exclude` can be repeated. Password-sheet names that are missing, locked or without a password are reported; spaces around sheet passwords are dropped; passwords with a comma are quoted in `passwords.csv`. FreeBSD reads `/etc/master.passwd` instead of stopping; without `usermod` (Alpine) accounts are locked with `passwd -l`.
+- LX-40 (1.1.0): `--count N` never stopped for N of 2 or more on a box with SSH key files (the loop counter was overwritten inside the snapshot).
+
+**Added**
+
+- NW-10 `--passwords FILE`: a chosen new password per device.
+- LX-40 `--suid-every N`: in a loop the whole-disk SUID scan runs on every Nth check (default 10).
+- LX-25 warns that passive FTP needs a port range when port 21 is allowed.
+- README: the first-15-minutes run order.
+
+**Tested**
+
+- New checks in the lx20, lx22, lx25, lx39, lx40, sv26 and nw10 tests under dash, bash, busybox sh, ksh93, mksh and yash. Not tried on real systems: the IPv6 loopback fix (the test machine's kernel has no IPv6), FreeBSD and Alpine account locking.
+
 ## 2026-11-11: Device password rotation
 
 **Added**

@@ -4,7 +4,7 @@
 # NAME:     Network device password rotation
 # ROLE:     Network  (wave 2, first 15 minutes)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Default and leaked passwords on firewalls and switches are a red team's
@@ -35,6 +35,11 @@
 #   --ask-password       ask for the CURRENT password (else $CCDC_NET_PASS)
 #   --new-password-env   use $CCDC_NET_NEWPASS as the new password for every
 #                        device (default: a new random one per device)
+#   --passwords FILE     chosen new passwords: "device,password" lines (the
+#                        device's name or address).  Devices not in the file
+#                        get a random one (or $CCDC_NET_NEWPASS).  Same
+#                        characters as below, 8 or more.  Names in the file
+#                        that are not devices in this run are listed
 #   --enable-env         Cisco: log in through enable with $CCDC_NET_ENABLE
 #   --enable-too         Cisco: also set a new enable secret (verified too)
 #   --length N           random password length (default 16, minimum 12)
@@ -50,6 +55,10 @@
 #   summary.txt     each device: changed / would change / failed (reverted) / skipped
 #   devices.csv     device,address,vendor,account,status
 #   passwords.csv   device,address,account,password,time  (mode 600, --apply only)
+#   pending-password.csv   only while ONE device is being changed, and left
+#                   behind if the script is stopped at that moment (Ctrl-C,
+#                   closed session): that device has either its old password
+#                   or the one in this file (mode 600)
 #
 # WHAT IT CHANGES  (only with --apply)
 #   The login account's password on each device (and the Cisco enable secret
@@ -103,6 +112,7 @@ NW-10 Network device password rotation - change, prove the new login, then save 
   --user NAME          default login account (admin)
   --ask-password       ask for the current password
   --new-password-env   new password from $CCDC_NET_NEWPASS (default: random per device)
+  --passwords FILE     "device,password" lines: chosen new passwords
   --enable-env         Cisco: enable password from $CCDC_NET_ENABLE
   --enable-too         Cisco: also set a new enable secret
   --length N           random password length (default 16)
@@ -118,7 +128,7 @@ USAGE
 
 NL='
 '
-HOSTS=""; DEVICES=""; DEFUSER="admin"; ASK=0; NEWENV=0; ENABLE=0; ENTOO=0; LEN=16; WAIT=5; CWAIT=120; CONFIGS=""; LEGACY=0
+HOSTS=""; DEVICES=""; DEFUSER="admin"; ASK=0; NEWENV=0; ENABLE=0; ENTOO=0; LEN=16; WAIT=5; CWAIT=120; CONFIGS=""; LEGACY=0; PWFILE=""
 num() { case "$2" in ''|*[!0-9]*) cc_die 2 "$1 needs a whole number" ;; esac; }
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
@@ -128,6 +138,7 @@ while [ $# -gt 0 ]; do
         --user)             [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; shift 2 ;;
         --ask-password)     ASK=1; shift ;;
         --new-password-env) NEWENV=1; shift ;;
+        --passwords)        [ $# -ge 2 ] || cc_die 2 "--passwords needs a file"; [ -r "$2" ] || cc_die 2 "--passwords: cannot read $2"; PWFILE=$2; shift 2 ;;
         --enable-env)       ENABLE=1; shift ;;
         --enable-too)       ENTOO=1; shift ;;
         --length)           num "$1" "${2:-}"; LEN=$2; shift 2 ;;
@@ -169,6 +180,17 @@ if [ "$NEWENV" = 1 ]; then
     case "$CCDC_NET_NEWPASS" in *[!A-Za-z0-9_.,@%+=-]*) cc_die 2 "CCDC_NET_NEWPASS may only use letters, digits and _ . , @ % + = -" ;; esac
     [ "${#CCDC_NET_NEWPASS}" -ge 12 ] || cc_die 2 "CCDC_NET_NEWPASS must be at least 12 characters"
 fi
+# Chosen passwords per device: "device,password" lines -> $W/given.
+: >"$W/given"
+if [ -n "$PWFILE" ]; then
+    awk -F',' '/^[ \t]*#/ || NF < 2 { next } { d = $1; p = substr($0, length($1) + 2); gsub(/\r/, "", p); gsub(/^[ \t]+|[ \t]+$/, "", d); gsub(/^[ \t]+|[ \t]+$/, "", p); print d "\t" p }' "$PWFILE" >"$W/given"
+    if awk -F'\t' '$2 ~ /[^A-Za-z0-9_.,@%+=-]/ || length($2) < 8 { bad = 1 } END { exit !bad }' "$W/given"; then
+        rm -rf "$W"
+        cc_die 2 "--passwords: every password must be 8+ characters from letters, digits and _ . , @ % + = -"
+    fi
+fi
+# given_pw NAME ADDRESS -> the chosen password for that device, if any.
+given_pw() { awk -F'\t' -v n="$1" -v a="$2" '$1 == n || $1 == a { print $2; exit }' "$W/given"; }
 case "$OLDPW" in *[\ \"\'?#]*) cc_warn "the current password has a space, quote, ? or #: an automatic revert may not be able to type it" ;; esac
 [ "$ENABLE" = 1 ] && [ -z "${CCDC_NET_ENABLE:-}" ] && cc_die 3 "--enable-env: set CCDC_NET_ENABLE"
 
@@ -227,7 +249,9 @@ setpw() {
     case "$1" in
         cisco-ios) printf 'configure terminal\nusername %s privilege %s secret %s\nend\n' "$2" "$4" "$3" ;;
         cisco-asa) printf 'configure terminal\nusername %s password %s privilege %s\nend\n' "$2" "$3" "$4" ;;
-        paloalto)  _ph=$(openssl passwd -5 "$3" 2>/dev/null || openssl passwd -1 "$3")
+        # -stdin: the password must not sit on a command line (ps shows those).
+        paloalto)  _ph=$(printf '%s\n' "$3" | openssl passwd -5 -stdin 2>/dev/null) || _ph=""
+                   [ -n "$_ph" ] || _ph=$(printf '%s\n' "$3" | openssl passwd -1 -stdin)
                    printf 'configure\nset mgt-config users %s phash %s\ncommit\nexit\n' "$2" "$_ph" ;;
         fortigate) printf 'config system admin\nedit %s\nset password %s %s\nnext\nend\n' "$2" "$3" "$5" ;;
         vyos)      printf "source /opt/vyatta/etc/functions/script-template\nconfigure\nset system login user %s authentication plaintext-password '%s'\ncommit\nsave\nexit\n" "$2" "$3" ;;
@@ -276,14 +300,35 @@ try_login() {
 
 # ---- Each device ------------------------------------------------------------------
 PWOUT="$CC_RUN_DIR/passwords.csv"
+# The new password is written here BEFORE it is sent, and removed once the
+# device's outcome is known.  If the script is stopped in between (Ctrl-C
+# during a two-minute Palo Alto commit), the password is not lost.
+PEND="$CC_RUN_DIR/pending-password.csv"
+pend_done() { rm -f "$PEND"; }
 trap '' PIPE    # a session that dies must not kill this script mid-write
+on_stop() {
+    if [ -f "$PEND" ]; then
+        cc_err "stopped while changing a device: it has EITHER its old password OR the new one in $PEND (mode 600). Try both, then delete that file"
+    else
+        cc_err "interrupted"
+    fi
+    rm -rf "$W"
+    exit 130
+}
+trap on_stop INT TERM HUP
+# nap SECONDS -> wait, but stay interruptible: a shell runs a trap only after
+# the command in the foreground ends, and "wait" is the one that ends at once.
+nap() { sleep "$1" & _nap=$!; wait "$_nap"; }
+# Names in the password file that are not devices in this run.
+awk -F'\t' -v df="$W/devices" 'BEGIN { while ((getline l < df) > 0) { split(l, d, "|"); k[d[1]] = 1; k[d[2]] = 1 } } !($1 in k) { print $1 }' "$W/given" >"$W/given_missing"
+[ -s "$W/given_missing" ] && cc_warn "in --passwords but not a device in this run: $(tr '\n' ' ' <"$W/given_missing")"
 : >"$W/rows_out"
 row() { cc_csv_row "$DCSV" "$1" "$2" "$3" "$4" "$5"; printf '%s|%s|%s|%s\n' "$1" "$3" "$4" "$5" >>"$W/rows_out"; }
 while IFS='|' read -r _n _a _v _u _p; do
     case "$_v" in pfsense|opnsense)
         row "$_n" "$_a" "$_v" "$_u" "skipped: change it in the web GUI (System > User Manager)"; continue ;;
     esac
-    if ! cc_guard host "$_a"; then row "$_n" "$_a" "$_v" "$_u" "skipped (protected device)"; continue; fi
+    if ! cc_guard host "$_a" || ! cc_guard host "$_n"; then row "$_n" "$_a" "$_v" "$_u" "skipped (protected device)"; continue; fi
     if ! cc_guard account "$_u"; then row "$_n" "$_a" "$_v" "$_u" "skipped (protected account)"; continue; fi
     _pr=15
     case "$_v" in cisco-ios|cisco-asa)
@@ -291,17 +336,20 @@ while IFS='|' read -r _n _a _v _u _p; do
             row "$_n" "$_a" "$_v" "$_u" "skipped: account not found in NW-01's saved config (run NW-01; AAA logins are changed on the AAA server)"; continue
         fi ;;
     esac
-    if [ "$NEWENV" = 1 ]; then _new=$CCDC_NET_NEWPASS; else _new=$(cc_genpass "$LEN") || { row "$_n" "$_a" "$_v" "$_u" "failed: no random password"; continue; }; fi
+    _new=$(given_pw "$_n" "$_a"); _src=""
+    if [ -n "$_new" ]; then _src=" (from --passwords)"
+    elif [ "$NEWENV" = 1 ]; then _new=$CCDC_NET_NEWPASS; else _new=$(cc_genpass "$LEN") || { row "$_n" "$_a" "$_v" "$_u" "failed: no random password"; continue; }; fi
     _newen=""
     [ "$ENTOO" = 1 ] && case "$_v" in cisco-*) _newen=$(cc_genpass "$LEN") ;; esac
     if [ "$CC_APPLY" != 1 ]; then
         cc_log WOULD "$_n ($_v): change the password of $_u$([ -n "$_newen" ] && echo ' and the enable secret'), test a new login, then save (or revert)"
         CC_N_WOULD=$((CC_N_WOULD + 1))
-        row "$_n" "$_a" "$_v" "$_u" "would change"; continue
+        row "$_n" "$_a" "$_v" "$_u" "would change$_src"; continue
     fi
     cc_info "$_n ($_v): changing the password of $_u"
     # 1. The first session: commands go in through a FIFO so it stays open
     #    while the new password is tested from a second session.
+    (umask 077; printf 'device,address,account,password,time\n%s,%s,%s,%s,%s\n' "$_n" "$_a" "$_u" "$_new" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PEND")
     rm -f "$W/fifo"; mkfifo "$W/fifo"
     sshopts >"$W/opts"
     set --; while IFS= read -r _o; do set -- "$@" "$_o"; done <"$W/opts"
@@ -310,7 +358,7 @@ while IFS='|' read -r _n _a _v _u _p; do
     exec 3>"$W/fifo"
     { preamble "$_v"; setpw "$_v" "$_u" "$_new" "$_pr" "$OLDPW"; [ -n "$_newen" ] && setenable "$_v" "$_newen"; } >&3 2>/dev/null
     _w=$WAIT; [ "$_v" = paloalto ] && _w=$CWAIT
-    sleep "$_w"
+    nap "$_w"
     if ! kill -0 "$_spid" 2>/dev/null; then
         # The first session is gone: the login failed (wrong current
         # password, unreachable) or the device closed it.
@@ -325,6 +373,7 @@ while IFS='|' read -r _n _a _v _u _p; do
             CC_N_FAIL=$((CC_N_FAIL + 1))
             row "$_n" "$_a" "$_v" "$_u" "failed: could not log in with the current password (${_why:-no answer}); nothing changed"
         fi
+        pend_done
         continue
     fi
     # 2. A second, new session with the new password.
@@ -344,13 +393,21 @@ while IFS='|' read -r _n _a _v _u _p; do
          [ -n "$_newen" ] && printf '%s,%s,(enable secret),%s,%s\n' "$_n" "$_a" "$_newen" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$PWOUT")
         cc_log DO "$_n: password of $_u changed, new login tested, config saved"
         CC_N_DONE=$((CC_N_DONE + 1))
-        row "$_n" "$_a" "$_v" "$_u" "changed (new login tested$([ -n "$_newen" ] && echo ', enable secret too'))"
+        row "$_n" "$_a" "$_v" "$_u" "changed (new login tested$([ -n "$_newen" ] && echo ', enable secret too'))$_src"
+        pend_done
     else
         cc_err "$_n: the new password did NOT work - putting the old one back through the open session"
         { setpw "$_v" "$_u" "$OLDPW" "$_pr" "$_new"; endsession "$_v"; } >&3 2>/dev/null
         exec 3>&-; wait "$_spid" 2>/dev/null
-        sleep "$_w"
-        if try_login "$_v" "$_u" "$_a" "$_p" "$OLDPW"; then _rv="old password restored and tested"; else _rv="REVERT NOT CONFIRMED - check this device NOW from the console"; fi
+        nap "$_w"
+        if try_login "$_v" "$_u" "$_a" "$_p" "$OLDPW"; then
+            _rv="old password restored and tested"
+        else
+            _rv="REVERT NOT CONFIRMED - check this device NOW from the console (the password that was tried is in passwords.csv, marked UNCONFIRMED)"
+            (umask 077; [ -f "$PWOUT" ] || printf 'device,address,account,password,time\n' >"$PWOUT"
+             printf '%s,%s,%s (UNCONFIRMED: old or this),%s,%s\n' "$_n" "$_a" "$_u" "$_new" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$PWOUT")
+        fi
+        pend_done
         CC_N_FAIL=$((CC_N_FAIL + 1))
         _what="new password did not work"; [ "$_ok" = 2 ] && _what="new enable secret did not reach level 15"
         row "$_n" "$_a" "$_v" "$_u" "failed: $_what; $_rv"

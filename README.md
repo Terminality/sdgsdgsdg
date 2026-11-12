@@ -1,6 +1,6 @@
 # CCDC-AI-SLOP
 
-Blue-team scripts for the Collegiate Cyber Defense Competition, written with Claude. The plan is 140 scripts across the eight official team roles; `docs/STATUS.md` shows how many exist.
+Blue-team scripts for the Collegiate Cyber Defense Competition, written with Claude. The plan is 142 scripts across the eight official team roles; `docs/STATUS.md` shows how many exist.
 
 ## Ready to use
 
@@ -22,9 +22,25 @@ Blue-team scripts for the Collegiate Cyber Defense Competition, written with Cla
 | Network config audit (NW-07) | Reads the saved device configs and flags telnet or plain-HTTP management, default SNMP communities, clear-text and type 7 passwords, management open to any address, any-to-any allow rules and default admins; lists every account. Touches no device | `sh roles/network/NW-07-config-audit.sh --out ~/ccdc-out` |
 | Device password rotation (NW-10) | Changes the login password on each firewall, router and switch (Cisco enable secret too, optionally) while keeping the first session open, tests the new password from a second session, then saves - or puts the old password back if the new one fails. New passwords only in a mode-600 file | `CCDC_NET_PASS=... sh roles/network/NW-10-device-passwords.sh --out ~/ccdc-out --hosts config/hosts.csv --apply` |
 
-The two shared libraries (`lib/lib.sh`, `lib/lib.ps1`) are also finished; every other script is built on them. Next up: the rest of the Linux first-15-minutes scripts (safe fixes, password rotation, SSH hardening, firewall, change watch), then Windows.
+The two shared libraries (`lib/lib.sh`, `lib/lib.ps1`) are also finished; every other script is built on them. Next up: Windows (collector, backup, safe fixes, passwords, firewall, change watch).
 
 Nothing here has been run on real competition systems yet. Read "What has and hasn't been tested" before relying on it.
+
+## First 15 minutes: the order to run them
+
+Each box needs the whole kit folder (scripts plus `lib/`); the single-file build is not written yet. Every script that changes things is a dry run until you add `--apply`, so run it once without, read the summary, then run it again with.
+
+Linux box, as root:
+
+1. `LX-31` backup, then `SV-14` if it has a database. Before anything changes.
+2. `SH-05` collector (and `SV-01` on web or database servers). Read the HIGH flags.
+3. `LX-20` passwords. Protected list first; `--exclude` or `--passwords` for accounts the team must keep or set by hand.
+4. `LX-22` SSH keys and settings. Keep a second session open.
+5. `LX-39` safe fixes.
+6. `LX-25` firewall, last, and confirm it from a new session.
+7. Leave running: `LX-40 --loop 60` (change watch) and `SV-26 --apply --loop 60` (banning).
+
+Network devices, from the admin workstation: `NW-01` (save configs), `NW-07` (audit them), then `NW-10` on ONE device first, then the rest.
 
 ## Layout
 
@@ -106,4 +122,4 @@ The Windows library is written to PowerShell 2.0 rules but has never run on Wind
 - [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md): rules for writing a script
 - [`docs/STATUS.md`](docs/STATUS.md): what is built
 - [`docs/CHANGELOG.md`](docs/CHANGELOG.md): what changed, and when
-- [`docs/catalog.csv`](docs/catalog.csv): all 140 planned scripts with role, wave and level
+- [`docs/catalog.csv`](docs/catalog.csv): all 142 planned scripts with role, wave and level

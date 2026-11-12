@@ -4,7 +4,7 @@
 # NAME:     Linux change watch
 # ROLE:     Linux  (wave 2, first 15 minutes - start it once the box is hardened)
 # KIND:     readonly - changes nothing on the host
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Takes a quick baseline of the places red teams use to keep access, then
@@ -40,6 +40,9 @@
 #   --count N          with --loop: stop after N checks
 #   --webroot DIR      also watch DIR (repeat); the usual web roots are watched
 #   --no-suid          skip the SUID/SGID scan (it reads the whole disk)
+#   --suid-every N     with --loop: do that scan only on every Nth check
+#                      (default 10, so every 10 minutes with --loop 60); a new
+#                      SUID file is then reported up to N checks late
 #   --alert-cmd CMD    run CMD (with sh -c) after each check that found
 #                      changes; the new alert lines arrive on its stdin
 #   --state DIR        where the baseline lives (default <out>/watch-<host>)
@@ -99,6 +102,8 @@ LX-40 Linux change watch - alert on new accounts, keys, cron jobs, ports, files
   --count N          with --loop: stop after N checks
   --webroot DIR      also watch DIR (repeatable)
   --no-suid          skip the SUID/SGID scan
+  --suid-every N     with --loop: scan the whole disk for SUID/SGID files only
+                     on every Nth check (default 10); the other checks stay light
   --alert-cmd CMD    run CMD with new alerts on stdin (send them off the box)
   --state DIR        baseline folder (default <out>/watch-<host>)
   --root DIR         treat DIR as / (tests)
@@ -110,7 +115,7 @@ USAGE
 
 NL='
 '
-DOBASE=0; LOOP=0; COUNT=0; WEBROOTS=""; NOSUID=0; ALERTCMD=""; STATE=""; R=""
+DOBASE=0; LOOP=0; COUNT=0; WEBROOTS=""; NOSUID=0; SUIDEVERY=10; ALERTCMD=""; STATE=""; R=""
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
@@ -120,6 +125,7 @@ while [ $# -gt 0 ]; do
         --webroot)   [ $# -ge 2 ] || cc_die 2 "--webroot needs a folder"; [ -d "$2" ] || cc_die 2 "--webroot: not a folder: $2"
                      WEBROOTS="$WEBROOTS$(cc_abspath "$2")$NL"; shift 2 ;;
         --no-suid)   NOSUID=1; shift ;;
+        --suid-every) [ $# -ge 2 ] || cc_die 2 "--suid-every needs a number"; SUIDEVERY=$2; shift 2 ;;
         --alert-cmd) [ $# -ge 2 ] || cc_die 2 "--alert-cmd needs a command"; ALERTCMD=$2; shift 2 ;;
         --state)     [ $# -ge 2 ] || cc_die 2 "--state needs a folder"; STATE=$2; shift 2 ;;
         --root)      [ $# -ge 2 ] || cc_die 2 "--root needs a folder"; [ -d "$2" ] || cc_die 2 "--root: not a folder: $2"
@@ -130,6 +136,7 @@ while [ $# -gt 0 ]; do
 done
 case "$LOOP" in ''|*[!0-9]*) cc_die 2 "--loop needs a whole number of seconds" ;; esac
 case "$COUNT" in ''|*[!0-9]*) cc_die 2 "--count needs a whole number" ;; esac
+case "$SUIDEVERY" in ''|*[!0-9]*|0) cc_die 2 "--suid-every needs a whole number, 1 or more" ;; esac
 [ "$LOOP" -gt 0 ] && [ "$LOOP" -lt 10 ] && cc_die 2 "--loop must be at least 10 seconds"
 
 cc_init "LX-40" "Linux change watch" readonly
@@ -217,7 +224,11 @@ snap() {
     fi
     # suid: SUID/SGID programs anywhere on the root file system
     : >"$_sd/suid"
-    if [ "$NOSUID" = 0 ]; then
+    # The scan walks the whole root file system.  In a loop that is too
+    # heavy for every check, so most checks reuse the last result (DOSUID=0).
+    if [ "$NOSUID" = 0 ] && [ "$DOSUID" = 0 ] && [ -f "$STATE/last/suid" ]; then
+        cp "$STATE/last/suid" "$_sd/suid"
+    elif [ "$NOSUID" = 0 ]; then
         find "$R/" -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec ls -ln {} + 2>/dev/null |
             awk -v r="$R" '{ p = $NF; if (r != "" && index(p, r) == 1) p = substr(p, length(r) + 1); print p "|" $1 " " $3 }' | sort >"$_sd/suid"
     fi
@@ -290,6 +301,7 @@ compare() {
     done
 }
 
+DOSUID=1    # 1 = this snapshot scans for SUID/SGID files
 # ---- Run -----------------------------------------------------------------------------
 if [ "$DOBASE" = 1 ] || [ ! -d "$STATE/baseline" ]; then
     [ "$DOBASE" = 1 ] || cc_info "no baseline yet in $STATE - taking one now"
@@ -302,9 +314,13 @@ if [ "$DOBASE" = 1 ] || [ ! -d "$STATE/baseline" ]; then
     [ "$LOOP" -gt 0 ] || cc_finish
 fi
 
-_n=0
+# The counter has its own name: snap() uses _n for other things, and with
+# no "local" in POSIX sh that would reset it on every check.
+_checks=0
 while :; do
-    _n=$((_n + 1))
+    _checks=$((_checks + 1))
+    DOSUID=1
+    [ "$LOOP" -gt 0 ] && [ $(((_checks - 1) % SUIDEVERY)) -ne 0 ] && DOSUID=0
     snap "$STATE/now"
     compare "$STATE/last" "$STATE/now" | sort -t'|' -k1,1 >"$STATE/.new"
     _t=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -326,7 +342,7 @@ while :; do
     compare "$STATE/baseline" "$STATE/now" | sort >"$STATE/changes-since-baseline.txt"
     rm -rf "$STATE/last"; mv "$STATE/now" "$STATE/last"
     [ "$LOOP" -gt 0 ] || break
-    [ "$COUNT" -gt 0 ] && [ "$_n" -ge "$COUNT" ] && break
+    [ "$COUNT" -gt 0 ] && [ "$_checks" -ge "$COUNT" ] && break
     sleep "$LOOP"
 done
 cc_info "alerts: $ALERTS ($(grep -c . "$STATE/changes-since-baseline.txt") differences from the baseline)"

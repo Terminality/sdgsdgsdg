@@ -106,4 +106,20 @@ t_has "$log" "-A CCDC-IN -p tcp --dport 18282 -j ACCEPT" "allowed port rule"
 t_has "$log" "-I INPUT 1 -j CCDC-IN" "jump inserted at the top of INPUT"
 t_has "$log" "-A CCDC-IN -j DROP" "final drop"
 t_hasnt "$log" "-F INPUT" "INPUT itself is never flushed"
+t_start "an older run's timer must not remove a newer, confirmed firewall"
+run --out "$O" --apply --no-protected --confirm-timeout 5 </dev/null >"$T_TMP/a1.out" 2>&1
+sleep 2
+run --out "$O" --apply --no-protected --confirm-timeout 30 </dev/null >"$T_TMP/a2.out" 2>&1
+d2=$(rundir "$(cat "$T_TMP/a2.out")")
+sh "$d2/keep-firewall.sh" >/dev/null 2>&1
+sleep 6
+t_ok "the confirmed rules are still there after the first timer fired" test -s "$NFT_STATE"
+t_fail "the first run did not record a rollback" test -f "$(rundir "$(cat "$T_TMP/a1.out")")/ROLLED_BACK"
+run --out "$O" --remove --apply --no-protected >/dev/null 2>&1
+
+t_start "FTP note"
+out=$(run --out "$O" --no-protected --allow 21/tcp 2>&1)
+t_has "$out" "passive-mode data ports are not" "warns that passive FTP needs a port range"
+out=$(run --out "$O" --no-protected --allow 21/tcp --allow 40000-40100/tcp 2>&1)
+t_hasnt "$out" "passive-mode data ports are not" "no warning once a range is allowed"
 t_done

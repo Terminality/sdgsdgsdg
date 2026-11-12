@@ -117,4 +117,36 @@ out=$(run --out "$O" --device r1,ios,cisco-ios --enable-too --apply --no-protect
 P=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')/passwords.csv
 t_has "$out" "changed (new login tested, enable secret too)" "enable secret changed and tested at level 15"
 t_eq "$(cat "$D/ios.en")" "$(awk -F, '$3 == "(enable secret)" { print $4 }' "$P")" "device has the enable secret from the file"
+t_start "chosen passwords per device (--passwords)"
+devices
+printf '# device,password\nf1, Chosen-For-Forti-1 \n10.99.99.99,Not-A-Device-Here1\n' >"$T_TMP/devpw.csv"
+out=$(run --out "$O" --device f1,fg,fortigate --device m1,mt,mikrotik --passwords "$T_TMP/devpw.csv" --apply --no-protected --wait 1 2>&1)
+P=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')/passwords.csv
+t_eq "$(cat "$D/fg.pw")" "Chosen-For-Forti-1" "the device named in the file got the chosen password"
+t_eq "$(cat "$D/mt.pw")" "$(awk -F, '$1 == "m1" { print $4 }' "$P")" "the other device got a random one"
+t_has "$out" "not a device in this run: 10.99.99.99" "a name that is no device is reported"
+t_hasnt "$(cat "$O"/NW-10_*.log)" "Chosen-For-Forti-1" "the chosen password is not in the log"
+printf 'f1,bad pass?\n' >"$T_TMP/devbad.csv"
+run --out "$O" --device f1,fg,fortigate --passwords "$T_TMP/devbad.csv" >/dev/null 2>&1; t_eq "$?" 2 "an unsafe chosen password exits 2"
+t_fail "no pending file left after a normal run" sh -c "ls '$O'/NW-10_*/pending-password.csv >/dev/null 2>&1"
+
+t_start "stopped in the middle: the new password is not lost"
+devices
+# The start-and-stop runs in a small script of its own under the system sh:
+# the signal must reach the script itself (a function in the background is a
+# subshell), and a yash parent ends its background children without letting
+# their traps run.
+cat >"$T_TMP/stop.sh" <<'STOP'
+out=$1; shift
+"$@" >"$out" 2>&1 &
+pid=$!
+sleep 4
+kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+STOP
+# shellcheck disable=SC2086
+sh "$T_TMP/stop.sh" "$T_TMP/stop.out" $SH "$C" --out "$O" --device p1,pan,paloalto --apply --no-protected --commit-wait 20
+pend=$(ls "$O"/NW-10_*/pending-password.csv 2>/dev/null | tail -n 1)
+t_file "${pend:-$O/none}" "pending-password.csv is left behind"
+t_eq "$(ls -l "$pend" | cut -c1-10)" "-rw-------" "and is mode 600"
+t_has "$(cat "$T_TMP/stop.out")" "EITHER its old password OR the new one" "the message says what to do"
 t_done

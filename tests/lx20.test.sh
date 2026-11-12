@@ -143,4 +143,31 @@ t_eq "$(f2 alice)" "\$6\$a\$alice" "the account that ran sudo is skipped"
 t_has "$(f2 alice)" "\$test\$" "--include-me rotates it"
 printf 'alice,bad:pw:here\n' >"$T_TMP/bad.csv"
 run --out "$O" --root "$R" --passwords "$T_TMP/bad.csv" >/dev/null 2>&1; t_eq "$?" 2 "a password with ':' is refused"
+t_start "names given by hand must exist (a typo must not rotate the account)"
+plant
+out=$(run --out "$O" --root "$R" --exclude alise --apply --no-protected 2>&1); rc=$?
+t_eq "$rc" 2 "a misspelled --exclude name exits 2"
+t_has "$out" "no such account on this box: alise" "and names it"
+t_ok "nothing changed" cmp -s "$R/etc/shadow" "$T_TMP/shadow.orig"
+run --out "$O" --root "$R" --users alice,rooot >/dev/null 2>&1; t_eq "$?" 2 "a misspelled --users name exits 2"
+out=$(run --out "$O" --root "$R" --exclude alise,alice --ignore-missing --apply --no-protected 2>&1); rc=$?
+t_eq "$rc" 0 "--ignore-missing carries on"
+t_has "$out" "not an account here: alise" "and still reports the name"
+t_eq "$(f2 alice)" "\$6\$a\$alice" "the correctly spelled excluded account is untouched"
+
+t_start "several --exclude options add up; password sheet problems are reported"
+plant
+# mallory is locked first, so the sheet's password for her must NOT be set.
+awk -F: -v OFS=: '$1 == "mallory" { $2 = "!" $2 } { print }' "$R/etc/shadow" >"$R/etc/shadow.t" && mv "$R/etc/shadow.t" "$R/etc/shadow"
+printf 'alice ,  Spaced-Out-Pw-77  \nmallory,Should-Not-Be-Set-1\nghost,Nobody-Home-12345\nsvc,"Has,Comma-And-Quote9\n' >"$T_TMP/pw2.csv"
+out=$(run --out "$O" --root "$R" --exclude bob --exclude root,toor --passwords "$T_TMP/pw2.csv" --apply --no-protected 2>&1)
+d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
+t_eq "$(f2 bob)" "\$6\$a\$bob" "first --exclude still counts"
+t_eq "$(f2 root)" "\$6\$a\$root" "second --exclude counts too"
+t_eq "$(f2 alice)" "\$test\$Spaced-Out-Pw-77" "spaces around a sheet password are dropped"
+t_eq "$(f2 mallory)" "!\$6\$a\$mallory" "a locked account is not given the sheet password"
+t_has "$out" "mallory is in --passwords but has no usable password" "and that is reported"
+t_has "$out" "ghost is in --passwords but is not an account here" "a sheet name missing here is reported"
+t_has "$(cat "$d/passwords.csv")" '"""Has,Comma-And-Quote9"' "a password with a comma or quote is quoted in passwords.csv"
+
 t_done

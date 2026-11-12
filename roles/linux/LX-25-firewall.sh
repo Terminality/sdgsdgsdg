@@ -4,7 +4,7 @@
 # NAME:     Linux firewall builder
 # ROLE:     Linux  (wave 2, first 15 minutes - run it LAST of the hardening)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Drops every incoming connection except the ones the box needs:
@@ -309,6 +309,12 @@ sort -t'|' -k1,1 -k2,2n -u "$W/allow" | awk -F'|' '!s[$1 "|" $2 "|" $3]++' >"$W/
 while IFS='|' read -r _pr _f _l _why; do
     if [ "$_f" = "$_l" ]; then cc_csv_row "$PCSV" "$_pr" "$_f" yes "$_why"; else cc_csv_row "$PCSV" "$_pr" "$_f-$_l" yes "$_why"; fi
 done <"$W/allow.u"
+# FTP: the control port alone is not enough.  Passive-mode data connections
+# come in on other ports that are not listening yet, so they would be dropped.
+if awk -F'|' '$1 == "tcp" && $2 <= 21 && $3 >= 21 { f = 1 } END { exit !f }' "$W/allow.u" &&
+   ! awk -F'|' '$1 == "tcp" && $2 >= 1024 && $3 > $2 { f = 1 } END { exit !f }' "$W/allow.u"; then
+    printf 'FTP (21/tcp) is allowed, but passive-mode data ports are not: file listings and transfers may hang. Set a passive port range in the FTP server and add it, e.g. --allow 40000-40100/tcp\n' >>"$W/notes"
+fi
 # Sources allowed for everything: --admin and protected hosts (scoring engine).
 SOURCES=$(printf '%s' "$ADMIN" | grep .)
 if [ -n "$CC_PROTECTED" ]; then
@@ -402,6 +408,10 @@ fi
 
 # ---- 4. Check, apply, start the rollback timer -------------------------------------
 KEEPF="$CC_RUN_DIR/.keep"
+# Names the run whose rules are live.  A rollback timer only acts while it
+# still names its own run: without this, the timer of an earlier, unconfirmed
+# run would later remove the rules of a newer run that WAS confirmed.
+CURRENT="$CC_OUT/lx25-live-$CC_HOST"
 KEEPSH="$CC_RUN_DIR/keep-firewall.sh"
 _state="dry run - nothing changed"
 if [ "$BACKEND" = nft ] && ! "$NFT" -c -f "$RULES" >"$W/check" 2>&1; then
@@ -419,6 +429,7 @@ elif [ "$CC_APPLY" = 1 ]; then
         _state="FAILED to load; rules removed again"
     else
         cc_undo_add "remove the CCDC firewall rules" "sh $(cc_shquote "$ROLLBACK")"
+        printf '%s\n' "$CC_RUN_DIR" >"$CURRENT"
         if [ "$TIMEOUT" -eq 0 ]; then
             _state="LIVE (no rollback timer: --confirm-timeout 0)"
         else
@@ -426,7 +437,8 @@ elif [ "$CC_APPLY" = 1 ]; then
             cat >"$CC_RUN_DIR/rollback-timer.sh" <<EOF
 #!/bin/sh
 sleep $TIMEOUT
-if [ ! -f $(cc_shquote "$KEEPF") ]; then
+# Only if nobody confirmed AND no newer run has replaced these rules.
+if [ ! -f $(cc_shquote "$KEEPF") ] && [ "\$(cat $(cc_shquote "$CURRENT") 2>/dev/null)" = $(cc_shquote "$CC_RUN_DIR") ]; then
     sh $(cc_shquote "$ROLLBACK") >/dev/null 2>&1
     date -u +%Y-%m-%dT%H:%M:%SZ >$(cc_shquote "$CC_RUN_DIR/ROLLED_BACK")
 fi
@@ -470,7 +482,7 @@ fi
     awk -F'|' '{ printf "  %-4s %-12s %s\n", $1, ($2 == $3 ? $2 : $2 "-" $3), $4 }' "$W/allow.u"
     [ -n "$SOURCES" ] && printf 'Allowed for everything from: %s\n' "$(printf '%s' "$SOURCES" | tr '\n' ' ')"
     [ -n "$SSHFROM" ] && printf 'SSH (%s) only from: %s\n' "$SSHPORTS" "$(printf '%s' "$SSHFROM" | tr '\n' ' ')"
-    if [ -s "$W/notes" ]; then printf '\nNOT allowed (check):\n'; sed 's/^/  /' "$W/notes"; fi
+    if [ -s "$W/notes" ]; then printf '\nNOT allowed (check):\n'; sed 's/^/  /' "$W/notes" | cut -c1-240; fi
     printf '\nRules: %s\n' "$RULES"
     case "$_state" in
         LIVE*rollback*) printf '\nCONFIRM from a NEW ssh session within %ss, or the rules are removed:\n  sudo sh %s\n' "$TIMEOUT" "$KEEPSH" ;;

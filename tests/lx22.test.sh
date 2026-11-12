@@ -34,6 +34,8 @@ for k in team evil www; do ssh-keygen -q -t ed25519 -N '' -C "$k" -f "$K/$k"; do
 plant() {
     rm -rf "$R"; mkdir -p "$R/etc/ssh" "$R/home/alice/.ssh" "$R/home/bob/.ssh" "$R/var/www/.ssh"
     printf 'root:x:0:0::/root:/bin/bash\nalice:x:1000:1000::/home/alice:/bin/bash\nbob:x:1001:1001::/home/bob:/bin/bash\nwww-data:x:33:33::/var/www:/usr/sbin/nologin\n' >"$R/etc/passwd"
+    # root has no usable password here, so key-only root login is safe.
+    printf 'root:*:19000:0:99999:7:::\nalice:$6$a$b:19000:0:99999:7:::\n' >"$R/etc/shadow"
     printf 'Include /etc/ssh/sshd_config.d/*.conf\nPort 22\nX11Forwarding yes\nPermitRootLogin yes\nMatch User bob\n    PermitEmptyPasswords yes\n' >"$R/etc/ssh/sshd_config"
     { echo '# alice keys'; cat "$K/team.pub"; cat "$K/evil.pub"; } >"$R/home/alice/.ssh/authorized_keys"
     cat "$K/evil.pub" >"$R/home/bob/.ssh/authorized_keys"
@@ -107,4 +109,26 @@ t_has "$cfg" "PermitRootLogin no" "--no-root-login"
 t_has "$cfg" "AllowTcpForwarding no" "--no-forwarding"
 t_has "$cfg" "AllowUsers alice bob" "--allow-users adds the protected account"
 t_eq "$(grep -c . "$R/home/alice/.ssh/authorized_keys")" 1 "--remove-all-keys leaves only the comment"
+t_start "root login is not taken away when it is root's only way in, or scored"
+plant
+printf 'root:$6$a$roothash:19000:0:99999:7:::\n' >"$R/etc/shadow"
+out=$(run --out "$O" --root "$R" --apply --no-protected 2>&1)
+t_hasnt "$(cat "$R/etc/ssh/sshd_config")" "PermitRootLogin prohibit-password" "root with a password and no key keeps password login"
+t_has "$out" "root password login was LEFT ON" "and the summary says why"
+t_has "$(cat "$R/etc/ssh/sshd_config")" "PermitEmptyPasswords no" "the other settings still go in"
+plant
+printf 'root:$6$a$roothash:19000:0:99999:7:::\n' >"$R/etc/shadow"
+run --out "$O" --root "$R" --apply --no-protected --root-key-only >/dev/null 2>&1
+t_has "$(cat "$R/etc/ssh/sshd_config")" "PermitRootLogin prohibit-password" "--root-key-only forces it"
+plant
+mkdir -p "$R/root/.ssh"; sed 's|::/root:|::/root:|' "$R/etc/passwd" >/dev/null
+printf 'root:$6$a$roothash:19000:0:99999:7:::\n' >"$R/etc/shadow"
+cat "$K/team.pub" >"$R/root/.ssh/authorized_keys"
+run --out "$O" --root "$R" --apply --no-protected --allow-keys "$K/team.pub" >/dev/null 2>&1
+t_has "$(cat "$R/etc/ssh/sshd_config")" "PermitRootLogin prohibit-password" "root with a team key gets key-only login"
+plant
+printf 'type,value,note\naccount,root,scoring logs in as root\n' >"$T_TMP/prot-root.csv"
+out=$(run --out "$O" --root "$R" --apply --protected "$T_TMP/prot-root.csv" --no-root-login 2>&1)
+t_hasnt "$(cat "$R/etc/ssh/sshd_config")" "PermitRootLogin no" "a protected root keeps its login even with --no-root-login"
+t_has "$out" "root is on the protected list" "and the summary says so"
 t_done

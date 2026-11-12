@@ -4,7 +4,7 @@
 # NAME:     Linux password rotation
 # ROLE:     Linux  (wave 2, first 15 minutes)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Default and leaked passwords are the red team's first way in.  This:
@@ -27,10 +27,19 @@
 # OPTIONS
 #   --keep FILE        the team's account list, one name per line (# comments).
 #                      Human accounts not on it are locked and expired
-#   --users a,b        rotate only these accounts
-#   --exclude a,b      never touch these accounts
+#   --users a,b        rotate only these accounts (repeatable)
+#   --exclude a,b      never touch these accounts (repeatable).  A name in
+#                      --users or --exclude that is not an account on this
+#                      box STOPS the script before anything changes: a typo
+#                      there would rotate the account you meant to keep
+#   --ignore-missing   only warn about such names (for one list used on
+#                      many boxes)
 #   --passwords FILE   use these passwords instead of random ones: CSV lines
-#                      "user,password" (for a password sheet made in advance)
+#                      "user,password" (for a password sheet made in advance).
+#                      Spaces around the name and the password are dropped.
+#                      Names not on this box are listed in the summary; an
+#                      account that is locked or has no password is NOT
+#                      given one (that would unlock it) and is listed too
 #   --length N         length of random passwords (default 16)
 #   --no-root          do not rotate root's password
 #   --include-me       also rotate the account that ran sudo (skipped by
@@ -56,7 +65,9 @@
 #   writing a hash into a log).
 #
 # DEPENDS ON
-#   chpasswd and usermod (shadow-utils or busybox) on Linux; pw on FreeBSD;
+#   chpasswd and usermod (shadow-utils or busybox) on Linux - without
+#   usermod (Alpine) accounts are locked with "passwd -l" only; pw on FreeBSD
+#   (reads /etc/master.passwd; NOT yet tried on a real FreeBSD box);
 #   pwconv for the hidden-hash fix; /dev/urandom for passwords.
 #   CCDC_CHPASSWD, CCDC_USERMOD and CCDC_PWCONV may name stand-in programs
 #   (the tests use them so they never touch real accounts).
@@ -96,8 +107,9 @@ LX-20 Linux password rotation - new passwords for every usable account
   sudo sh LX-20-password-rotation.sh [--apply] [options]
 
   --keep FILE        team account list; human accounts not on it are locked
-  --users a,b        rotate only these accounts
-  --exclude a,b      never touch these accounts
+  --users a,b        rotate only these accounts (repeatable)
+  --exclude a,b      never touch these accounts (repeatable)
+  --ignore-missing   warn, do not stop, when a name in --users/--exclude is not an account here
   --passwords FILE   "user,password" lines to use instead of random passwords
   --length N         random password length (default 16)
   --no-root          leave root's password alone
@@ -111,13 +123,14 @@ USAGE
     cc_usage_common
 }
 
-KEEP=""; USERS=""; EXCLUDE=""; PWFILE=""; LEN=16; NOROOT=0; INCME=0; KICK=0; PRINT=0; R=""
+KEEP=""; USERS=""; EXCLUDE=""; IGNMISS=0; PWFILE=""; LEN=16; NOROOT=0; INCME=0; KICK=0; PRINT=0; R=""
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
         --keep)       [ $# -ge 2 ] || cc_die 2 "--keep needs a file"; [ -r "$2" ] || cc_die 2 "--keep: cannot read $2"; KEEP=$2; shift 2 ;;
-        --users)      [ $# -ge 2 ] || cc_die 2 "--users needs a list"; USERS=$2; shift 2 ;;
-        --exclude)    [ $# -ge 2 ] || cc_die 2 "--exclude needs a list"; EXCLUDE=$2; shift 2 ;;
+        --users)      [ $# -ge 2 ] || cc_die 2 "--users needs a list"; USERS="${USERS:+$USERS,}$2"; shift 2 ;;
+        --exclude)    [ $# -ge 2 ] || cc_die 2 "--exclude needs a list"; EXCLUDE="${EXCLUDE:+$EXCLUDE,}$2"; shift 2 ;;
+        --ignore-missing) IGNMISS=1; shift ;;
         --passwords)  [ $# -ge 2 ] || cc_die 2 "--passwords needs a file"; [ -r "$2" ] || cc_die 2 "--passwords: cannot read $2"; PWFILE=$2; shift 2 ;;
         --length)     [ $# -ge 2 ] || cc_die 2 "--length needs a number"; LEN=$2; shift 2 ;;
         --no-root)    NOROOT=1; shift ;;
@@ -141,6 +154,9 @@ W="$CC_RUN_DIR/.work"
 (umask 077; mkdir -p "$W") || cc_die 3 "cannot create $W"
 CSV=$(cc_csv_new accounts "user,uid,shell,password_state,action,note")
 PASSWD="$R/etc/passwd"; SHADOW="$R/etc/shadow"
+# FreeBSD keeps the hashes in /etc/master.passwd (same place in the line:
+# name:hash:...), and pw rebuilds the password database itself.
+[ "$CC_OS_KERNEL" = freebsd ] && [ ! -e "$SHADOW" ] && SHADOW="$R/etc/master.passwd"
 [ -r "$PASSWD" ] || cc_die 3 "cannot read $PASSWD"
 [ -r "$SHADOW" ] || cc_die 3 "cannot read $SHADOW (run as root)"
 
@@ -153,6 +169,7 @@ else
     CHPASSWD=${CCDC_CHPASSWD:-$(cc_which chpasswd)} || CHPASSWD=""
     USERMOD=${CCDC_USERMOD:-$(cc_which usermod)} || USERMOD=""
     PWCONV=${CCDC_PWCONV:-$(cc_which pwconv)} || PWCONV=""
+    PASSWD_BIN=$(cc_which passwd) || PASSWD_BIN=""
     [ -n "$CHPASSWD" ] || cc_die 3 "chpasswd not found (install the shadow or passwd package)"
     TOOLS=shadow
 fi
@@ -168,11 +185,15 @@ set_password() {
 # SSH key logins, which a locked password alone does not).
 lock_account() {
     if [ "$TOOLS" = pw ]; then "$PW" lock "$1"
-    else "$USERMOD" -L -e 1 "$1"; fi
+    elif [ -n "$USERMOD" ]; then "$USERMOD" -L -e 1 "$1"
+    # No usermod (Alpine without the shadow package): lock the password only.
+    elif [ -n "$PASSWD_BIN" ]; then "$PASSWD_BIN" -l "$1"
+    else return 127; fi
 }
 unlock_cmd() {
     if [ "$TOOLS" = pw ]; then printf '%s unlock %s' "$PW" "$1"
-    else printf "%s -U %s; %s -e '' %s" "$USERMOD" "$1" "$USERMOD" "$1"; fi
+    elif [ -n "$USERMOD" ]; then printf "%s -U %s; %s -e '' %s" "$USERMOD" "$1" "$USERMOD" "$1"
+    else printf '%s -u %s' "$PASSWD_BIN" "$1"; fi
 }
 
 # ---- Lists ----------------------------------------------------------------------
@@ -188,7 +209,7 @@ onkeep() { grep -qx "$1" "$W/keep"; }
 # that would break chpasswd's "user:password" input.
 : >"$W/given"
 if [ -n "$PWFILE" ]; then
-    awk -F',' '/^[ \t]*#/ || NF < 2 { next } { u = $1; p = substr($0, length($1) + 2); gsub(/\r/, "", p); gsub(/^[ \t]+|[ \t]+$/, "", u); print u "\t" p }' "$PWFILE" >"$W/given"
+    awk -F',' '/^[ \t]*#/ || NF < 2 { next } { u = $1; p = substr($0, length($1) + 2); gsub(/\r/, "", p); gsub(/^[ \t]+|[ \t]+$/, "", u); gsub(/^[ \t]+|[ \t]+$/, "", p); print u "\t" p }' "$PWFILE" >"$W/given"
     if awk -F'\t' '$2 ~ /:/ || length($2) < 8 { bad = 1 } END { exit !bad }' "$W/given"; then
         cc_die 2 "--passwords: every password must be 8+ characters and contain no ':'"
     fi
@@ -213,6 +234,29 @@ awk -F: -v shf="$SHADOW" 'FILENAME == shf { sh[$1] = $2; next }
       else st = "set"
       print u "|" $3 "|" $7 "|" st "|" pf }' "$SHADOW" "$PASSWD" >"$W/accounts"
 
+# ---- Names given by hand must exist ------------------------------------------
+# A misspelled --exclude name would otherwise be ignored without a word and
+# the account it was meant to protect would get a new password.
+: >"$W/notes"
+_missing=""
+for _nm in $(printf '%s,%s' "$USERS" "$EXCLUDE" | tr ',' ' '); do
+    awk -F'|' -v u="$_nm" '$1 == u { f = 1 } END { exit !f }' "$W/accounts" || _missing="$_missing $_nm"
+done
+if [ -n "$_missing" ]; then
+    if [ "$IGNMISS" = 1 ]; then
+        cc_warn "not accounts on this box (ignored because of --ignore-missing):$_missing"
+        printf 'NOTE|named in --users/--exclude but not an account here:%s\n' "$_missing" >>"$W/notes"
+    else
+        rm -rf "$W"
+        cc_die 2 "no such account on this box:$_missing (named in --users or --exclude). Nothing was changed. Fix the spelling, or add --ignore-missing"
+    fi
+fi
+# The same check for the password sheet, as notes: one sheet often covers
+# many boxes, so a name missing here is normal - but worth seeing.
+awk -F'\t' -v af="$W/accounts" 'BEGIN { while ((getline l < af) > 0) { split(l, a, "|"); st[a[1]] = a[4] } }
+    !($1 in st) { print "NOTE|" $1 " is in --passwords but is not an account here"; next }
+    st[$1] != "set" && st[$1] != "empty" { print "NOTE|" $1 " is in --passwords but has no usable password (" st[$1] "): NOT set, which would unlock it. Unlock it first if you want it" }' "$W/given" >>"$W/notes"
+
 # login_shell SHELL -> true if SHELL lets someone log in.
 login_shell() {
     case "$(basename "${1:-/bin/sh}")" in
@@ -227,6 +271,9 @@ login_shell() {
 _backed=0
 backup_once() {
     [ "$_backed" = 1 ] && return 0
+    # FreeBSD: after the undo log copies master.passwd back, the password
+    # database must be rebuilt.  Added first, so it runs last (bottom-up).
+    case "$SHADOW" in */master.passwd) cc_undo_add "rebuild the password database" "pwd_mkdb -p $(cc_shquote "$SHADOW")" ;; esac
     cc_backup_file "$SHADOW" || return 1
     cc_backup_file "$PASSWD" || return 1
     _backed=1
@@ -247,7 +294,7 @@ fi
 row() { cc_csv_row "$CSV" "$1" "$2" "$3" "$4" "$5" "$6"; }
 PWOUT="$CC_RUN_DIR/passwords.csv"
 N_ROT=0; N_LOCK=0; N_SKIP=0; N_FAIL=0
-: >"$W/show"; : >"$W/notes"
+: >"$W/show"
 
 while IFS='|' read -r _u _uid _sh _st _pf; do
     [ -n "$_u" ] || continue
@@ -302,7 +349,10 @@ while IFS='|' read -r _u _uid _sh _st _pf; do
         row "$_u" "$_uid" "$_sh" "$_st" failed "$_note"; N_FAIL=$((N_FAIL + 1))
     elif [ "$CC_APPLY" = 1 ]; then
         [ -f "$PWOUT" ] || (umask 077; printf 'host,user,password,time\n' >"$PWOUT")
-        printf '%s,%s,%s,%s\n' "$CC_HOST" "$_u" "$_pw" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$PWOUT"
+        # A given password may hold a comma or a quote: quote it the CSV way.
+        _pwq=$_pw
+        case "$_pw" in *,*|*'"'*) _pwq="\"$(printf '%s' "$_pw" | sed 's/"/""/g')\"" ;; esac
+        printf '%s,%s,%s,%s\n' "$CC_HOST" "$_u" "$_pwq" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$PWOUT"; _pwq=""
         [ "$PRINT" = 1 ] && printf '%s:%s\n' "$_u" "$_pw" >>"$W/show"
         row "$_u" "$_uid" "$_sh" "$_st" rotated "$_note"; N_ROT=$((N_ROT + 1))
     else
@@ -315,6 +365,9 @@ done <"$W/accounts"
 if [ -z "$R" ] && cc_have pdbedit; then
     pdbedit -L 2>/dev/null | cut -d: -f1 | grep . >"$W/samba"
     [ -s "$W/samba" ] && printf 'NOTE|Samba accounts with their own (unchanged) passwords: %s - use smbpasswd if they must change\n' "$(tr '\n' ' ' <"$W/samba")" >>"$W/notes"
+fi
+if [ -n "$KEEP" ] && [ "$TOOLS" = shadow ] && [ -z "$USERMOD" ]; then
+    printf 'NOTE|usermod not found: accounts were locked with "passwd -l" only, which does NOT stop SSH key logins - remove their keys (LX-22)\n' >>"$W/notes"
 fi
 if [ -z "$KEEP" ]; then
     awk -F'|' -v m="$UID_MIN" '($2 >= m && $2 < 60000) && $4 != "none" { print $1 }' "$W/accounts" >"$W/humans"
