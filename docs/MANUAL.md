@@ -28,6 +28,7 @@ Contents:
 18. Linux firewall builder, `roles/linux/LX-25-firewall.sh` (LX-25)
 19. Linux change watch, `roles/linux/LX-40-change-watch.sh` (LX-40)
 20. Brute-force and spam banning, `roles/linux/SV-26-banning.sh` (SV-26)
+21. Database backup, `roles/applications/SV-14-db-backup.sh` (SV-14)
 
 ---
 
@@ -1324,3 +1325,73 @@ Firewall: nftables table `inet ccdc_ban` (two address sets with per-entry timeou
 | `NOT BANNED (default gateway ...)` | Traffic arrives NATed through the gateway | Ban by hand only if you are sure; better, firewall at the edge |
 | `no firewall tool found` (exit 3) | No nft, ipset or iptables | Install nftables |
 | Bans gone after a reboot | They are timed and not saved, on purpose | Keep it running in a loop |
+
+---
+
+## 21. Database backup, `roles/applications/SV-14-db-backup.sh` (SV-14)
+
+Dumps every database on a Linux or Unix host, checks each dump can be read back, hashes them, and can copy them off the box. Copying a running database's files does not give a usable backup; a dump does. Run it in the first minutes, next to the Linux backup (LX-31).
+
+### How to run it
+
+```sh
+sudo sh SV-14-db-backup.sh --out /root/ccdc-out
+sudo sh SV-14-db-backup.sh --out /root/ccdc-out --copy-to admin@10.0.0.5:/srv/backups/db01/
+sudo sh SV-14-db-backup.sh --out /root/ccdc-out --mysql-cnf /root/my.cnf --keep 3
+```
+
+| Option | What it does |
+| --- | --- |
+| `--only mysql,postgres,sqlite` | Which engines (default: all that are found) |
+| `--mysql-cnf FILE` | MySQL client file with a user and password (`[client]` section), when root cannot log in through the socket |
+| `--sqlite FILE` | Also back up this SQLite file (repeat) |
+| `--max-mb N` | Refuse if the databases add up to more than N MB (default 4096); also refuses when the disk is too full |
+| `--keep N` | Keep only the newest N SV-14 backups of this host in the output folder |
+| `--copy-to DEST` | Copy the dumps, hashes and restore notes off the box with `scp` |
+
+It changes nothing in the databases or on the host, so it needs no `--apply`.
+
+### What it dumps
+
+| Engine | Files | How |
+| --- | --- | --- |
+| MySQL / MariaDB | `mysql_<db>.sql.gz`, one per database, including `mysql` (accounts and grants) | `mysqldump`/`mariadb-dump --single-transaction --routines --triggers --events`; checked with `gzip -t` and the "Dump completed" line |
+| PostgreSQL | `pg_globals.sql.gz` (roles), `pg_<db>.dump` per database | `pg_dumpall --globals-only` and `pg_dump -Fc` as the `postgres` account; checked with `pg_restore -l` |
+| SQLite | `sqlite_<n>_<name>` | Files in web roots, `/var/lib/grafana` and `/opt` that start with the SQLite header, and `--sqlite` files; `sqlite3 .backup` when available, else a copy |
+
+Login for MySQL follows SV-01: `--mysql-cnf`, then root through the socket, then `/etc/mysql/debian.cnf`, then the client's defaults. It never prompts.
+
+### What it produces
+
+In `<out>/SV-14_<host>_<UTC time>/` (mode 700, files 600): the dumps, `SHA256SUMS`, `dumps.csv` (`engine,database,file,size_kb,status`), `RESTORE.txt` with the commands for each dump, and `summary.txt`.
+
+### Restoring
+
+```sh
+cd /root/ccdc-out/SV-14_db01_<time>
+sha256sum -c SHA256SUMS
+gzip -dc mysql_wordpress.sql.gz | mysql                                           # REPLACES the database
+sudo -u postgres pg_restore --clean --if-exists -d shopdb < pg_shopdb.dump         # REPLACES its objects
+sudo -u postgres createdb restore_check && sudo -u postgres pg_restore -d restore_check < pg_shopdb.dump   # compare first
+```
+
+PostgreSQL dumps are fed on stdin (`<`): the `postgres` account cannot open files in the private backup folder itself. `RESTORE.txt` also shows how to load a MySQL dump under another name to compare, and how to cut one table out of a dump.
+
+### What to watch for
+
+- **The dumps hold every password hash and every row**, including the `mysql` system database. Keep them private and copy them only to the team's machine.
+- **Restoring a whole database undoes everything since the dump**, including legitimate changes (orders, posts). Restore one table, or compare first, when you can.
+- **The `mysql` database dump restores accounts too.** Load it only to undo account changes, and change the passwords again afterwards.
+- **MyISAM tables** are dumped without a lock; one that is written during the dump can be a moment inconsistent.
+- **MongoDB, Redis and MSSQL** are not covered.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `MySQL/MariaDB is running but could not log in` | root needs a password and there is no `debian.cnf` | `--mysql-cnf` with a working account |
+| `PostgreSQL is running: run as root` | Not root | `sudo` |
+| A MySQL dump `FAILED` | Disk full, a crashed table, or no rights to a database | Read the log; `mysqlcheck` the database; check free space |
+| `the databases add up to about N MB` (exit 3) | Bigger than `--max-mb` | Raise `--max-mb`, or `--out` on a bigger disk |
+| `pg_restore: could not open input file ... Permission denied` | Passing the file name to `pg_restore` run as postgres | Feed it on stdin: `pg_restore ... < FILE` |
+| SQLite marked "may be inconsistent" | No `sqlite3`, and the app may write while it is copied | Install `sqlite3`, or stop the app for the copy |
