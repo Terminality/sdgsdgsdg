@@ -1,6 +1,6 @@
 # Linux — hosts + services
 
-Scripts owned by this role. 7 of 26 are built.
+Scripts owned by this role. 8 of 26 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -27,7 +27,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LX-36 | Samba and NFS hardening | 4 | Easy | planned |  |
 | SV-17 | Mail hardening | 4 | Medium | planned |  |
 | SV-19 | FTP hardening | 4 | Easy | planned |  |
-| SV-26 | Brute-force and spam banning | 2 | Medium | planned |  |
+| SV-26 | Brute-force and spam banning | 2 | Medium | built | [`roles/linux/SV-26-banning.sh`](../../roles/linux/SV-26-banning.sh) |
 | AU-27 | Inject tool installer | 5 | Hard | planned |  |
 | LX-32 | Hardening menu | 5 | Easy | planned |  |
 | LX-34 | Container hardening | 5 | Medium | planned |  |

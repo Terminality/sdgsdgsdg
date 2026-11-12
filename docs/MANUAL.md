@@ -27,6 +27,7 @@ Contents:
 17. SSH hardening and key cleanup, `roles/linux/LX-22-ssh-hardening.sh` (LX-22)
 18. Linux firewall builder, `roles/linux/LX-25-firewall.sh` (LX-25)
 19. Linux change watch, `roles/linux/LX-40-change-watch.sh` (LX-40)
+20. Brute-force and spam banning, `roles/linux/SV-26-banning.sh` (SV-26)
 
 ---
 
@@ -1243,3 +1244,83 @@ Each check alerts only on what changed since the previous check, so one change i
 | Checks are slow | The SUID scan on a large disk | `--no-suid`, or a longer `--loop` |
 | `--alert-cmd failed` warning | The command failed (no SSH key, host down) | Alerts are still in `alerts.log`; test the command by hand: `echo test \| CMD` |
 | The loop stopped when the session closed | Started without `nohup` | Use `nohup ... &`, `tmux` or `screen` |
+
+---
+
+## 20. Brute-force and spam banning, `roles/linux/SV-26-banning.sh` (SV-26)
+
+Reads the login logs, counts failures per source address, and bans an address that passes the limit. The ban removes itself after `--ban-time` minutes, so a mistake fixes itself. Spam from a compromised mailbox is reported, not banned.
+
+### How to run it
+
+```sh
+sudo sh SV-26-banning.sh --out /root/ccdc-out --protected /root/protected.csv                 # dry run
+sudo sh SV-26-banning.sh --out /root/ccdc-out --protected /root/protected.csv --apply --loop 60
+sudo sh SV-26-banning.sh --out /root/ccdc-out --list                                           # current bans
+sudo sh SV-26-banning.sh --out /root/ccdc-out --apply --unban 10.6.6.66
+```
+
+Keep it running with `nohup ... &`, `tmux` or `screen`. Put the scoring engine on the protected list as a `host`: after a password change it fails logins too.
+
+| Option | What it does |
+| --- | --- |
+| `--max-fails N` | Failures (SSH, FTP, mail, PAM) in the window that earn a ban (default 10) |
+| `--web-max N` | Web login attempts that earn a ban (default 30; real users log in once, a guesser hundreds of times) |
+| `--window MIN` | Counting window (default 10) |
+| `--ban-time MIN` | Ban length (default 30) |
+| `--mail-max N` | Recipients per sender in the window before a spam warning (default 200) |
+| `--ignore CIDR` | Never ban this address or network (repeat) |
+| `--log FILE` | Read ONLY these logs (repeat), not the usual ones or the journal |
+| `--history N` | Lines read from each log on the very first run (default 2000) |
+| `--loop N` / `--count N` | Run every N seconds; stop after N runs |
+| `--backend` | `nft` (default when it works), `ipset`, or `iptables` |
+| `--list` / `--unban IP` | Show bans / remove one (with `--apply`) |
+
+### What it counts
+
+| Service | Log lines |
+| --- | --- |
+| SSH | `Failed password for ...`, invalid-user scans that disconnect before a password, `maximum authentication attempts exceeded` |
+| FTP | vsftpd `FAIL LOGIN`, proftpd `Login failed`, pure-ftpd `Authentication failed` |
+| SMTP | postfix `SASL ... authentication failed`, `Relay access denied` |
+| IMAP/POP | dovecot `auth failed ... rip=` |
+| Web | `POST` to `wp-login.php`, `xmlrpc.php`, Joomla `/administrator`, `/user/login`, Roundcube, phpMyAdmin, `/login`, `/admin`; any HTTP 401 |
+| Other | any PAM `authentication failure ... rhost=` |
+| Spam (report only) | postfix `from=<sender> ... nrcpt=N`, summed per sender |
+
+Logs read by default: `/var/log/auth.log` or `/var/log/secure`, FTP logs, `/var/log/mail.log` or `maillog`, Apache and nginx access logs. When there is no SSH log file, the journal is read instead.
+
+**How the window works without parsing dates:** each run reads only what was added to each log since the last run, and stores those counts with the run's time. The window is the sum of runs in the last `--window` minutes. A log that got shorter (rotated) is read from the start again.
+
+### Never banned
+
+Protected hosts (type `host`), `--ignore` addresses, this box's own addresses, loopback, and the **default gateway**. When the network NATs traffic, every outside client looks like the gateway, and banning it would cut off the scoring engine. These show as `NOT BANNED` when they pass the limit, so you can decide.
+
+### What it produces
+
+In `<out>/ban-<host>/`:
+
+| File | Contents |
+| --- | --- |
+| `bans.csv` | `time,address,services,failures,accounts_tried,until,action` |
+| `events.log` | One line per run, bans, the `NOT BANNED` and `SPAM?` warnings |
+| `hits`, `offsets` | The window counts and how far each log was read |
+
+Firewall: nftables table `inet ccdc_ban` (two address sets with per-entry timeouts, one drop rule); or ipset `ccdc_ban` plus one iptables rule; or one iptables rule per address, removed by a later run when due. The undo log removes it all. A dry run keeps no state, so it can be repeated.
+
+### What to watch for
+
+- **Accounts tried** in `bans.csv` tell you what the red team is guessing: if a real team account is on the list, change its password.
+- **`SPAM?`** means a local mailbox is sending to many people: its password is probably known. Change it (SV-12 / LX-20) and check the mail queue.
+- **Many addresses, few tries each** stay under the limit. Lower `--max-fails`, or block the range with the firewall builder.
+- **First run.** It reads the last 2000 lines of each log, so old failures can trigger bans straight away. Do a dry run first.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `0 new failure line(s)` while an attack runs | The service logs somewhere else, or in a different format | Find the log, pass it with `--log`, run with `--debug`; send the line format to whoever maintains the kit |
+| The scoring engine got banned | Not on the protected list | `--unban` it, add it as `host` to the protected list |
+| `NOT BANNED (default gateway ...)` | Traffic arrives NATed through the gateway | Ban by hand only if you are sure; better, firewall at the edge |
+| `no firewall tool found` (exit 3) | No nft, ipset or iptables | Install nftables |
+| Bans gone after a reboot | They are timed and not saved, on purpose | Keep it running in a loop |
