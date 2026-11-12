@@ -350,7 +350,7 @@ while IFS='|' read -r _n _a _v _u _p; do
     else
         _st="saved (first copy)"
     fi
-    (umask 077; cp "$W/raw" "$STORE/$_n/$_stamp.cfg"; cp "$W/norm" "$STORE/$_n/$_stamp.norm"; printf '%s\n' "$_stamp" >"$STORE/$_n/latest")
+    (umask 077; cp "$W/raw" "$STORE/$_n/$_stamp.cfg"; cp "$W/norm" "$STORE/$_n/$_stamp.norm"; printf '%s\n' "$_stamp" >"$STORE/$_n/latest"; printf '%s\n' "$_v" >"$STORE/$_n/vendor")
     [ "$_try" = 1 ] && _st="$_st, old SSH algorithms"
     cc_csv_row "$DCSV" "$_n" "$_a" "$_v" "$_st" "$_lines" "$_add" "$_del" "$_hash"
     printf '%s|%s|%s|%s|%s|%s\n' "$_n" "$_v" "$_st" "$_lines" "$_add" "$_del" >>"$W/summary_rows"
