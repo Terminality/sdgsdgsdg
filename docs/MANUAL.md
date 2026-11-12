@@ -25,6 +25,7 @@ Contents:
 15. Linux safe fixes, `roles/linux/LX-39-safe-fixes.sh` (LX-39)
 16. Linux password rotation, `roles/linux/LX-20-password-rotation.sh` (LX-20)
 17. SSH hardening and key cleanup, `roles/linux/LX-22-ssh-hardening.sh` (LX-22)
+18. Linux firewall builder, `roles/linux/LX-25-firewall.sh` (LX-25)
 
 ---
 
@@ -1080,3 +1081,87 @@ On the admin workstation, the team's public key is usually `~/.ssh/id_ed25519.pu
 | `FAILED: sshd stopped listening; old config restored` | sshd did not come back after the reload | The script restored the old config; check `ss -ltnp`, start sshd by hand if needed, read the log |
 | A teammate cannot log in by key any more | Their key was not on `--allow-keys` | Add it and run again, or restore the file from the undo log |
 | `could not rewrite it (immutable?)` | `chattr +i` on the key file | `chattr -i FILE` and run again |
+
+---
+
+## 18. Linux firewall builder, `roles/linux/LX-25-firewall.sh` (LX-25)
+
+Drops every incoming connection the box does not need. Run it LAST of the Linux hardening, after the backup, safe fixes, passwords and SSH, and keep a second session open.
+
+### How to run it
+
+```sh
+sudo sh LX-25-firewall.sh --out /root/ccdc-out --protected /root/protected.csv                  # dry run: prints the rules
+sudo sh LX-25-firewall.sh --out /root/ccdc-out --protected /root/protected.csv --apply --admin 10.0.0.5
+# then, from a NEW ssh session, within 2 minutes:
+sudo sh /root/ccdc-out/LX-25_web01_<time>/keep-firewall.sh
+# once scoring is confirmed green, keep the rules across a reboot:
+sudo sh LX-25-firewall.sh --out /root/ccdc-out --save --apply
+```
+
+| Option | What it does |
+| --- | --- |
+| `--allow SPEC` | Also allow `80`, `80/tcp`, `53/udp` or `8000-8100/tcp` (repeat or comma-separate) |
+| `--admin CIDR` | Allow everything from this address or network (the team's workstations). Repeat for more |
+| `--ssh-from CIDR` | SSH only from these addresses. Leave it out if the scoring engine checks SSH |
+| `--strict` | Allow only scored ports, `--allow`, SSH and DHCP; NOT every port that is listening |
+| `--restrict-out` | Also limit outgoing traffic to DNS, DHCP, NTP, HTTP(S), replies and the admin addresses. Stops reverse shells; can break software that calls out |
+| `--keep-ipv6` | Do not drop IPv6 |
+| `--backend nft\|iptables` | Default: nft when it works |
+| `--confirm-timeout N` | Seconds before the automatic rollback (default 120). `0` = no timer: only when you are at the console |
+| `--save` | With `--apply`: save the live ccdc rules for reboot |
+| `--remove` | With `--apply`: remove the ccdc rules |
+
+### What it allows
+
+| Allowed | Why |
+| --- | --- |
+| Loopback, replies to the box's own connections | Nothing works without them |
+| ICMP (ping, errors) | Scoring often pings; path MTU needs ICMP errors |
+| UDP 68 (and 546 with `--keep-ipv6`) | DHCP replies: without them a DHCP box loses its address at lease renewal |
+| SSH, on the port `sshd -T` reports | Team access (limited with `--ssh-from`) |
+| Every port on the protected list (type `port`) | Scored services, even if down right now |
+| Every port listening on a network address now | Running services keep working. Not with `--strict` |
+| Everything from `--admin` and protected hosts (type `host`) | The team and the scoring engine |
+
+Not allowed, and listed under "NOT allowed": ports listening on backdoor-style numbers (1337, 4444, 4445, 5555, 6666, 6667, 12345, 31337, 54321, 2375 Docker API), and listeners on 127.0.0.1 only (they need no rule). IPv6 is dropped except loopback.
+
+### Safety
+
+- **Own rules only.** nftables: table `inet ccdc`. iptables: chains `CCDC-IN`/`CCDC-OUT`, jumped to from the top of `INPUT`/`OUTPUT`. Nothing else is flushed, so Docker, fail2ban, firewalld and ufw keep their rules. `FORWARD` is never touched.
+- **Checked first.** The nft ruleset is checked with `nft -c` before loading; if loading fails, whatever loaded is removed.
+- **Rollback timer.** After `--apply`, a detached timer removes the rules after `--confirm-timeout` seconds unless `keep-firewall.sh` is run. Run it from a NEW ssh session: that proves new connections still get in, which an open session cannot (open sessions survive any rule). At a terminal the script also asks; answering `y` removes the rules at once.
+- **Not saved for reboot** until you run `--save --apply`. Until then a reboot is a last-resort undo.
+
+### What it produces
+
+In `<out>/LX-25_<host>_<UTC time>/`:
+
+| File | Contents |
+| --- | --- |
+| `summary.txt` | State (live, rolled back, dry run), allowed ports and why, what is not allowed, the confirm command |
+| `ports.csv` | `proto,port,allowed,reason` |
+| `ruleset.nft` or `ruleset.iptables.sh` | The exact rules |
+| `rollback.sh` | Removes the rules (also in the undo log) |
+| `keep-firewall.sh` | Cancels the rollback timer |
+| `ROLLED_BACK` | Appears when the timer removed the rules |
+
+Dropped packets are logged with the prefix `CCDC-DROP` (`journalctl -k | grep CCDC-DROP`, or `dmesg`), limited to 10 a minute.
+
+### What to watch for
+
+- **A scored service that is down right now** is not listening, so its port opens only if it is on the protected list or in `--allow`. Keep the protected list complete.
+- **Port 2024, 8000 and other unknown listeners** are opened by default because they are listening. Read the allowed list; anything you do not recognise is worth a look with the collector (SH-05) before you `--save`. `--strict` is the tight option once the protected list is right.
+- **Other firewalls still apply.** A port allowed here can still be blocked by ufw or firewalld rules.
+- **Fan-out:** without a terminal the script does not ask; confirm from the admin workstation with `ssh root@box sh .../keep-firewall.sh`, which is itself the "new connection" test.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `nft rejected the ruleset` (exit 5) | A rule this nft version does not understand | Read the log line; try `--backend iptables` |
+| Scoring went red right after applying | A scored port was not open | Wait for the timer or run `rollback.sh`; add the port to the protected list or `--allow`; apply again |
+| `too late: the rules were already rolled back` | `keep-firewall.sh` ran after the timer | Apply again and confirm sooner, or use a longer `--confirm-timeout` |
+| SSH locked out | `--ssh-from` without your address | Wait for the timer (that is what it is for); from the console run `rollback.sh` |
+| Rules gone after a reboot | `--save --apply` was not run | Apply, confirm, then `--save --apply` |
+| Under yash, output only appears when the timer ends | yash waits for the detached timer when the script's output is piped | Run it at a terminal, or with another shell |

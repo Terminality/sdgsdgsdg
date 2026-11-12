@@ -1,6 +1,6 @@
 # Build status
 
-10 of 142 scripts are built.
+11 of 142 scripts are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -9,7 +9,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | 0 | Foundation | 2 | 5 |
 | 1 | Know what we have and what is scored | 4 | 29 |
 | 2 | Evict and lock, all at once | 3 | 29 |
-| 3 | Close what should not be open | 1 | 31 |
+| 3 | Close what should not be open | 2 | 31 |
 | 4 | Hunt, recover and report | 0 | 25 |
 | 5 | Nice to have, and everything if-present | 0 | 23 |
 
@@ -27,5 +27,6 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LX-31 | Backup | Linux | built | `roles/linux/LX-31-backup.sh` |
 | LX-39 | Linux safe fixes | Linux | built | `roles/linux/LX-39-safe-fixes.sh` |
 | SH-04 | Scan diff | Network | built | `roles/network/SH-04-scan-diff.sh` |
+| LX-25 | Firewall builder | Linux | built | `roles/linux/LX-25-firewall.sh` |
 
 `built` means written and passing the local tests. `tested` means it has also been run on the real target systems.
