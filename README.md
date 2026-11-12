@@ -30,7 +30,7 @@ Nothing here has been run on real competition systems yet. Read "What has and ha
 
 Each box needs the whole kit folder (scripts plus `lib/`); the single-file build is not written yet. Every script that changes things is a dry run until you add `--apply`, so run it once without, read the summary, then run it again with.
 
-Linux box, as root:
+### Linux box (run as root on each box)
 
 1. `LX-31` backup, then `SV-14` if it has a database. Before anything changes.
 2. `SH-05` collector (and `SV-01` on web or database servers). Read the HIGH flags.
@@ -40,7 +40,19 @@ Linux box, as root:
 6. `LX-25` firewall, last, and confirm it from a new session.
 7. Leave running: `LX-40 --loop 60` (change watch) and `SV-26 --apply --loop 60` (banning).
 
-Network devices, from the admin workstation: `NW-01` (save configs), `NW-07` (audit them), then `NW-10` on ONE device first, then the rest.
+### Network devices: firewalls, routers, switches (run from the admin workstation)
+
+Works with Cisco IOS and ASA, Palo Alto, FortiGate, VyOS, pfSense, OPNsense and MikroTik. List the devices in the host list (`config/hosts.csv`) or name one with `--device NAME,ADDRESS,VENDOR`.
+
+1. `NW-01` config backup. Saves every device's running config before anything changes. Run it again later to see what changed.
+2. `NW-07` config audit. Reads the saved configs and flags telnet, default SNMP communities, weak passwords, open management and any-to-any rules. Touches no device.
+3. `NW-10` device passwords. Try it on ONE device first (`--device`), then the rest. Use `--passwords FILE` for devices that need a chosen password; put devices or accounts it must not touch on the protected list.
+4. `NW-01` again, so the password change becomes the new saved copy.
+5. `SH-03` network scan with `--hosts`, to check every scored service still answers.
+
+### Windows
+
+Not built yet. The order will be added here with the scripts.
 
 ## Layout
 
