@@ -36,6 +36,7 @@ Contents:
 26. Windows backup, `roles/windows-ad/WN-35-backup.ps1` (WN-35)
 27. Windows password rotation, `roles/windows-ad/WN-20-password-rotation.ps1` (WN-20)
 28. Windows safe fixes, `roles/windows-ad/WN-43-safe-fixes.ps1` (WN-43)
+29. Windows firewall, `roles/windows-ad/WN-25-firewall.ps1` (WN-25)
 
 ---
 
@@ -1841,3 +1842,62 @@ A registry key is always backed up before it is changed; if the backup fails, th
 | stickykeys `sfc did not repair it` | The component store copy is damaged too | `DISM /Online /Cleanup-Image /RestoreHealth`, then run again |
 | `-Undo` refused: already undone | Each run is undone once | Nothing to do |
 | `-Undo` with `-Apply` refused: no protected list | Like any change | Add `-Protected FILE` or `-NoProtected` |
+
+---
+
+## 29. Windows firewall, `roles/windows-ad/WN-25-firewall.ps1` (WN-25)
+
+Turns the Windows firewall on for every profile with inbound blocked by default, and allows in only what is scored or in use. The whole firewall is exported first; a rollback task puts it back after a few minutes unless someone confirms from a new connection. Run it in an elevated **Windows PowerShell** (`powershell.exe`) window.
+
+### How to run it
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-25-firewall.ps1 -Out C:\ccdc-out                          # dry run: read the plan
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-25-firewall.ps1 -Out C:\ccdc-out -Apply -AdminFrom 10.0.0.5
+#   then from a NEW RDP / remote session, within 5 minutes:
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\ccdc-out\WN-25_<host>_<time>\keep-firewall.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-25-firewall.ps1 -Out C:\ccdc-out -Undo latest -Apply      # put the old firewall back
+```
+
+### What it allows in
+
+| Source | Rule |
+| --- | --- |
+| Protected list `port` entries | Always, even when nothing listens now (a scored service that is down) |
+| `-Allow 80/tcp,53/udp,5000-5100/tcp` | Always |
+| Listening now | Every port something listens on, except: loopback only; ports 49152 and up; known backdoor ports (4444, 1337, 31337 ...); a shell, netcat or tunnel listening; a program in Temp, AppData, Users\Public, Downloads; `-Exclude`. Each one left closed is in `not-allowed.csv` with the reason |
+| Protected list `host` entries and `-AdminFrom` | Everything from those addresses (the scoring engine, the team's machines). Names are not used, only addresses and networks |
+| Ping | ICMP echo, unless `-NoPing` |
+| Domain controller | DNS, Kerberos, LDAP, LDAPS, global catalog, SMB, RPC (endpoint mapper and dynamic), NTP, password change |
+
+If the protected list and `-Exclude` disagree, the protected list wins and the run says so.
+
+### What it turns off
+
+Existing inbound allow rules that undo the firewall: one that allows every port, protocol and address with no other limit; one for a shell, netcat or a program in an odd folder; one opening a backdoor port. Rules limited to an app package, an interface, some local addresses or a service are not "allow everything". With `-Strict`, every inbound allow rule that is not ours is turned off, except Active Directory's on a DC.
+
+### Safety and undo
+
+| What | How |
+| --- | --- |
+| Before anything | `netsh advfirewall export` of the whole firewall to `firewall-before.wfw`. If that fails, nothing changes |
+| Rollback timer | A SYSTEM scheduled task (`CCDC-WN25-rollback`) imports that export after `-ConfirmMinutes` (default 5) - it runs even if your session is gone. Allow rules go in before the profiles block, so the box is never closed with nothing open |
+| Keep | `keep-firewall.ps1` from a NEW connection cancels the rollback: proof the team can still get in |
+| Roll back now | `rollback.ps1` in the run folder |
+| Later | `-Undo latest -Apply` (or a run folder) imports the export: every rule and setting back exactly |
+| Only our rules | `-Remove` deletes the rules in group `CCDC` and nothing else |
+| Two changes at once | Refused while a rollback is waiting |
+
+### Logs
+
+`plan.csv` (each allow rule and why), `disabled.csv` (each rule turned off and why), `not-allowed.csv` (each listener not opened and why), `summary.txt`, the script log, and Windows' own dropped-connection log at `%windir%\System32\LogFiles\Firewall\pfirewall.log` (turned on unless `-NoLog`).
+
+### Problems and fixes
+
+| What you see | Why | Fix |
+| --- | --- | --- |
+| A scored service stopped answering | It was down when the firewall ran and is not on the protected list | Add it: `-Allow 25/tcp`, or put it in the protected list and run again (after keeping or rolling back) |
+| Refused: a change is still waiting | The last run is neither kept nor rolled back | Run its `keep-firewall.ps1`, or `rollback.ps1` |
+| "could not create the rollback task" | Task Scheduler service off or not elevated | Nothing changed; fix that, or use `-NoTimer` only at the console |
+| A rule comes back | Domain Group Policy firewall rules | Fix the GPO |
+| "run this with Windows PowerShell" | Started with `pwsh` | Use `powershell.exe` |

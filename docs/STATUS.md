@@ -1,6 +1,6 @@
 # Build status
 
-21 of 142 scripts are built.
+22 of 142 scripts are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -8,8 +8,8 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | --- | --- | --- | --- |
 | 0 | Foundation | 2 | 5 |
 | 1 | Know what we have and what is scored | 9 | 32 |
-| 2 | Evict and lock, all at once | 8 | 27 |
-| 3 | Close what should not be open | 2 | 30 |
+| 2 | Evict and lock, all at once | 9 | 28 |
+| 3 | Close what should not be open | 2 | 29 |
 | 4 | Hunt, recover and report | 0 | 25 |
 | 5 | Nice to have, and everything if-present | 0 | 23 |
 
@@ -37,6 +37,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | NW-07 | Device config audit | Network | built | `roles/network/NW-07-config-audit.sh` |
 | SH-04 | Scan diff | Network | built | `roles/network/SH-04-scan-diff.sh` |
 | LX-25 | Firewall builder | Linux | built | `roles/linux/LX-25-firewall.sh` |
+| WN-25 | Windows firewall | Windows / AD | built | `roles/windows-ad/WN-25-firewall.ps1` |
 | SV-26 | Brute-force and spam banning | Linux | built | `roles/linux/SV-26-banning.sh` |
 
 `built` means written and passing the local tests. `tested` means it has also been run on the real target systems.

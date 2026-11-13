@@ -1,6 +1,6 @@
 # Windows / AD — identity + policy
 
-Scripts owned by this role. 4 of 29 are built.
+Scripts owned by this role. 5 of 29 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -25,7 +25,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | WN-21 | Local admin rotation | 3 | Medium | planned |  |
 | WN-22 | krbtgt reset | 3 | Hard | planned |  |
 | WN-24 | Port and service closer | 3 | Hard | planned |  |
-| WN-25 | Firewall builder | 3 | Hard | planned |  |
+| WN-25 | Windows firewall | 2 | Hard | built | [`roles/windows-ad/WN-25-firewall.ps1`](../../roles/windows-ad/WN-25-firewall.ps1) |
 | WN-26 | Settings baseline | 3 | Medium | planned |  |
 | WN-33 | Defender check and scan | 3 | Medium | planned |  |
 | WN-37 | AD permissions reset | 3 | Hard | planned |  |

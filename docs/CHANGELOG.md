@@ -2,6 +2,17 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-12: Windows firewall
+
+**Added**
+
+- WN-25 Windows firewall (`roles/windows-ad/WN-25-firewall.ps1`): default-deny inbound with the scored, protected and safe listening ports open, admin and scoring addresses allowed, AD ports on DCs; allow-all and backdoor rules turned off; export first, SYSTEM rollback task, keep script, `-Undo`, `-Remove`, `-Strict`; dropped-connection logging.
+- `tests/wn25.Tests.ps1` (stand-in state via `CCDC_WN25_FAKE`).
+
+**Tested**
+
+- PowerShell 7.4 on Linux against stand-in state (81 checks). Not yet run on Windows.
+
 ## 2026-11-12: Windows safe fixes
 
 **Added**
