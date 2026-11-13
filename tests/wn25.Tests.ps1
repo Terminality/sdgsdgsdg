@@ -169,6 +169,30 @@ $afterKeep = Snap
 $o = RunFile (Join-Path $run2 'rollback.ps1')
 T-Eq (Snap) $afterKeep 'a rollback after keep does nothing'
 
+T-Start 'a second run after keeping: no duplicate rules'
+$before = @(Rules | Where-Object { $_.group -eq 'CCDC' }).Count
+$r = Run @('-Out', $out, '-Apply', '-Protected', $prot)
+T-Eq $r.Code 0 'exits 0'
+T-Eq (@(Rules | Where-Object { $_.group -eq 'CCDC' }).Count) $before 'the same rules are not added again'
+$o = RunFile (Join-Path $r.Dir 'keep-firewall.ps1')
+$r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-AdminFrom', '10.0.0.9')
+T-Eq (Rule 'CCDC allow admin and scoring hosts')[0].raddr '10.0.0.5,10.0.0.9' 'a rule with new addresses is replaced, not duplicated'
+T-Eq (@(Rule 'CCDC allow admin and scoring hosts').Count) 1 'still one admin rule'
+$o = RunFile (Join-Path $r.Dir 'keep-firewall.ps1')
+
+T-Start 'a leftover task from a kept run does not block the next run'
+# keep-firewall.ps1 from a window that could not delete the task: KEPT is
+# written, the task stays.
+[IO.File]::WriteAllText((Join-Path $fake 'task.txt'), 'leftover')
+$r = Run @('-Out', $out, '-Apply', '-Protected', $prot)
+T-Eq $r.Code 0 'the run goes ahead'
+T-Has $r.Text 'removing a leftover rollback task' 'and says it removed the leftover task'
+T-True (Test-Path -LiteralPath (Join-Path $fake 'task.txt')) 'a new rollback task is set for this run'
+$o = RunFile (Join-Path $r.Dir 'keep-firewall.ps1')
+[IO.File]::WriteAllText((Join-Path $fake 'task.txt'), 'leftover')
+$o = RunFile (Join-Path $r.Dir 'rollback.ps1')
+T-True (-not (Test-Path -LiteralPath (Join-Path $fake 'task.txt'))) 'a rollback that finds the run kept removes its task'
+
 T-Start '-Undo and -Remove'
 $r = Run @('-Out', $out, '-Remove', '-Apply', '-Protected', $prot)
 T-Eq $r.Code 0 '-Remove exits 0'

@@ -242,6 +242,29 @@ function Disable-Rule($x) {
     }
     if ($n -eq 0) { throw 'rule not found any more' }
 }
+# Norm-Addrs "10.0.0.5,10.0.0.0/24" -> "10.0.0.0/255.255.255.0,10.0.0.5/255.255.255.255"
+#   The firewall reports addresses with dotted masks; ours are compared in
+#   the same form, sorted.  '' and '*' mean any.
+function Norm-Addrs([string]$list) {
+    if ($list -eq '' -or $list -eq '*') { return '*' }
+    $o = @()
+    foreach ($x in @($list -split ',')) {
+        $x = $x.Trim()
+        if ($x -match '^(\d+\.\d+\.\d+\.\d+)(/(\d+))?$') {
+            $bits = 32; if ($matches[3]) { $bits = [int]$matches[3] }
+            if ($x -match '/\d+\.') { $o += $x; continue }
+            $m = @(); for ($i = 0; $i -lt 4; $i++) { $n = [Math]::Min(8, [Math]::Max(0, $bits - 8 * $i)); $m += (256 - [Math]::Pow(2, 8 - $n)) }
+            $o += ($matches[1] + '/' + ($m -join '.'))
+        } else { $o += $x.ToLower() }
+    }
+    return ((@($o) | Sort-Object) -join ',')
+}
+# Has-Rule NAME -> $true when a rule of ours with this name exists (a second
+# run must not add every rule again).
+function Has-Rule([string]$name) {
+    if ($Fake) { return (@(F-Read 'rules.csv' | Where-Object { $_.group -eq $Group -and $_.name -eq $name }).Count -gt 0) }
+    return (@(@((Fw).Rules) | Where-Object { $_.Grouping -eq $Group -and $_.Name -eq $name }).Count -gt 0)
+}
 # Add-Rule NAME PROTO PORTS RADDR -> PROTO TCP|UDP|ANY|ICMP
 function Add-Rule([string]$name, [string]$proto, [string]$ports, [string]$raddr) {
     if ($Fake) {
@@ -328,6 +351,20 @@ function Task-Exists {
     [void](Invoke-CcProgram -FilePath 'schtasks.exe' -Arguments @('/query', '/tn', $TaskName))
     $e = $LASTEXITCODE; $global:LASTEXITCODE = 0
     return ($e -eq 0)
+}
+function Task-Delete {
+    if ($Fake) { Remove-Item -LiteralPath (FP 'task.txt') -Force -ErrorAction SilentlyContinue; return }
+    [void](Invoke-CcProgram -FilePath 'schtasks.exe' -Arguments @('/delete', '/tn', $TaskName, '/f'))
+    $global:LASTEXITCODE = 0
+}
+# Pending-Run -> the run folder whose change is neither kept nor rolled back
+# (has rollback.ps1, no KEPT, no ROLLED_BACK), or ''.
+function Pending-Run {
+    foreach ($d in @(Get-ChildItem -LiteralPath $Cc.Out -Force -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer -and $_.Name -like ('WN-25_' + $Cc.Host + '_*') } | Sort-Object Name -Descending)) {
+        $f = $d.FullName
+        if ((Test-Path -LiteralPath (Join-Path $f 'rollback.ps1')) -and -not (Test-Path -LiteralPath (Join-Path $f 'KEPT')) -and -not (Test-Path -LiteralPath (Join-Path $f 'ROLLED_BACK')) -and -not (Test-Path -LiteralPath (Join-Path $f 'UNDONE'))) { return $f }
+    }
+    return ''
 }
 function Task-Create([DateTime]$when, [string]$script) {
     if ($Fake) { [IO.File]::WriteAllText((FP 'task.txt'), ($when.ToString('s') + '|' + $script)); return }
@@ -490,8 +527,15 @@ if (-not $Cc.Apply) {
     foreach ($o in $off) { Write-CcLog -Level WOULD -Message ('turn off rule ' + $o.R.name + ' (' + $o.Why + ')'); $Cc.Would++; Add-CcCsvRow -File $offCsv -Values @($o.R.name, $o.R.app, $o.R.lports, $o.Why, 'would turn off') }
     $sum += ''; $sum += 'Dry run: nothing was changed. Check the plan, fill in the protected list, then add -Apply.'
 } else {
-    if (-not $NoTimer -and (Task-Exists)) {
-        Stop-Cc -Code 2 -Message "a firewall change is still waiting to be kept or rolled back (task $TaskName). Run that run's keep-firewall.ps1, or wait for the rollback, then run this again"
+    if (Task-Exists) {
+        $pend = Pending-Run
+        if ($pend) {
+            Stop-Cc -Code 2 -Message "a firewall change is still waiting to be kept or rolled back ($pend). Run its keep-firewall.ps1 or rollback.ps1, then run this again"
+        }
+        # The task is left over from a run that was kept or rolled back (for
+        # example kept from a window that could not delete it): remove it.
+        Write-CcLog -Level INFO -Message "removing a leftover rollback task $TaskName (its run was already kept or rolled back)"
+        Task-Delete
     }
     $exp = Join-Path $Dir 'firewall-before.wfw'
     try { Export-Fw $exp } catch { Stop-Cc -Code 4 -Message ('could not export the firewall first, so nothing was changed: ' + $_.Exception.Message) }
@@ -507,7 +551,11 @@ if (-not $Cc.Apply) {
 # WN-25 rollback: puts back the whole firewall from before $Dir
 # The scheduled task $TaskName runs this; you can run it by hand too.
 $fakeLine`$exp = $(Q $exp)
-if (Test-Path -LiteralPath $(Q $kept)) { exit 0 }
+if (Test-Path -LiteralPath $(Q $kept)) {
+    # Kept: nothing to put back.  Remove the task in case keep could not.
+    if (`$env:CCDC_WN25_FAKE) { Remove-Item -LiteralPath (Join-Path `$env:CCDC_WN25_FAKE 'task.txt') -Force -ErrorAction SilentlyContinue } else { schtasks /delete /tn $TaskName /f | Out-Null }
+    exit 0
+}
 if (`$env:CCDC_WN25_FAKE) {
     `$d = `$exp + '.d'; `$f = `$env:CCDC_WN25_FAKE
     if (-not (Test-Path -LiteralPath (Join-Path `$d 'logging.txt'))) { Remove-Item -LiteralPath (Join-Path `$f 'logging.txt') -Force -ErrorAction SilentlyContinue }
@@ -524,9 +572,11 @@ if (`$env:CCDC_WN25_FAKE) {
 # WN-25: keep the new firewall.  Run this from a NEW connection (a fresh RDP or
 # remote session) - that proves the firewall still lets the team in.
 $fakeLine if (Test-Path -LiteralPath $(Q $marker)) { Write-Host 'Too late: the old firewall was already put back. Run WN-25 again.'; exit 1 }
-if (`$env:CCDC_WN25_FAKE) { Remove-Item -LiteralPath (Join-Path `$env:CCDC_WN25_FAKE 'task.txt') -Force -ErrorAction SilentlyContinue }
-else { schtasks /delete /tn $TaskName /f | Out-Null }
+# KEPT first: even if the task cannot be deleted here (not elevated), the
+# rollback sees KEPT when it fires and does nothing.
 [IO.File]::WriteAllText($(Q $kept), [DateTime]::UtcNow.ToString('o'))
+if (`$env:CCDC_WN25_FAKE) { Remove-Item -LiteralPath (Join-Path `$env:CCDC_WN25_FAKE 'task.txt') -Force -ErrorAction SilentlyContinue }
+else { schtasks /delete /tn $TaskName /f 2>&1 | Out-Null; if (`$LASTEXITCODE -ne 0) { Write-Host 'Note: the rollback task could not be deleted from this window (not elevated); it will fire, see the change was kept, and do nothing.' } }
 Write-Host 'Kept: the rollback is cancelled. The new firewall stays.'
 "@)
 
@@ -542,6 +592,17 @@ Write-Host 'Kept: the rollback is cancelled. The new firewall stays.'
     # nothing open.
     foreach ($a in $adds) {
         $aa = $a
+        # Same name, but maybe other addresses (a new -AdminFrom): replace it.
+        if (Has-Rule $a.Name) {
+            $same = $false
+            if ($Fake) { $same = (@(F-Read 'rules.csv' | Where-Object { $_.group -eq $Group -and $_.name -eq $aa.Name -and $_.lports -eq $aa.Ports -and $_.raddr -eq $aa.From }).Count -gt 0) }
+            else {
+                $wantA = Norm-Addrs $aa.From
+                $same = (@(@((Fw).Rules) | Where-Object { $_.Grouping -eq $Group -and $_.Name -eq $aa.Name -and (Nz $_.LocalPorts) -eq $(if ($aa.Ports) { $aa.Ports } else { (Nz $_.LocalPorts) }) -and (Norm-Addrs (Nz $_.RemoteAddresses)) -eq $wantA }).Count -gt 0)
+            }
+            if ($same) { Write-CcLog -Level DEBUG -Message ('rule already there: ' + $a.Name); continue }
+            [void](Invoke-CcChange -Description ('replace rule ' + $a.Name) -Action { if ($Fake) { F-Write 'rules.csv' $RuleCols @(F-Read 'rules.csv' | Where-Object { -not ($_.group -eq $Group -and $_.name -eq $aa.Name) }) } else { (Fw).Rules.Remove($aa.Name) } })
+        }
         if (-not (Invoke-CcChange -Description ('add rule ' + $a.Name) -Action { Add-Rule $aa.Name $aa.Proto $aa.Ports $aa.From })) { $okAll = $false }
     }
     foreach ($o in $off) {

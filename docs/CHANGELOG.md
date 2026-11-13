@@ -8,10 +8,11 @@ What changed, newest first. Each entry names the scripts touched and how they we
 
 - WN-25 Windows firewall (`roles/windows-ad/WN-25-firewall.ps1`): default-deny inbound with the scored, protected and safe listening ports open, admin and scoring addresses allowed, AD ports on DCs; allow-all and backdoor rules turned off; export first, SYSTEM rollback task, keep script, `-Undo`, `-Remove`, `-Strict`; dropped-connection logging.
 - `tests/wn25.Tests.ps1` (stand-in state via `CCDC_WN25_FAKE`).
+- Review fixes before merge: a rollback task left behind by a run kept from a non-elevated window no longer blocks the next run (kept runs are recognised, the leftover task removed, and a rollback that finds the run kept deletes its task); a second run no longer adds every rule again (an existing rule is kept when identical, replaced when its addresses changed; addresses compared in Windows' mask form).
 
 **Tested**
 
-- PowerShell 7.4 on Linux against stand-in state (81 checks). Not yet run on Windows.
+- PowerShell 7.4 on Linux against stand-in state (89 checks). Not yet run on Windows.
 
 ## 2026-11-12: Windows safe fixes
 
