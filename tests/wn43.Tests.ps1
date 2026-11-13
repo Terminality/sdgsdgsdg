@@ -36,7 +36,7 @@ function Row($file, $col, $val, $want) { foreach ($r in @(Import-Csv -LiteralPat
 # Snapshot of the whole stand-in state; csv lines sorted so order does not matter.
 function Snap {
     $s = @()
-    foreach ($f in @(Get-ChildItem -LiteralPath $fake | Where-Object { -not $_.PSIsContainer } | Sort-Object Name)) {
+    foreach ($f in @(Get-ChildItem -LiteralPath $fake | Where-Object { -not $_.PSIsContainer -and $_.Name -ne 'restarts.txt' } | Sort-Object Name)) {
         $lines = @([IO.File]::ReadAllLines($f.FullName))
         # CSV compared by value, not by quoting style; rows sorted.
         if ($f.Extension -eq '.csv') { $lines = @($lines | ConvertFrom-Csv | ForEach-Object { (@($_.PSObject.Properties | ForEach-Object { [string]$_.Value })) -join '|' } | Sort-Object) }
@@ -85,7 +85,7 @@ function Plant {
         "`"$CCS\Control\Terminal Server\WinStations\RDP-Tcp`",`"UserAuthentication`",`"DWord`",`"0`"")
     Csv 'accounts.csv' @('name,sid,disabled', 'Administrator,S-1-5-21-1-2-3-500,False', 'Guest,S-1-5-21-1-2-3-501,False')
     Csv 'smb.csv' @('setting,value', 'EnableSMB1Protocol,True')
-    Csv 'services.csv' @('name,state,startmode', 'EventLog,Stopped,Disabled', 'Spooler,Running,Auto', 'RemoteRegistry,Running,Auto')
+    Csv 'services.csv' @('name,state,startmode', 'EventLog,Stopped,Disabled', 'Spooler,Running,Auto', 'RemoteRegistry,Running,Auto', 'iphlpsvc,Running,Auto')
     Csv 'defender.csv' @('kind,value', 'realtime,off', 'Paths,C:\', 'Extensions,ps1')
     Csv 'auditpol.csv' @('guid,setting', '{0CCE9215-69AE-11D9-BED3-505054503030},No Auditing', '{0CCE922B-69AE-11D9-BED3-505054503030},Success')
     Csv 'logs.csv' @('name,max', 'Security,20971520')
@@ -134,6 +134,8 @@ T-Eq (Reg "$NT\SilentProcessExit\lsass.exe" 'MonitorProcess') '(none)' 'SilentPr
 T-Eq (Row 'files.csv' 'name' 'sethc.exe' 'sha') 'original-sethc.exe' 'sethc replaced by cmd is repaired (sfc)'
 T-Eq (Row 'files.csv' 'name' 'utilman.exe' 'sha') 'dddd' 'an unchanged logon-screen program is left'
 T-Eq (Reg "$CCS\Services\PortProxy\v4tov4\tcp" '0.0.0.0/8443') '(none)' 'port forward removed'
+T-Has ([IO.File]::ReadAllText((Join-Path $fake 'restarts.txt'))) 'iphlpsvc' 'IP Helper restarted so the removed forwards stop listening'
+T-Eq (Reg "$CCS\Control\Lsa" 'SCENoApplyLegacyAuditPolicy') '1' 'subcategory audit settings win over an old-style GPO audit policy'
 T-Eq (Reg 'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender' 'DisableAntiSpyware') '(none)' 'policy turning Defender off removed'
 T-Eq (Reg 'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Exclusions\Paths' 'C:\Temp') '(none)' 'policy exclusion removed'
 T-Eq (Row 'defender.csv' 'kind' 'realtime' 'value') 'on' 'real-time protection on'
@@ -200,6 +202,8 @@ T-Eq (Reg "$NT\Winlogon" 'DefaultPassword') 'Planted-Secret-Pw-42' 'the stored p
 T-True (Test-Path -LiteralPath (Join-Path $run1 'UNDONE')) 'the run is marked undone'
 $r = Run @('-Out', $out, '-Undo', $run1, '-Apply', '-Protected', $prot)
 T-Eq $r.Code 2 'undoing the same run twice is refused'
+
+T-Eq (@([IO.File]::ReadAllLines((Join-Path $fake 'restarts.txt')) | Where-Object { $_ -eq 'iphlpsvc' }).Count) 2 'undo restarts IP Helper again so the put-back forwards listen'
 
 T-Start '-Include the service fixes, then -Undo latest'
 Plant; $start = Snap

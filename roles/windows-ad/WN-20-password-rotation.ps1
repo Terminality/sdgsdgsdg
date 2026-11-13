@@ -298,13 +298,14 @@ foreach ($a in ($accounts | Sort-Object Name)) {
     elseif ($ln -eq $Me -and -not $IncludeMe) { $act = 'skip'; $why = 'the account running this script (-IncludeMe to change it)' }
     elseif ($a.Disabled -and -not $IncludeDisabled) {
         $act = 'skip'; $why = 'disabled (-IncludeDisabled to change it anyway)'
-        if ($given.ContainsKey($ln)) { $notes += "$($a.Name) is in -Passwords but is disabled: not changed" }
     }
     elseif (-not $IncludeServices -and ($svcUsers.ContainsKey($ln) -or $a.Spn)) {
         $act = 'skip'; $what = $svcUsers[$ln]; if (-not $what) { $what = 'has an SPN: ' + $a.Spn }
         $why = "runs $what (changing it breaks that until the service gets the new password; -IncludeServices to change it)"
     }
     elseif (-not (Test-CcAllowed -Type account -Value $a.Name)) { $act = 'skip'; $why = 'on the protected list' }
+    # A password asked for in -Passwords but not set must not go unnoticed.
+    if ($act -eq 'skip' -and $given.ContainsKey($ln) -and $why -ne 'excluded (-Exclude)') { $notes += "$($a.Name) is in -Passwords but was NOT changed: $why" }
     $src = 'random'; if ($given.ContainsKey($ln)) { $src = 'from -Passwords' }
     $plan += New-Object PSObject -Property @{ A = $a; Act = $act; Why = $why; Src = $src }
     Write-CcLog -Level DEBUG -Message ('{0} ({1}): {2} {3}' -f $a.Name, $a.Scope, $act, $why)

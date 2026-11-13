@@ -319,6 +319,11 @@ function Set-Svc([string]$name, [string]$mode, [string]$state) {
     Set-Service -Name $name -StartupType $st -ErrorAction Stop
     if ($state -eq 'Running') { Start-Service -Name $name -ErrorAction Stop }
 }
+# Restart-Svc NAME -> restarts a running service.
+function Restart-Svc([string]$name) {
+    if ($Fake) { [IO.File]::AppendAllText((Fake-Path 'restarts.txt'), $name + "`n"); return }
+    Restart-Service -Name $name -Force -ErrorAction Stop
+}
 
 # ---- Defender ----
 # Get-Def -> @{ Realtime = 'on'|'off'|''; Paths; Processes; Extensions } ('' = no cmdlets)
@@ -672,7 +677,7 @@ function F-stickykeys {
 
 function F-portproxy {
     $base = "$CCS\Services\PortProxy"
-    $n = 0
+    $n = 0; $rm = 0
     foreach ($t in @(R-SubKeys $base)) {
         foreach ($proto in @(R-SubKeys "$base\$t")) {
             $k = "$base\$t\$proto"
@@ -682,10 +687,21 @@ function F-portproxy {
                 $port = @($nm -split '/')[-1]
                 if (-not (Test-CcAllowed -Type port -Value ($port + '/tcp'))) { Res portproxy "$t $nm" $to $to 'refused: protected port'; continue }
                 RegRemove portproxy $k $nm ("$t $nm -> $to")
+                $rm++
             }
         }
     }
-    if ($n -eq 0) { Fine portproxy 'port forwards' 'none' }
+    if ($n -eq 0) { Fine portproxy 'port forwards' 'none'; return }
+    # The IP Helper service keeps a forward listening until it restarts, so
+    # the registry alone does not stop it.  A restart takes a second and only
+    # touches IPv6 transition (Teredo, 6to4, IP-HTTPS) and port forwards.
+    if ($rm -gt 0) {
+        $ih = Get-Svc 'iphlpsvc'
+        if ($ih -and $ih.State -eq 'Running') {
+            if (-not (Test-CcAllowed -Type service -Value 'iphlpsvc')) { Res portproxy 'iphlpsvc' 'running' 'running' 'refused: protected service - removed forwards stay live until it restarts' }
+            else { [void](Change portproxy 'iphlpsvc (IP Helper)' 'running with the old forwards' 'restarted' { Restart-Svc 'iphlpsvc' }) }
+        }
+    }
 }
 
 function F-defender {
@@ -760,6 +776,10 @@ function F-auditing {
         }
         [void](Change auditing $g[1] $cur 'Success and Failure' { Set-AuditAll $g[0] })
     }
+    # Without this, an old-style (category) audit policy from Group Policy -
+    # a DC's default policy has one - overwrites the settings above at the
+    # next refresh.
+    RegFix auditing "$CCS\Control\Lsa" 'SCENoApplyLegacyAuditPolicy' 'DWord' '1'
     RegFix auditing "$CV\Policies\System\Audit" 'ProcessCreationIncludeCmdLine_Enabled' 'DWord' '1'
     RegFix auditing 'HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging' 'EnableScriptBlockLogging' 'DWord' '1'
     $max = Get-LogMax 'Security'; $want = [int64]512MB
@@ -827,7 +847,7 @@ function F-appinit {
     if ($n -eq 0) { Fine appinit 'AppInit_DLLs' 'empty' }
 }
 
-$DefaultNetsh = @('authfwcfg.dll', 'dhcpcmonitor.dll', 'dot3cfg.dll', 'fwcfg.dll', 'hnetmon.dll', 'ifmon.dll', 'napmontr.dll', 'netiohlp.dll', 'netprofm.dll', 'nettrace.dll', 'nshhttp.dll', 'nshipsec.dll', 'nshwfp.dll', 'p2pnetsh.dll', 'rasmontr.dll', 'rpcnsh.dll', 'wcnnetsh.dll', 'whhelper.dll', 'wlancfg.dll', 'wshelper.dll', 'wwancfg.dll', 'peerdistsh.dll', 'nshdnsclient.dll', 'mprmsg.dll', 'dhcpmonitor.dll', 'ipmontr.dll', 'ippromon.dll', 'ipxmontr.dll', 'ipxpromn.dll')
+$DefaultNetsh = @('authfwcfg.dll', 'dhcpcmonitor.dll', 'dot3cfg.dll', 'fwcfg.dll', 'hnetmon.dll', 'ifmon.dll', 'napmontr.dll', 'netiohlp.dll', 'netprofm.dll', 'nettrace.dll', 'nshhttp.dll', 'nshipsec.dll', 'nshwfp.dll', 'p2pnetsh.dll', 'rasmontr.dll', 'rpcnsh.dll', 'wcnnetsh.dll', 'whhelper.dll', 'wlancfg.dll', 'wshelper.dll', 'wwancfg.dll', 'peerdistsh.dll', 'nshdnsclient.dll', 'mprmsg.dll', 'dhcpmonitor.dll', 'dhcpmon.dll', 'winsmon.dll', 'ipmontr.dll', 'ippromon.dll', 'ipxmontr.dll', 'ipxpromn.dll')
 function F-netsh {
     $k = 'HKLM\SOFTWARE\Microsoft\NetSh'
     $n = 0
@@ -939,7 +959,7 @@ function Invoke-Undo {
         $desc = ('undo {0} {1} {2}' -f $s.kind, $s.a, $s.b).Trim()
         $act = $null
         switch ($s.kind) {
-            'regimport' { $act = { R-Import $s.a $s.b } }
+            'regimport' { $act = { R-Import $s.a $s.b; if ($s.a -like '*\Services\PortProxy*' -and (Get-Svc 'iphlpsvc') -and (Get-Svc 'iphlpsvc').State -eq 'Running') { Restart-Svc 'iphlpsvc' } } }
             'regdel'    { $act = { if ($null -ne (R-Get $s.a $s.b)) { R-Del $s.a $s.b } } }
             'svc'       { $act = { Set-Svc $s.a $s.b $s.c } }
             'guest'     { $act = { Set-GuestDisabled ($s.a -eq 'True') } }
