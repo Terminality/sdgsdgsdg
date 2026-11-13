@@ -57,6 +57,7 @@ function Plant {
         'Tailscale-In,True,256,*,*,,,,,100.105.236.63,All,',
         'SQL Server,True,6,1433,*,C:\Program Files\Microsoft SQL Server\sqlservr.exe,,,,*,All,',
         'Active Directory Domain Services (LDAP-In),True,6,389,*,%systemroot%\System32\lsass.exe,,"@%systemroot%\system32\NTDSMSG.DLL,-1000",,*,All,',
+        'Core Networking - Dynamic Host Configuration Protocol (DHCP-In),True,17,68,*,%SystemRoot%\system32\svchost.exe,dhcp,"@FirewallAPI.dll,-25000",,*,All,',
         'Old allow all,False,256,*,*,,,,,*,All,'))
     [IO.File]::WriteAllLines((Join-Path $fake 'netstat.txt'), [string[]]@(
         '  Proto  Local Address          Foreign Address        State           PID',
@@ -72,7 +73,9 @@ function Plant {
         '  TCP    10.0.0.50:51000        10.0.0.5:445           ESTABLISHED     4',
         '  TCP    [::]:80                [::]:0                 LISTENING       4',
         '  UDP    0.0.0.0:53             *:*                                    2100',
-        '  UDP    0.0.0.0:61000          *:*                                    2100'))
+        '  UDP    0.0.0.0:61000          *:*                                    2100',
+        '  UDP    0.0.0.0:5355           *:*                                    1200',
+        '  TCP    127.0.0.2:6000         0.0.0.0:0              LISTENING       3600'))
     [IO.File]::WriteAllLines((Join-Path $fake 'processes.csv'), [string[]]@('pid,name,path',
         '4,System,', '1200,svchost.exe,C:\Windows\System32\svchost.exe', '3300,nc.exe,C:\Windows\Temp\nc.exe',
         '3400,updater.exe,C:\Users\bob\AppData\Local\updater.exe', '3500,powershell.exe,C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe',
@@ -111,6 +114,8 @@ T-HasNot $plan '9090' 'PowerShell listener not opened'
 T-HasNot $plan '5432' 'loopback-only listener not opened'
 T-HasNot $plan '50123' 'dynamic port not opened'
 T-HasNot $plan '61000' 'dynamic UDP port not opened'
+T-HasNot $plan '5355' 'LLMNR (discovery) not opened'
+T-HasNot $plan '6000' 'a listener on another 127.x address is loopback too'
 $na = [IO.File]::ReadAllText((Join-Path $r.Dir 'not-allowed.csv'))
 T-Has $na 'nc.exe is listening: a shell or tunnel' 'the reason for 4444 is written'
 T-Has $na 'unusual folder' 'the reason for 8080 is written'
@@ -179,6 +184,12 @@ $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-AdminFrom', '10.0.0.9'
 T-Eq (Rule 'CCDC allow admin and scoring hosts')[0].raddr '10.0.0.5,10.0.0.9' 'a rule with new addresses is replaced, not duplicated'
 T-Eq (@(Rule 'CCDC allow admin and scoring hosts').Count) 1 'still one admin rule'
 $o = RunFile (Join-Path $r.Dir 'keep-firewall.ps1')
+$r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-Exclude', '80/tcp')
+T-Eq $r.Code 0 'a rerun with -Exclude exits 0'
+T-Eq (Enabled 'CCDC allow 80/tcp') '(none)' 'a rerun with -Exclude removes the rule an earlier run added'
+T-Has $r.Text 'no longer wanted, removed' 'and the summary says so'
+T-Eq (Enabled 'CCDC allow 3389/tcp') 'True' 'the other rules stay'
+$o = RunFile (Join-Path $r.Dir 'keep-firewall.ps1')
 
 T-Start 'a leftover task from a kept run does not block the next run'
 # keep-firewall.ps1 from a window that could not delete the task: KEPT is
@@ -216,6 +227,7 @@ T-Eq (Enabled 'SQL Server') 'False' '-Strict turns off rules that are not ours'
 T-Eq (Enabled 'Remote Desktop - User Mode (TCP-In)') 'False' 'including Windows rules (RDP is open through our rule)'
 T-Eq (Enabled 'CCDC allow 3389/tcp') 'True' '... which exists'
 T-Eq (Enabled 'Active Directory Domain Services (LDAP-In)') 'True' 'Active Directory rules are kept on a DC'
+T-Eq (Enabled 'Core Networking - Dynamic Host Configuration Protocol (DHCP-In)') 'True' '-Strict keeps Windows core networking (DHCP)'
 T-Eq (Enabled 'CCDC allow 88/tcp') 'True' 'Kerberos opened on a DC'
 T-Eq (Enabled 'CCDC allow 3268-3269/tcp') 'True' 'global catalog opened on a DC'
 T-Eq (Rule 'CCDC allow RPC (DC)')[0].lports 'RPC' 'dynamic RPC opened on a DC'

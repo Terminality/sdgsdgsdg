@@ -86,6 +86,10 @@
 #     protected list or -Allow, is not opened.  Fill in the protected list.
 #   - Group Policy firewall rules and settings win over local ones; a domain
 #     GPO can put things back at the next refresh.
+#   - A rerun removes rules of ours that the new plan does not have, so a
+#     port added to -Exclude (or a listener that stopped) is closed again.
+#   - Discovery UDP (1900, 3702, 5353, 5355) is not opened; -Strict keeps
+#     Windows' core networking rules (DHCP, IPv6 neighbour discovery).
 #   - Only inbound is limited.  IPv6 is treated like IPv4 (the same rules).
 #   - netstat and WMI see what Windows reports; a rootkit can hide a listener.
 #
@@ -430,6 +434,14 @@ if ($Fake) { $IsDC = Test-Path -LiteralPath (FP 'is-dc') } else { $IsDC = (Get-C
 $ShellNames = @('cmd.exe', 'powershell.exe', 'pwsh.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe', 'rundll32.exe', 'regsvr32.exe', 'nc.exe', 'nc64.exe', 'ncat.exe', 'socat.exe', 'plink.exe', 'chisel.exe', 'ngrok.exe')
 $OddRe = '(\\users\\public\\|\\perflogs\\|\\windows\\temp\\|\\temp\\|\\tmp\\|\\appdata\\|\\downloads\\|\\programdata\\[^\\]+\.(exe|dll)|\$recycle\.bin|\\windows\\tasks\\)'
 $BadPorts = @(4444, 4445, 1337, 31337, 5555, 6666, 6667, 6697, 9001, 9999, 12345, 54321)
+# UDP ports Windows listens on for local discovery (SSDP, WS-Discovery, mDNS,
+# LLMNR): not services anyone scores, and LLMNR is a favourite for spoofing.
+# Not opened unless the protected list or -Allow names them.
+$DiscoveryUdp = @(1900, 3702, 5353, 5355)
+# -Strict keeps these: Windows' own networking (DHCP, IPv6 neighbour
+# discovery) - turning them off can drop the address when the lease renews,
+# long after the rollback timer is gone.
+$CoreRe = '(core networking|@firewallapi\.dll,-25000)'
 
 # Protected list: ports and hosts.
 $protPorts = @(); $protHosts = @()
@@ -456,10 +468,11 @@ foreach ($l in ($listeners | Sort-Object Port)) {
     $k = ('{0}/{1}' -f $l.Port, (Lc $l.Proto))
     $why = ''
     $ln = Lc $l.Name; $lp = Lc $l.Path
-    if ($l.Addr -eq '127.0.0.1' -or $l.Addr -eq '::1') { continue }
+    if ($l.Addr -like '127.*' -or $l.Addr -eq '::1') { continue }
     if ($ShellNames -contains $ln) { $why = "$($l.Name) is listening: a shell or tunnel, not a service" }
     elseif ($BadPorts -contains $l.Port) { $why = "port $($l.Port) is a common backdoor port" }
     elseif ($lp -ne '' -and $lp -match $OddRe) { $why = "its program runs from an unusual folder: $($l.Path)" }
+    elseif ($l.Proto -eq 'UDP' -and $DiscoveryUdp -contains $l.Port) { $why = 'local network discovery (SSDP/WS-Discovery/mDNS/LLMNR), not a service' }
     elseif ($l.Port -ge 49152) { $why = 'dynamic port (49152 and up): not opened (a DC gets RPC through its own rule)' }
     elseif ($exL -contains $k) { $why = '-Exclude' }
     if ($why) {
@@ -487,6 +500,8 @@ foreach ($r in $rules) {
     elseif ($app -match $OddRe) { $why = "allows a program in an unusual folder: $($r.app)" }
     else { foreach ($bp in $BadPorts) { if (@($r.lports -split ',' | ForEach-Object { $_.Trim() }) -contains [string]$bp) { $why = "opens backdoor port $bp" } } }
     if (-not $why -and $Strict) {
+        $core = ((Lc ($r.group + ' ' + $r.name)) -match $CoreRe) -or $r.protocol -eq '58' -or ($r.protocol -eq '17' -and @('68', '546') -contains $r.lports)
+        if ($core) { Write-CcLog -Level DEBUG -Message "-Strict keeps Windows core networking rule $($r.name)"; continue }
         if ($IsDC -and ((Lc ($r.app + ' ' + $r.svc + ' ' + $r.group + ' ' + $r.name)) -match $dcKeep)) { continue }
         $why = '-Strict: not one of ours'
     }
@@ -505,6 +520,10 @@ if ($IsDC) { $adds += New-Object PSObject -Property @{ Name = 'CCDC allow RPC (D
 if ($admins.Count -gt 0) { $adds += New-Object PSObject -Property @{ Name = 'CCDC allow admin and scoring hosts'; Proto = 'ANY'; Ports = ''; From = ($admins -join ','); Why = 'protected hosts and -AdminFrom: everything' } }
 if (-not $NoPing) { $adds += New-Object PSObject -Property @{ Name = 'CCDC allow ping'; Proto = 'ICMP'; Ports = ''; From = ''; Why = 'ICMP echo (scoring often pings)' } }
 foreach ($a in $adds) { Add-CcCsvRow -File $planCsv -Values @($a.Name, $a.Proto, $a.Ports, $a.From, $a.Why) }
+# Rules of ours from an earlier run that this plan no longer has (a port now
+# in -Exclude, a listener that is gone): removed, so a rerun really closes it.
+$addNames = @($adds | ForEach-Object { $_.Name })
+$stale = @($rules | Where-Object { $_.group -eq $Group -and $addNames -notcontains $_.name } | ForEach-Object { $_.name } | Select-Object -Unique)
 $offCsv = New-CcCsv -Name disabled -Header @('rule', 'program', 'ports', 'why', 'result')
 
 $sum = @()
@@ -516,6 +535,7 @@ $sum += ('Allow in ({0} rules):' -f $adds.Count)
 foreach ($a in $adds) { $what = $a.Ports; if ($a.Proto -eq 'ANY') { $what = 'everything from ' + $a.From } elseif ($a.Proto -eq 'ICMP') { $what = 'ping' } else { $what = $a.Ports + '/' + (Lc $a.Proto) }; $sum += ('  {0,-28} {1}' -f $what, $a.Why) }
 $na = @(Import-Csv -LiteralPath $notCsv)
 if ($na.Count -gt 0) { $sum += ''; $sum += ('NOT opened, though something listens ({0}):' -f $na.Count); foreach ($n in $na) { $sum += ('  {0,-12} {1,-18} {2}' -f $n.port, $n.process, $n.why) } }
+if ($stale.Count -gt 0) { $sum += ''; $sum += ('Rules from an earlier WN-25 run no longer wanted, removed ({0}):' -f $stale.Count); foreach ($s in $stale) { $sum += ('  ' + $s) } }
 if ($off.Count -gt 0) { $sum += ''; $sum += ('Existing rules turned off ({0}):' -f $off.Count); foreach ($o in $off) { $sum += ('  {0}: {1}' -f $o.R.name, $o.Why) } }
 if ($admins.Count -eq 0) { $sum += ''; $sum += 'WARNING: no admin or scoring addresses (protected list "host" entries or -AdminFrom). Only the ports above will reach this box.' }
 
@@ -524,6 +544,7 @@ if ($admins.Count -eq 0) { $sum += ''; $sum += 'WARNING: no admin or scoring add
 # =============================================================================
 if (-not $Cc.Apply) {
     foreach ($a in $adds) { Write-CcLog -Level WOULD -Message ('add rule ' + $a.Name) ; $Cc.Would++ }
+    foreach ($s in $stale) { Write-CcLog -Level WOULD -Message ('remove old rule ' + $s); $Cc.Would++ }
     foreach ($o in $off) { Write-CcLog -Level WOULD -Message ('turn off rule ' + $o.R.name + ' (' + $o.Why + ')'); $Cc.Would++; Add-CcCsvRow -File $offCsv -Values @($o.R.name, $o.R.app, $o.R.lports, $o.Why, 'would turn off') }
     $sum += ''; $sum += 'Dry run: nothing was changed. Check the plan, fill in the protected list, then add -Apply.'
 } else {
@@ -604,6 +625,13 @@ Write-Host 'Kept: the rollback is cancelled. The new firewall stays.'
             [void](Invoke-CcChange -Description ('replace rule ' + $a.Name) -Action { if ($Fake) { F-Write 'rules.csv' $RuleCols @(F-Read 'rules.csv' | Where-Object { -not ($_.group -eq $Group -and $_.name -eq $aa.Name) }) } else { (Fw).Rules.Remove($aa.Name) } })
         }
         if (-not (Invoke-CcChange -Description ('add rule ' + $a.Name) -Action { Add-Rule $aa.Name $aa.Proto $aa.Ports $aa.From })) { $okAll = $false }
+    }
+    foreach ($s in $stale) {
+        $ss = $s
+        if (-not (Invoke-CcChange -Description ('remove old rule ' + $s + ' (not in this plan)') -Action {
+                if ($Fake) { F-Write 'rules.csv' $RuleCols @(F-Read 'rules.csv' | Where-Object { -not ($_.group -eq $Group -and $_.name -eq $ss) }) }
+                else { while (@(@((Fw).Rules) | Where-Object { $_.Grouping -eq $Group -and $_.Name -eq $ss }).Count -gt 0) { (Fw).Rules.Remove($ss) } }
+            })) { $okAll = $false }
     }
     foreach ($o in $off) {
         $oo = $o
