@@ -441,6 +441,15 @@ function I-dhcp {
     $dhcpDir = Jp $S32 'dhcp'
     if (-not (Test-Path -LiteralPath $dhcpDir)) { Done dhcp skipped '' 'DHCP server not installed'; return }
     $d = Sub 'dhcp'
+    # Export-DhcpServer (Server 2012 and later) reads the settings while the
+    # service keeps answering clients; netsh is the fallback for older servers.
+    if (Test-CcCommand 'Export-DhcpServer') {
+        $x = Jp $d 'dhcp-export.xml'
+        try { Export-DhcpServer -File $x -Leases -Force -ErrorAction Stop }  # ps2-ok (only where the cmdlet exists)
+        catch { Done dhcp failed $d (Short $_.Exception.Message); return }
+        Done dhcp ok $d 'scopes, options, reservations, leases' @('# Import into the DHCP server (it keeps its own backup of the current settings in the -BackupPath folder):', ('Import-DhcpServer -File ' + (Q $x) + ' -BackupPath ' + (Q (Jp $d 'before-import')) + ' -Leases -Force'))
+        return
+    }
     $f = Jp $d 'dhcp-export.txt'
     if (-not (Run 'netsh.exe' @('dhcp', 'server', 'export', $f, 'all')) -or -not (Test-Path -LiteralPath $f)) { Done dhcp failed $d (Short $script:LastOut); return }
     Done dhcp ok $d 'scopes, options, reservations, leases' @('# Import into the DHCP server (stop and restart the DHCP service around it if it complains):', ('netsh dhcp server import ' + (Q $f) + ' all'))

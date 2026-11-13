@@ -2,6 +2,15 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-12: Windows review fixes
+
+**Fixed**
+- WN-43: removing a port forward (`portproxy`) now restarts the IP Helper service, because the forward kept listening until it restarted; `-Undo` restarts it again so a put-back forward works. Skipped (with a note) when `iphlpsvc` is on the protected list.
+- WN-43 `auditing`: also sets `SCENoApplyLegacyAuditPolicy`, so an old-style audit policy from Group Policy (a DC's default policy has one) no longer overwrites the subcategory settings at the next refresh. `netsh`: the DHCP and WINS server helpers count as Windows ones.
+- WN-20: a password given in `-Passwords` for an account that is then skipped (service account, protected, not in `-Users` ...) is reported, not only for disabled accounts.
+- WN-35 `dhcp`: uses `Export-DhcpServer` where it exists (Server 2012 and later) so the DHCP service keeps answering; `netsh dhcp` is the fallback.
+
+**Tested** wn43 109 -> 112, wn20 49 -> 51; all PowerShell tests, both lints and the shell suite pass.
 ## 2026-11-12: Windows firewall
 
 **Added**

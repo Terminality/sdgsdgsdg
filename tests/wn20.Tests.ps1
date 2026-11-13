@@ -75,7 +75,7 @@ T-True (-not (Test-Path -LiteralPath (Join-Path $r.Dir 'passwords.csv'))) 'no pa
 
 T-Start 'apply with exclusions, a password sheet and the protected list'
 $sheet = Join-Path $tmp 'sheet.csv'
-[IO.File]::WriteAllLines($sheet, [string[]]@('# account,password', 'account,password', ' alice ,  Team-Alice-Pass-26  ', 'olduser,Should-Not-Be-Set-1', 'ghost,Nobody-Home-12345', 'bob,Has,Comma"Quote-99'))
+[IO.File]::WriteAllLines($sheet, [string[]]@('# account,password', 'account,password', ' alice ,  Team-Alice-Pass-26  ', 'olduser,Should-Not-Be-Set-1', 'ghost,Nobody-Home-12345', 'bob,Has,Comma"Quote-99', 'svc_sql,Sql-Service-Pass-26', 'mark.jacobs,Excluded-Anyway-26'))
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-Exclude', 'mark.jacobs,Administrator', '-Passwords', $sheet)
 $d = $r.Dir
 T-Eq $r.Code 5 'exits 5 because one change failed'
@@ -84,7 +84,9 @@ T-Eq (SetPw 'Administrator') '' 'every name in the -Exclude list counts'
 T-Eq (SetPw 'alice') 'Team-Alice-Pass-26' 'alice got the sheet password, spaces dropped'
 T-Eq (SetPw 'bob') 'Has,Comma"Quote-99' 'a sheet password may hold a comma and a quote'
 T-Eq (SetPw 'olduser') '' 'a disabled account is not given the sheet password'
-T-Has $r.Text 'olduser is in -Passwords but is disabled' 'and that is reported'
+T-Has $r.Text 'olduser is in -Passwords but was NOT changed: disabled' 'and that is reported'
+T-Has $r.Text 'svc_sql is in -Passwords but was NOT changed: runs service' 'a sheet password for a skipped service account is reported'
+T-HasNot $r.Text 'mark.jacobs is in -Passwords' 'an account you excluded yourself is not nagged about'
 T-Has $r.Text 'ghost is in -Passwords but is not an account here' 'a sheet name missing here is reported'
 T-Eq (SetPw 'Guest') '' 'Guest never changed'
 T-Eq (SetPw 'DefaultAccount') '' 'DefaultAccount never changed'
