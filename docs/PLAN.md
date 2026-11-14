@@ -1,57 +1,57 @@
 # Plan
 
-## Scope
+## What we have
 
-Core scripts only, for three roles: **Linux, Windows / AD, Network.** The list is `docs/catalog.csv`.
+Right now we only have scripts for **Linux, Windows / AD and Network**. The full list is in `docs/catalog.csv`.
 
-The scripts are aimed at the services in `docs/ENVIRONMENT.md`. Those come from past competitions and are not set in stone.
+If you're on a different role and want scripts, go ahead and make them yourself. Just follow `AGENTS.md`.
 
-Other roles: if you want scripts, write them yourself and follow `AGENTS.md`.
+The scripts that still need to be built are what we're planning for now, and that'll probably change as we go. Same with the services in `docs/ENVIRONMENT.md`: those are just what we've seen in past comps, so they could be different next time.
 
-## How scripts work
+## How the scripts work
 
-- **Enum scripts** only look. They change nothing.
-- **Fix scripts** are made of small named fixes. You can run one fix without running the rest (`--list`, `--only`, `--skip`; on Windows `-List`, `-Only`, `-Skip`).
-- Everything is a dry run until you add `--apply` / `-Apply`.
+- **Enum scripts** just look around. They don't change anything.
+- **Fix scripts** are a bunch of small fixes, and you can run just one if that's all you need (`--list`, `--only`, `--skip`, or `-List`, `-Only`, `-Skip` on Windows).
+- Nothing actually changes until you add `--apply` (`-Apply` on Windows). Without it, it's a dry run.
 
 ## Tiers
 
-| Tier | Meaning |
+| Tier | What it means |
 | --- | --- |
-| enum | Looks only |
-| prep | Backups. Run before any change |
-| easy | Safe fixes. Can't break a service or lock you out |
-| medium | Could break a scored service. Checks it and reverts if it breaks |
-| hard | Could lock you out (firewall, RDP, WinRM, SSH, accounts) |
+| enum | Only looks |
+| prep | Backups. Do these before changing anything |
+| easy | Safe fixes. Won't break a service or lock you out |
+| medium | Might break a scored service, so it checks the service and undoes the fix if it broke |
+| hard | Might lock you out (firewall, RDP, WinRM, SSH, accounts) |
 | manage | Passwords and accounts |
-| alert | Tells you when something changes |
-| kit | Shared libraries |
+| alert | Lets you know when something changes |
+| kit | The shared libraries |
 
 ## Risk labels
 
-| Risk | Meaning |
+| Risk | What it means |
 | --- | --- |
-| none | Changes nothing |
-| safe | Can't break a service or lock you out |
-| service | Could break a scored service |
-| access | Could lock you out |
+| none | Doesn't change anything |
+| safe | Won't break a service or lock you out |
+| service | Might break a scored service |
+| access | Might lock you out |
 
 ## Lockout rule
 
-Anything marked `access` must:
+We got kicked off a box in practice once, so anything marked `access` has to:
 
-1. Run only when you name it. Never as part of "run everything".
+1. Only run when you ask for it by name. It never runs as part of "run everything".
 2. Start a **1-minute countdown** after the change.
-3. Revert by itself unless you confirm **from a new session** (new RDP or SSH window).
-4. Keep an undo, so you can revert it later too.
+3. Undo itself unless you confirm **from a new session** (open a new RDP or SSH window and confirm from there).
+4. Keep an undo so you can roll it back later too.
 
-Before an `access` change: keep a second session open, and have a backup admin account with a known password.
+Before you run anything like that, keep a second session open and make sure there's a backup admin account with a password you know.
 
-The firewall scripts already roll back (5 minutes on Windows, 2 on Linux). They still need to move to 1 minute.
+The firewall scripts already roll themselves back (5 minutes on Windows, 2 on Linux). They still need to be moved to 1 minute.
 
-## Safety
+## Staying safe
 
-- Never put real competition passwords in the repo.
-- Copy password and findings files off the box, then delete them there.
+- Don't put real competition passwords in the repo.
+- Copy password and findings files off the box, then delete them from the box.
 - Keep the repo private.
-- Scripts stay as scripts, not compiled binaries.
+- Keep the scripts as scripts. Don't compile them into binaries.
