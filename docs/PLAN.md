@@ -4,6 +4,8 @@
 
 Core scripts only, for three roles: **Linux, Windows / AD, Network.** The list is `docs/catalog.csv`.
 
+The scripts are aimed at the services in `docs/ENVIRONMENT.md`. Those come from past competitions and can change.
+
 Other roles: if you want scripts, write them yourself and follow `AGENTS.md`.
 
 ## How scripts work

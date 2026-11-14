@@ -1,6 +1,6 @@
 # Scored services
 
-From the practice scoreboard. Update this if the team packet says otherwise. OS and scoring accounts are guesses: check the packet.
+**These services come from past competitions and practice. They can change.** Check the team packet each time and update this file. OS and scoring accounts are guesses.
 
 | Box | OS (guess) | Checks | Keep open |
 | --- | --- | --- | --- |
