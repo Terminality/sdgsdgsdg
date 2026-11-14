@@ -62,6 +62,14 @@ for dir in captain inject-lead network linux windows-ad applications detection-i
         row[n] = "| " f[1] " | " f[2] " | " tiername(f[5]) " | " f[6] " | " f[7] " | " file " |"
     }
     END {
+        if (!n) {
+            print "# " want
+            print ""
+            print "No core scripts are planned for this role. If you want scripts for it, write them yourself and follow `AGENTS.md`."
+            print ""
+            print "This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand."
+            exit
+        }
         print "# " role " \342\200\224 " tag[want]
         print ""
         print "Scripts owned by this role. " built " of " n " are built."

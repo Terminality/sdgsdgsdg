@@ -1,82 +1,57 @@
-# Plan and direction
+# Plan
 
-This is the team's direction for the kit. Read it before adding or changing a script, and point any AI tool you use at it (`AGENTS.md` does that automatically). `docs/catalog.csv` is the list of scripts; `docs/ENVIRONMENT.md` is what is scored.
+## Scope
 
-## Focus
+Core scripts only, for three roles: **Linux, Windows / AD, Network.** The list is `docs/catalog.csv`.
 
-A few big, solid scripts beat many niche ones. The catalog was cut from 142 ideas to the ~54 that matter for a CCDC network like ours. A new script needs a clear reason it cannot be a named fix inside an existing one.
+The scripts are aimed at the services in `docs/ENVIRONMENT.md`. Those come from past competitions and are not set in stone.
 
-## How the kit fits together
+Other roles: if you want scripts, write them yourself and follow `AGENTS.md`.
 
-```
-enum (look, change nothing)  ->  findings, each with a fix ID and a risk
-                                       |
-          pick lines, run only those fixes (dry run first, then --apply)
-```
+## How scripts work
 
-- **Enum scripts are big and thorough.** They change nothing, so they can afford to look everywhere. Each finding says what is wrong, its risk, and which fix handles it (`cc_finding` / `Add-CcFinding`).
-- **Fix scripts are made of small named fixes.** One script per area (SSH, web, SQL Server, mail, Splunk, remote access ...), each fix runnable on its own: `--list`, `--only a,b`, `--skip c` (`-List`, `-Only`, `-Skip` on Windows). Running one fix never runs the others.
-- **Focused enum scripts** go deeper on one area (SSH, AD, mail, Splunk, SQL Server) than the host enum can.
+- **Enum scripts** only look. They change nothing.
+- **Fix scripts** are made of small named fixes. You can run one fix without running the rest (`--list`, `--only`, `--skip`; on Windows `-List`, `-Only`, `-Skip`).
+- Everything is a dry run until you add `--apply` / `-Apply`.
 
 ## Tiers
 
-Every script is in one tier (`tier` column in the catalog). Run them roughly in this order.
-
-| Tier | What | Examples |
-| --- | --- | --- |
-| `enum` | Look only, change nothing. Robust: a broken section must not stop the rest | Linux enum, Windows enum, AD enum, SSH enum, network scan |
-| `prep` | Before any change: backups, protected list, backup admin account, restore | LX-31, WN-35, SV-14, SH-09, SH-11 |
-| `easy` | Hardening that cannot break a scored service or your access | LX-39, WN-43 |
-| `medium` | Hardening that could break a scored service. Checks the service after each fix and reverts if it stopped | SSH fixes, web, SQL Server, mail, Splunk hardening |
-| `hard` | Anything that can kick you off the box or out of a service | firewalls, RDP/WinRM/SSH lockdown, account lockdown |
-| `manage` | Day-to-day running: passwords, accounts, service checks, injects | password rotation, credential sheet, service checker |
-| `alert` | Tell us when the red team does something | Linux alerts, Windows alerts, Splunk searches |
-| `evict` | Get the red team out once they are in | persistence hunters, session purge |
-| `kit` | Libraries, build, getting the kit onto boxes | lib.sh, lib.ps1, fan-out, local runner |
+| Tier | Meaning |
+| --- | --- |
+| enum | Looks only |
+| prep | Backups. Run before any change |
+| easy | Safe fixes. Can't break a service or lock you out |
+| medium | Could break a scored service. Checks it and reverts if it breaks |
+| hard | Could lock you out (firewall, RDP, WinRM, SSH, accounts) |
+| manage | Passwords and accounts |
+| alert | Tells you when something changes |
+| kit | Shared libraries |
 
 ## Risk labels
 
-Every script, and every named fix inside a fix script, has one (`risk` column).
+| Risk | Meaning |
+| --- | --- |
+| none | Changes nothing |
+| safe | Can't break a service or lock you out |
+| service | Could break a scored service |
+| access | Could lock you out |
 
-| Risk | Meaning | Rule |
-| --- | --- | --- |
-| `none` | Changes nothing | Run freely |
-| `safe` | Cannot break a scored service or access | May run in bulk ("all safe fixes") |
-| `service` | Could break a scored service | Test the service after the change; revert if it stopped; recorded undo |
-| `access` | Could lock you out (RDP, WinRM, SSH, firewall, passwords, logon rights, account lockdown) | Never runs in bulk. Only when named. **Countdown that reverts** plus **recorded undo** |
+## Lockout rule
 
-## The countdown rule (anything that can kick you off)
+Anything marked `access` must:
 
-This exists because a practice fix turned RDP off and kicked us off the box.
+1. Run only when you name it. Never as part of "run everything".
+2. Start a **1-minute countdown** after the change.
+3. Revert by itself unless you confirm **from a new session** (new RDP or SSH window).
+4. Keep an undo, so you can revert it later too.
 
-1. Before the change, save what is needed to put it back.
-2. Make the change, then start a **1-minute countdown** (default; an option makes it longer for slow logins).
-3. Confirm by logging in **from a new session** (new RDP window, new SSH connection) and running the keep command. Confirming from the old session proves nothing: it is the one connection that survives.
-4. If nobody confirms, the change is reverted automatically, by a job that does not depend on your session (scheduled task as SYSTEM, `at`/`systemd-run`/background job as root).
-5. The undo stays recorded either way, so it can be reverted later if it breaks something else down the line (`-Undo` / `--undo`, or AU-12).
+Before an `access` change: keep a second session open, and have a backup admin account with a known password.
 
-The firewalls (WN-25, LX-25) already work this way, with 5- and 2-minute timers; moving them to the shared 1-minute helper in the libraries is on the to-do list. Password rotation counts too: changing the password of the account you are logged in with gets the same countdown.
+The firewall scripts already roll back (5 minutes on Windows, 2 on Linux). They still need to move to 1 minute.
 
-Before any `access` change on a box: keep a second session open and have the backup admin account (SH-11) in place.
+## Safety
 
-## Every script, every time
-
-- Dry run unless `--apply` / `-Apply`.
-- Protected list checked before touching anything (built from `docs/ENVIRONMENT.md` by SH-09).
-- Backup before change; undo recorded.
-- Never record a password, hash or secret in output or logs. Password files are admin-only and are copied off the box and deleted.
-- Never touch the scorer's accounts without reporting the new password (credential sheet, AU-16).
-- Shell: POSIX `sh`. PowerShell: 2.0 rules. Details in `docs/CONVENTIONS.md`.
-
-## Scripts, not binaries
-
-The kit stays as plain scripts. Compiling them hides little (an admin can run or unpack a binary), antivirus quarantines script-to-exe binaries, and a binary cannot be fixed on the spot. What we protect instead:
-
-- **Outputs:** password and findings files go off the box and are deleted there.
-- **Integrity:** run from the admin machine or a read-only share where possible, check the kit hash (LB-03 writes it), do not leave the kit on boxes.
-- **The repo and the Drive folder stay private** to the team. No real competition passwords in the repo, ever.
-
-## Names
-
-- "Enum", not "collector": SH-05 Linux enum, SH-06 Windows enum, SV-01 web and database enum. Some output keys still say `collector_...` so older runs can be compared; leave them.
-- IDs never change. A script that changes job keeps its ID; a dropped idea's ID is not reused for something else.
+- Never put real competition passwords in the repo.
+- Copy password and findings files off the box, then delete them there.
+- Keep the repo private.
+- Scripts stay as scripts, not compiled binaries.

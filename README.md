@@ -2,7 +2,7 @@
 
 Blue-team scripts for the Collegiate Cyber Defense Competition, written with Claude.
 
-**Start here:** [`docs/PLAN.md`](docs/PLAN.md) is the team's direction (tiers from enum to hard hardening, risk labels, the countdown-and-revert rule for anything that can lock you out). [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) lists the scored services. Using an AI to change the repo? It must follow [`AGENTS.md`](AGENTS.md). The focused list of about 54 scripts is in `docs/catalog.csv`; `docs/STATUS.md` shows what is built.
+**Start here:** [`docs/PLAN.md`](docs/PLAN.md) (the plan), [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) (what is scored), [`AGENTS.md`](AGENTS.md) (rules for changing the repo). Core scripts are for Linux, Windows / AD and Network only; other roles write their own.
 
 ## Ready to use
 
@@ -29,7 +29,7 @@ Blue-team scripts for the Collegiate Cyber Defense Competition, written with Cla
 | Windows safe fixes (WN-43) | Fixes that cannot break a scored service: SMBv1 and WDigest off, Zerologon enforced on DCs, UAC on, Guest off, sticky-keys and debugger backdoors, port forwards, WMI persistence, Defender exclusions removed, auditing on, and more. Every change recorded; `-Undo latest -Apply` puts the run back | `powershell -NoProfile -ExecutionPolicy Bypass -File roles\windows-ad\WN-43-safe-fixes.ps1 -Out C:\ccdc-out -Apply` |
 | Windows firewall (WN-25) | Default-deny inbound on every profile; opens scored, protected and safe listening ports and everything from the admin/scoring addresses; turns off allow-all and backdoor rules. Rolls itself back in 5 minutes unless kept from a new connection; `-Undo` restores the old firewall exactly | `powershell -NoProfile -ExecutionPolicy Bypass -File roles\windows-ad\WN-25-firewall.ps1 -Out C:\ccdc-out -Apply -AdminFrom 10.0.0.5` |
 
-The two shared libraries (`lib/lib.sh`, `lib/lib.ps1`) are also finished; every other script is built on them. Next up: see the tiers in `docs/PLAN.md` and the to-do notes in `docs/catalog.csv`.
+The two shared libraries (`lib/lib.sh`, `lib/lib.ps1`) are also finished; every other script is built on them. Next up: the planned scripts in `docs/STATUS.md`.
 
 Nothing here has been run on real competition systems yet. Read "What has and hasn't been tested" before relying on it.
 
@@ -152,7 +152,7 @@ The Windows library passes its tests on Windows PowerShell 5.1. It is written to
 - [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md): rules for writing a script
 - [`docs/STATUS.md`](docs/STATUS.md): what is built
 - [`docs/CHANGELOG.md`](docs/CHANGELOG.md): what changed, and when
-- [`docs/PLAN.md`](docs/PLAN.md): the direction, tiers, risk labels and the countdown rule
-- [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md): what is scored, and what to watch on each box
-- [`AGENTS.md`](AGENTS.md): rules for anyone, person or AI, changing the repo
-- [`docs/catalog.csv`](docs/catalog.csv): the focused list of scripts with role, tier and risk
+- [`docs/PLAN.md`](docs/PLAN.md): the plan, tiers and lockout rule
+- [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md): scored services
+- [`AGENTS.md`](AGENTS.md): rules for changing the repo
+- [`docs/catalog.csv`](docs/catalog.csv): the script list

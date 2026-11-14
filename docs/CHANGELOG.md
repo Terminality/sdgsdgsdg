@@ -4,12 +4,9 @@ What changed, newest first. Each entry names the scripts touched and how they we
 
 ## 2026-11-14: New direction
 
-**Changed**
-- `docs/PLAN.md`: the team's direction. Tiers (enum, prep, easy, medium, hard, manage, alert, evict, kit), risk labels (none, safe, service, access), the countdown-and-revert rule for anything that can lock you out, named fixes runnable one at a time, scripts not binaries.
-- `docs/ENVIRONMENT.md`: the scored services from the practice scoreboard, what to watch on each box, and which scripts go where.
-- `AGENTS.md` (and `CLAUDE.md` pointing to it): rules any AI tool or person follows when changing the repo.
-- `docs/catalog.csv` cut from 142 ideas to 54 focused scripts, with `tier` and `risk` columns in place of `wave` and `level`; changes still owed to built scripts are marked "To do". `tools/update-docs.sh` groups the role pages and `docs/STATUS.md` by tier.
-- Collectors renamed to enum: `SH-05-linux-enum.sh`, `SH-06-windows-enum.ps1`, and `SV-01-web-db-enum.sh`. File names and docs only; the scripts' contents are unchanged.
+- Added `docs/PLAN.md`, `docs/ENVIRONMENT.md`, `AGENTS.md`, `CLAUDE.md`.
+- Catalog cut to 28 core scripts for Linux, Windows / AD and Network. Columns `tier` and `risk` replace `wave` and `level`.
+- Collectors renamed to enum: `SH-05-linux-enum.sh`, `SH-06-windows-enum.ps1`, `SV-01-web-db-enum.sh`. Script contents unchanged.
 
 ## 2026-11-12: Windows review fixes
 
