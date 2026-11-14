@@ -1,9 +1,9 @@
 # =============================================================================
-# Tests for SH-06 Windows collector.
+# Tests for SH-06 Windows enum.
 #   pwsh -NoProfile -File tests/sh06.Tests.ps1
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\sh06.Tests.ps1
 #
-# The collector saves everything it reads under raw\ and can replay a saved
+# The enum saves everything it reads under raw\ and can replay a saved
 # raw folder (-FromRaw).  These tests write two raw folders by hand - one host
 # full of planted red-team tricks, one clean host - in the exact formats the
 # live sources write, replay them, and check the flags.  A last test runs the
@@ -14,7 +14,7 @@
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $here
-$sh06 = Join-Path (Join-Path (Join-Path $root 'roles') 'windows-ad') 'SH-06-windows-collector.ps1'
+$sh06 = Join-Path (Join-Path (Join-Path $root 'roles') 'windows-ad') 'SH-06-windows-enum.ps1'
 $psExe = (Get-Process -Id $PID).Path
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('cctest_sh06_' + $PID)
 $out = Join-Path $tmp 'out'

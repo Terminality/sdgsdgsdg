@@ -1,27 +1,15 @@
 # Network — routes + firewall
 
-Scripts owned by this role. 5 of 17 are built.
+Scripts owned by this role. 5 of 5 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
-| ID | Script | Wave | Level | Status | File |
+| ID | Script | Tier | Risk | Status | File |
 | --- | --- | --- | --- | --- | --- |
-| NW-01 | Config backup and diff | 1 | Medium | built | [`roles/network/NW-01-config-backup.sh`](../../roles/network/NW-01-config-backup.sh) |
-| NW-03 | Firewall rule export | 1 | Medium | planned |  |
-| SH-02 | Subnet sweep (Windows) | 1 | Easy | planned |  |
-| SH-03 | Network scan | 1 | Medium | built | [`roles/network/SH-03-network-scan.sh`](../../roles/network/SH-03-network-scan.sh) |
-| NW-10 | Device password rotation | 2 | Medium | built | [`roles/network/NW-10-device-passwords.sh`](../../roles/network/NW-10-device-passwords.sh) |
-| NW-04 | Tables collector | 3 | Medium | planned |  |
-| NW-07 | Device config audit | 1 | Medium | built | [`roles/network/NW-07-config-audit.sh`](../../roles/network/NW-07-config-audit.sh) |
-| NW-11 | Management hardening | 3 | Medium | planned |  |
-| NW-12 | IP block list | 3 | Medium | planned |  |
-| NW-13 | Perimeter port closer | 3 | Hard | planned |  |
-| SH-04 | Scan diff | 3 | Medium | built | [`roles/network/SH-04-scan-diff.sh`](../../roles/network/SH-04-scan-diff.sh) |
-| NW-14 | Least-privilege rule builder | 4 | Hard | planned |  |
-| NW-17 | Egress filter and outbound log | 4 | Hard | planned |  |
-| NW-19 | Config restore | 4 | Hard | planned |  |
-| NW-05 | Network map data | 5 | Hard | planned |  |
-| NW-20 | Diagram renderer | 5 | Medium | planned |  |
-| NW-21 | Switch protections | 5 | Hard | planned |  |
+| SH-03 | Network scan | Enum (look only) | none | built | [`roles/network/SH-03-network-scan.sh`](../../roles/network/SH-03-network-scan.sh) |
+| SH-04 | Scan diff | Enum (look only) | none | built | [`roles/network/SH-04-scan-diff.sh`](../../roles/network/SH-04-scan-diff.sh) |
+| NW-07 | Network device config audit | Enum (look only) | none | built | [`roles/network/NW-07-config-audit.sh`](../../roles/network/NW-07-config-audit.sh) |
+| NW-01 | Network config backup and diff | Backup and prep | none | built | [`roles/network/NW-01-config-backup.sh`](../../roles/network/NW-01-config-backup.sh) |
+| NW-10 | Network device password rotation | Management | access | built | [`roles/network/NW-10-device-passwords.sh`](../../roles/network/NW-10-device-passwords.sh) |
 
-Script files in this folder are named `<ID>-<short-name>.sh` or `.ps1`. A script that moved here from another family keeps its original ID.
+Script files in this folder are named `<ID>-<short-name>.sh` or `.ps1`. What the tiers and risk levels mean, and the rules for each: `docs/PLAN.md`.

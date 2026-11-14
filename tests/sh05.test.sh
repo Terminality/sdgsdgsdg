@@ -1,11 +1,11 @@
 #!/bin/sh
-# Tests for roles/linux/SH-05-linux-collector.sh.
-# Runs the real collector against this machine.  Checks that it works under
+# Tests for roles/linux/SH-05-linux-enum.sh.
+# Runs the real enum against this machine.  Checks that it works under
 # every shell, produces its files, changes nothing, and - when run as root -
 # flags problems planted in a private temp folder.
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
-C="$T_ROOT/roles/linux/SH-05-linux-collector.sh"
+C="$T_ROOT/roles/linux/SH-05-linux-enum.sh"
 export CCDC_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
