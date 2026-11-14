@@ -2,7 +2,7 @@
 
 How to use what is built, what to watch for, and what to do when something goes wrong. A script gets a section here when it is built; `docs/STATUS.md` lists what exists.
 
-Built so far: the shell library (LB-01), the PowerShell library (LB-02), the network scan (SH-03), the scan diff (SH-04), the Linux collector (SH-05), the web and database inventory (SV-01), the script templates, and the test runner.
+Built so far: the shell library (LB-01), the PowerShell library (LB-02), the network scan (SH-03), the scan diff (SH-04), the Linux enum (SH-05), the web and database inventory (SV-01), the script templates, and the test runner.
 
 **Read this first.** The libraries pass their tests on Linux shells and on PowerShell 7. They have not been run on Windows, FreeBSD or Solaris. Section 8 says how to check them on your own test machines.
 
@@ -17,10 +17,10 @@ Contents:
 7. Script templates
 8. Tests
 9. Problems that apply to everything
-10. Linux collector, `roles/linux/SH-05-linux-collector.sh` (SH-05)
+10. Linux enum, `roles/linux/SH-05-linux-enum.sh` (SH-05)
 11. Network scan, `roles/network/SH-03-network-scan.sh` (SH-03)
 12. Scan diff, `roles/network/SH-04-scan-diff.sh` (SH-04)
-13. Web and database inventory, `roles/applications/SV-01-web-db-inventory.sh` (SV-01)
+13. Web and database enum, `roles/applications/SV-01-web-db-enum.sh` (SV-01)
 14. Backup, `roles/linux/LX-31-backup.sh` (LX-31)
 15. Linux safe fixes, `roles/linux/LX-39-safe-fixes.sh` (LX-39)
 16. Linux password rotation, `roles/linux/LX-20-password-rotation.sh` (LX-20)
@@ -32,7 +32,7 @@ Contents:
 22. Network config backup and diff, `roles/network/NW-01-config-backup.sh` (NW-01)
 23. Network config audit, `roles/network/NW-07-config-audit.sh` (NW-07)
 24. Device password rotation, `roles/network/NW-10-device-passwords.sh` (NW-10)
-25. Windows collector, `roles/windows-ad/SH-06-windows-collector.ps1` (SH-06)
+25. Windows enum, `roles/windows-ad/SH-06-windows-enum.ps1` (SH-06)
 26. Windows backup, `roles/windows-ad/WN-35-backup.ps1` (WN-35)
 27. Windows password rotation, `roles/windows-ad/WN-20-password-rotation.ps1` (WN-20)
 28. Windows safe fixes, `roles/windows-ad/WN-43-safe-fixes.ps1` (WN-43)
@@ -395,7 +395,7 @@ It runs, in order: the POSIX lint, the PowerShell 2.0 lint, a syntax check of ev
 | `tests/lib.Tests.ps1` | The PowerShell library: the same list, plus program exit codes and `-Secret` |
 | `tests/templates.test.sh` | The shell template runs and writes its files |
 | `tests/sh03.test.sh` | The network scan: option checks, then both the python and nmap engines against two test listeners, including the scored-service and host-list checks |
-| `tests/sh05.test.sh` | The Linux collector: options, every profile writes its files, nothing on the host changes, and (as root) a planted SUID binary is flagged HIGH |
+| `tests/sh05.test.sh` | The Linux enum: options, every profile writes its files, nothing on the host changes, and (as root) a planted SUID binary is flagged HIGH |
 | `tests/helper.sh` | The small test framework the `.test.sh` files use |
 
 **Checking the Windows library on a real machine.** Copy the repository to a Windows test VM and run:
@@ -435,17 +435,17 @@ Do this on the oldest and the newest Windows you expect to defend. It ends with 
 
 ---
 
-## 10. Linux collector, `roles/linux/SH-05-linux-collector.sh` (SH-05)
+## 10. Linux enum, `roles/linux/SH-05-linux-enum.sh` (SH-05)
 
 Read-only inventory of one Linux or Unix host. Run it first on every Linux box: it shows who can log in, what is listening, what starts on boot or on a schedule, who can become root, what is running, and the usual hiding places. It changes nothing.
 
 ### How to run it
 
 ```sh
-sudo sh SH-05-linux-collector.sh --out /root/ccdc-out              # full, about a minute
-sudo sh SH-05-linux-collector.sh --out /root/ccdc-out --profile card   # quick look, seconds
-sudo sh SH-05-linux-collector.sh --out /root/ccdc-out --profile triage # full plus a copy of the logs
-sudo sh SH-05-linux-collector.sh --out /root/ccdc-out --only ports,processes
+sudo sh SH-05-linux-enum.sh --out /root/ccdc-out              # full, about a minute
+sudo sh SH-05-linux-enum.sh --out /root/ccdc-out --profile card   # quick look, seconds
+sudo sh SH-05-linux-enum.sh --out /root/ccdc-out --profile triage # full plus a copy of the logs
+sudo sh SH-05-linux-enum.sh --out /root/ccdc-out --only ports,processes
 ```
 
 Run it as root. As a normal user it still works, but the summary marks several sections `partial`.
@@ -525,11 +525,11 @@ Only HIGH and MED flags are printed. LOW flags are in `flags.csv`.
 | `ssh` note: `no sshd configuration found` | SSH server not installed | Nothing to fix |
 | A sudo, cron or ssh setting you know is there is missing | Not root, so the file was unreadable | Rerun as root; check the section note |
 | `docker ... 'docker ps' failed` | Docker daemon stopped, or the user is not in the docker group | Rerun as root; `systemctl status docker` |
-| `firewall` says NOT-filtered but you set rules | Rules exist in a tool the collector does not read, or need root | Check `raw/` for the tool's output; run as root |
+| `firewall` says NOT-filtered but you set rules | Rules exist in a tool the enum does not read, or need root | Check `raw/` for the tool's output; run as root |
 | A flag looks wrong | The check is too broad for your box | Check `raw/` to see what the tool printed. Report the flag line so the check can be tightened |
 | It runs for many minutes | A very large disk or network home folders | `--fast`, or `--skip files,creds` |
 | `cannot find lib/lib.sh` (exit 3) | The script was copied without the `lib/` folder | Copy the whole kit, or use the built single-file version once the build step exists |
-| `$'\r': command not found` | The file got Windows line endings in transit | `tr -d '\r' < SH-05-linux-collector.sh > fixed.sh` |
+| `$'\r': command not found` | The file got Windows line endings in transit | `tr -d '\r' < SH-05-linux-enum.sh > fixed.sh` |
 
 ---
 
@@ -614,7 +614,7 @@ In `<out>/SH-03_<host>_<UTC time>/`:
 
 ## 12. Scan diff, `roles/network/SH-04-scan-diff.sh` (SH-04)
 
-Answers "what changed since last time?" by comparing two earlier runs of the network scan (SH-03) or two runs of the Linux collector (SH-05) on the same host. It only reads their CSV files; it touches no host and needs no root.
+Answers "what changed since last time?" by comparing two earlier runs of the network scan (SH-03) or two runs of the Linux enum (SH-05) on the same host. It only reads their CSV files; it touches no host and needs no root.
 
 The point: run SH-03 and SH-05 in the first minutes as a baseline, run them again later, and diff. Anything **added** is where to look for red team persistence.
 
@@ -622,7 +622,7 @@ The point: run SH-03 and SH-05 in the first minutes as a baseline, run them agai
 
 ```sh
 sh SH-04-scan-diff.sh --out ~/ccdc-out                        # the newest two network scans
-sh SH-04-scan-diff.sh --out /root/ccdc-out --type sh05        # the newest two collector runs of the newest run's host
+sh SH-04-scan-diff.sh --out /root/ccdc-out --type sh05        # the newest two enum runs of the newest run's host
 sh SH-04-scan-diff.sh --out /root/ccdc-out --type sh05 --host web01
 sh SH-04-scan-diff.sh --old ~/ccdc-out/SH-03_admin_20261111T140000Z --new ~/ccdc-out/SH-03_admin_20261111T150000Z
 ```
@@ -632,7 +632,7 @@ sh SH-04-scan-diff.sh --old ~/ccdc-out/SH-03_admin_20261111T140000Z --new ~/ccdc
 | `--old` / `--new` | The two run folders to compare. Give both or neither. The type comes from the folder names |
 | `--type sh03` (default) / `sh05` | Which runs to pick when no folders are given |
 | `--host` | With `--type sh05`: whose runs. Default: the host of the newest SH-05 run |
-| `--runs` | Where the run folders are, if not in the `--out` folder (e.g. collector results copied off each box into one folder) |
+| `--runs` | Where the run folders are, if not in the `--out` folder (e.g. enum results copied off each box into one folder) |
 | `--max-lines` | Changes listed on screen (default 40; every change is in `changes.csv`) |
 | `--max-flags` | HIGH and MED flags shown on screen (default 30) |
 
@@ -681,7 +681,7 @@ Each change gets one flag: a backdoor port that is HIGH is not also listed as ME
 ### What to watch for
 
 - **Changes you made show up too.** Removing a user, closing a port or adding a firewall rule appear as changes. Compare against what the team did (the undo log and the changelog in your notes) before chasing them.
-- **Compare like with like.** Two collector runs should use the same profile. A section that is in only one run is reported as `skipped (not in both runs)`, not as everything removed. The summary warns when one collector run was as root and the other was not, because a root run sees more.
+- **Compare like with like.** Two enum runs should use the same profile. A section that is in only one run is reported as `skipped (not in both runs)`, not as everything removed. The summary warns when one enum run was as root and the other was not, because a root run sees more.
 - **"Removed" on a scored port is an outage.** A port that closed between two scans of a scored host needs checking right away.
 - **Take a fresh baseline after you clean up.** Otherwise every later diff repeats your own changes. Keep the old runs; the diff only reads them.
 - **The newest two may not be the two you want.** If a run was made from a different machine or with different targets, give `--old` and `--new` yourself.
@@ -693,24 +693,24 @@ Each change gets one flag: a backdoor port that is HIGH is not also listed as ME
 | `need two finished SH-03 runs ... found 1` (exit 3) | Only one finished run in the folder, or the runs are elsewhere | Run the scan again, point `--runs` at the folder, or give `--old` and `--new` |
 | `... is not an SH-03 or SH-05 run folder` (exit 2) | The folder was renamed, or you gave the parent folder | Give the run folder itself; its name must start with `SH-03_` or `SH-05_` |
 | `the two folders are from different scripts` (exit 2) | One SH-03 run and one SH-05 run | Compare runs of the same script |
-| `comparing two different hosts` warning | `--old`/`--new` point at collector runs of two machines | Usually a mistake; pick two runs of one host |
+| `comparing two different hosts` warning | `--old`/`--new` point at enum runs of two machines | Usually a mistake; pick two runs of one host |
 | Everything in a section shows as added | The earlier run had that section empty (e.g. not root, or a different profile) | Rerun both the same way; check the warning about root |
 | Lots of port changes between scans | Different targets or engines (the fallbacks check 53 ports, nmap 1000) | Scan the same targets with the same engine and profile |
 | A changed item looks wrong | The comparison is by the columns in the table above | Look up the key in both runs' CSV files; `changes.csv` has the old and new values |
 
 ---
 
-## 13. Web and database inventory, `roles/applications/SV-01-web-db-inventory.sh` (SV-01)
+## 13. Web and database enum, `roles/applications/SV-01-web-db-enum.sh` (SV-01)
 
-Shows what web sites and databases are on a Linux or Unix host and what is wrong with them. Run it on every box that serves a web site or holds a database, right after the Linux collector. It only reads; it never records a password.
+Shows what web sites and databases are on a Linux or Unix host and what is wrong with them. Run it on every box that serves a web site or holds a database, right after the Linux enum. It only reads; it never records a password.
 
 ### How to run it
 
 ```sh
-sudo sh SV-01-web-db-inventory.sh --out /root/ccdc-out
-sudo sh SV-01-web-db-inventory.sh --out /root/ccdc-out --fast                 # skip the web shell content search
-sudo sh SV-01-web-db-inventory.sh --webroot /opt/app/public                   # a web root the configs don't show
-sudo sh SV-01-web-db-inventory.sh --only mysql --mysql-cnf /root/my.cnf       # when root can't log in through the socket
+sudo sh SV-01-web-db-enum.sh --out /root/ccdc-out
+sudo sh SV-01-web-db-enum.sh --out /root/ccdc-out --fast                 # skip the web shell content search
+sudo sh SV-01-web-db-enum.sh --webroot /opt/app/public                   # a web root the configs don't show
+sudo sh SV-01-web-db-enum.sh --only mysql --mysql-cnf /root/my.cnf       # when root can't log in through the socket
 ```
 
 | Option | What it does |
@@ -931,7 +931,7 @@ To undo only this script, keep the lines whose second field is `LX-39`.
 
 - **Dry run first on one box.** The summary shows exactly what will change.
 - **A container may refuse some kernel settings.** Those show as `failed` in `fixes.csv`; everything else still applies.
-- **A quarantined `ld.so.preload` is evidence.** Hash it and keep it for the incident report. After moving it, run the collector again: a rootkit that hid files stops hiding them.
+- **A quarantined `ld.so.preload` is evidence.** Hash it and keep it for the incident report. After moving it, run the enum again: a rootkit that hid files stops hiding them.
 - **The boot file can be beaten by a file named later** (for example `99-zzz.conf`). The change watch reports new files in `/etc/sysctl.d`.
 
 ### Problems and fixes
@@ -1164,7 +1164,7 @@ Dropped packets are logged with the prefix `CCDC-DROP` (`journalctl -k | grep CC
 ### What to watch for
 
 - **A scored service that is down right now** is not listening, so its port opens only if it is on the protected list or in `--allow`. Keep the protected list complete.
-- **Port 2024, 8000 and other unknown listeners** are opened by default because they are listening. Read the allowed list; anything you do not recognise is worth a look with the collector (SH-05) before you `--save`. `--strict` is the tight option once the protected list is right.
+- **Port 2024, 8000 and other unknown listeners** are opened by default because they are listening. Read the allowed list; anything you do not recognise is worth a look with the enum (SH-05) before you `--save`. `--strict` is the tight option once the protected list is right.
 - **Other firewalls still apply.** A port allowed here can still be blocked by ufw or firewalld rules.
 - **Fan-out:** without a terminal the script does not ask; confirm from the admin workstation with `ssh root@box sh .../keep-firewall.sh`, which is itself the "new connection" test.
 
@@ -1617,16 +1617,16 @@ There is no undo-log line: a password cannot be put back without storing it. The
 
 ---
 
-## 25. Windows collector, `roles/windows-ad/SH-06-windows-collector.ps1` (SH-06)
+## 25. Windows enum, `roles/windows-ad/SH-06-windows-enum.ps1` (SH-06)
 
 Read-only inventory of a Windows host: the Windows twin of SH-05. Run it first on every Windows box, in an elevated PowerShell window. It changes nothing.
 
 ### How to run it
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-collector.ps1 -Out C:\ccdc-out
-powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-collector.ps1 -Out C:\ccdc-out -Profile card     # about a minute
-powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-collector.ps1 -Out C:\ccdc-out -Only users,ports
+powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-enum.ps1 -Out C:\ccdc-out
+powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-enum.ps1 -Out C:\ccdc-out -Profile card     # about a minute
+powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-enum.ps1 -Out C:\ccdc-out -Only users,ports
 ```
 
 | Option | What it does |
@@ -1678,7 +1678,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-collector.ps1 
 
 ## 26. Windows backup, `roles/windows-ad/WN-35-backup.ps1` (WN-35)
 
-Saves the settings and files a hardening step or the red team is most likely to break, each with the command that puts it back. Run it right after the collector (SH-06) and before anything is changed. Run it in an elevated window. It changes nothing on the host.
+Saves the settings and files a hardening step or the red team is most likely to break, each with the command that puts it back. Run it right after the enum (SH-06) and before anything is changed. Run it in an elevated window. It changes nothing on the host.
 
 ### How to run it
 

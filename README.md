@@ -1,15 +1,17 @@
 # CCDC-AI-SLOP
 
-Blue-team scripts for the Collegiate Cyber Defense Competition, written with Claude. The plan is 142 scripts across the eight official team roles; `docs/STATUS.md` shows how many exist.
+Blue-team scripts for the Collegiate Cyber Defense Competition, written with Claude.
+
+**Start here:** [`docs/PLAN.md`](docs/PLAN.md) is the team's direction (tiers from enum to hard hardening, risk labels, the countdown-and-revert rule for anything that can lock you out). [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) lists the scored services. Using an AI to change the repo? It must follow [`AGENTS.md`](AGENTS.md). The focused list of about 54 scripts is in `docs/catalog.csv`; `docs/STATUS.md` shows what is built.
 
 ## Ready to use
 
 | Script | What it does | How to run it |
 | --- | --- | --- |
 | Network scan (SH-03) | Live hosts, open ports and service versions. With the host list it checks every scored service is reachable and flags hosts that should not be there. Uses nmap, or python, bash or nc when nmap is missing | `sh roles/network/SH-03-network-scan.sh --target 10.0.2.0/24 --hosts config/hosts.csv --out ~/ccdc-out` |
-| Scan diff (SH-04) | What changed between two network scans, or two collector runs of one host: new accounts, SSH keys, cron entries, sudo rules, SUID files and listening ports, with the additions flagged first | `sh roles/network/SH-04-scan-diff.sh --type sh05 --out /root/ccdc-out` |
-| Linux collector (SH-05) | Read-only inventory of a Linux or Unix host: accounts, listening ports and their programs, services, cron and other autostart, SSH keys, sudo, processes, risky files, firewall, PAM, credentials files. One-page summary with the problems worst first | `sudo sh roles/linux/SH-05-linux-collector.sh --out /root/ccdc-out` |
-| Web and database inventory (SV-01) | Web servers, sites and web roots; web shells, database dumps, .env and .git files in web roots; app versions; MySQL, MariaDB and PostgreSQL accounts with no password, remote root, backdoor functions and trust logins | `sudo sh roles/applications/SV-01-web-db-inventory.sh --out /root/ccdc-out` |
+| Scan diff (SH-04) | What changed between two network scans, or two enum runs of one host: new accounts, SSH keys, cron entries, sudo rules, SUID files and listening ports, with the additions flagged first | `sh roles/network/SH-04-scan-diff.sh --type sh05 --out /root/ccdc-out` |
+| Linux enum (SH-05) | Read-only inventory of a Linux or Unix host: accounts, listening ports and their programs, services, cron and other autostart, SSH keys, sudo, processes, risky files, firewall, PAM, credentials files. One-page summary with the problems worst first | `sudo sh roles/linux/SH-05-linux-enum.sh --out /root/ccdc-out` |
+| Web and database enum (SV-01) | Web servers, sites and web roots; web shells, database dumps, .env and .git files in web roots; app versions; MySQL, MariaDB and PostgreSQL accounts with no password, remote root, backdoor functions and trust logins | `sudo sh roles/applications/SV-01-web-db-enum.sh --out /root/ccdc-out` |
 | Backup (LX-31) | Run first. Archives /etc, crontabs, web roots, dotfiles and SSH keys; hashes every file and the system programs; saves firewall rules, services and ports; can copy it all off the box | `sudo sh roles/linux/LX-31-backup.sh --out /root/ccdc-out --copy-to admin@10.0.0.5:/srv/backups/` |
 | Linux safe fixes (LX-39) | Hardening that cannot break a scored service: kernel network settings, IPv6 off (the safe way), no setuid core dumps, tight modes on password, sudo, SSH, cron and startup files, sticky /tmp, logging on, rootkit preload and rhosts files quarantined. Dry run unless `--apply`; every change has an undo line | `sudo sh roles/linux/LX-39-safe-fixes.sh --out /root/ccdc-out --apply` |
 | Linux password rotation (LX-20) | New random passwords for every account with a usable password (protected scoring accounts skipped); with a team list, locks and expires every other human account; fixes hashes hidden in /etc/passwd. New passwords go to one mode-600 file, never the screen or log | `sudo sh roles/linux/LX-20-password-rotation.sh --out /root/ccdc-out --apply --keep /root/team.txt` |
@@ -21,13 +23,13 @@ Blue-team scripts for the Collegiate Cyber Defense Competition, written with Cla
 | Network config backup and diff (NW-01) | Saves the running config of every firewall, router and switch (Cisco IOS/ASA, Palo Alto, FortiGate, VyOS, pfSense, OPNsense, MikroTik) and shows what changed since the last copy; a new admin, SNMP community, NAT or allow rule is HIGH; flags a changed device SSH key | `sh roles/network/NW-01-config-backup.sh --out ~/ccdc-out --hosts config/hosts.csv --password-env` |
 | Network config audit (NW-07) | Reads the saved device configs and flags telnet or plain-HTTP management, default SNMP communities, clear-text and type 7 passwords, management open to any address, any-to-any allow rules and default admins; lists every account. Touches no device | `sh roles/network/NW-07-config-audit.sh --out ~/ccdc-out` |
 | Device password rotation (NW-10) | Changes the login password on each firewall, router and switch (Cisco enable secret too, optionally) while keeping the first session open, tests the new password from a second session, then saves - or puts the old password back if the new one fails. New passwords only in a mode-600 file | `CCDC_NET_PASS=... sh roles/network/NW-10-device-passwords.sh --out ~/ccdc-out --hosts config/hosts.csv --apply` |
-| Windows collector (SH-06) | Read-only inventory of a Windows host: accounts and admins, listening ports and their programs, services, Run keys, debugger and sticky-keys backdoors, WMI subscriptions, tasks, weak settings (WDigest, UAC, SMBv1, Zerologon, RDP), firewall, Defender exclusions, processes, recent log clears and new admins. One-page summary, worst first | `powershell -NoProfile -ExecutionPolicy Bypass -File roles\windows-ad\SH-06-windows-collector.ps1 -Out C:\ccdc-out` |
-| Windows backup (WN-35) | Run first after the collector. Saves firewall rules, security policy, audit policy, tasks, key registry areas, IIS sites, DNS zones, DHCP, GPOs and SYSVOL, each with the command that puts it back; hashes everything; copies it off the box | `powershell -NoProfile -ExecutionPolicy Bypass -File roles\windows-ad\WN-35-backup.ps1 -Out C:\ccdc-out -CopyTo \\10.0.0.5\backups` |
+| Windows enum (SH-06) | Read-only inventory of a Windows host: accounts and admins, listening ports and their programs, services, Run keys, debugger and sticky-keys backdoors, WMI subscriptions, tasks, weak settings (WDigest, UAC, SMBv1, Zerologon, RDP), firewall, Defender exclusions, processes, recent log clears and new admins. One-page summary, worst first | `powershell -NoProfile -ExecutionPolicy Bypass -File roles\windows-ad\SH-06-windows-enum.ps1 -Out C:\ccdc-out` |
+| Windows backup (WN-35) | Run first after the enum. Saves firewall rules, security policy, audit policy, tasks, key registry areas, IIS sites, DNS zones, DHCP, GPOs and SYSVOL, each with the command that puts it back; hashes everything; copies it off the box | `powershell -NoProfile -ExecutionPolicy Bypass -File roles\windows-ad\WN-35-backup.ps1 -Out C:\ccdc-out -CopyTo \\10.0.0.5\backups` |
 | Windows password rotation (WN-20) | New passwords for every enabled local account (every domain user on a DC). Skips service accounts, the protected list and built-ins; `-Exclude` stops on a typo; `-Passwords` sets chosen ones. Passwords only in an admin-only file | `powershell -NoProfile -ExecutionPolicy Bypass -File roles\windows-ad\WN-20-password-rotation.ps1 -Out C:\ccdc-out -Apply -Exclude mark.jacobs` |
 | Windows safe fixes (WN-43) | Fixes that cannot break a scored service: SMBv1 and WDigest off, Zerologon enforced on DCs, UAC on, Guest off, sticky-keys and debugger backdoors, port forwards, WMI persistence, Defender exclusions removed, auditing on, and more. Every change recorded; `-Undo latest -Apply` puts the run back | `powershell -NoProfile -ExecutionPolicy Bypass -File roles\windows-ad\WN-43-safe-fixes.ps1 -Out C:\ccdc-out -Apply` |
 | Windows firewall (WN-25) | Default-deny inbound on every profile; opens scored, protected and safe listening ports and everything from the admin/scoring addresses; turns off allow-all and backdoor rules. Rolls itself back in 5 minutes unless kept from a new connection; `-Undo` restores the old firewall exactly | `powershell -NoProfile -ExecutionPolicy Bypass -File roles\windows-ad\WN-25-firewall.ps1 -Out C:\ccdc-out -Apply -AdminFrom 10.0.0.5` |
 
-The two shared libraries (`lib/lib.sh`, `lib/lib.ps1`) are also finished; every other script is built on them. Next up: Windows (collector, backup, safe fixes, passwords, firewall, change watch).
+The two shared libraries (`lib/lib.sh`, `lib/lib.ps1`) are also finished; every other script is built on them. Next up: see the tiers in `docs/PLAN.md` and the to-do notes in `docs/catalog.csv`.
 
 Nothing here has been run on real competition systems yet. Read "What has and hasn't been tested" before relying on it.
 
@@ -38,7 +40,7 @@ Each box needs the whole kit folder (scripts plus `lib/`); the single-file build
 ### Linux box (run as root on each box)
 
 1. `LX-31` backup, then `SV-14` if it has a database. Before anything changes.
-2. `SH-05` collector (and `SV-01` on web or database servers). Read the HIGH flags.
+2. `SH-05` enum (and `SV-01` on web or database servers). Read the HIGH flags.
 3. `LX-20` passwords. Protected list first; `--exclude` or `--passwords` for accounts the team must keep or set by hand.
 4. `LX-22` SSH keys and settings. Keep a second session open.
 5. `LX-39` safe fixes.
@@ -59,7 +61,7 @@ Works with Cisco IOS and ASA, Palo Alto, FortiGate, VyOS, pfSense, OPNsense and 
 
 Run in an elevated PowerShell window: `powershell -NoProfile -ExecutionPolicy Bypass -File <script> -Out C:\ccdc-out`. More scripts are being added in this order.
 
-1. `SH-06` collector. Read the HIGH flags first.
+1. `SH-06` enum. Read the HIGH flags first.
 2. `WN-35` backup, with `-CopyTo` a share off the box. Before anything changes.
 3. `WN-20` passwords. Dry run first; `-Exclude` the accounts the team keeps; scoring accounts on the protected list.
 4. `WN-43` safe fixes. `-Undo latest -Apply` puts the run back if anything breaks.
@@ -106,7 +108,7 @@ Every script follows the same rules, enforced by the libraries:
 sh tests/run-tests.sh
 
 # look at a Linux host (read-only)
-sudo sh roles/linux/SH-05-linux-collector.sh --out /root/ccdc-out --profile card
+sudo sh roles/linux/SH-05-linux-enum.sh --out /root/ccdc-out --profile card
 
 # try the template scripts (dry run; writes only to the folder you name)
 sh templates/script-template.sh --out /tmp/ccdc-out --debug
@@ -123,8 +125,8 @@ To add a script: copy a template into the right `roles/` folder, rename it to it
 | `lib.ps1` | Windows PowerShell 5.1 on real Windows (build 26100); PowerShell 7.4 on Linux; a pattern check for post-2.0 features | PowerShell 2.0 and 4.0 (Server 2008 R2, 2012) |
 | Network scan (SH-03) | All four engines (nmap 7.94, python, bash, nc) against test listeners on 127.0.0.1, under six shells | A real competition network; the udp and full profiles at scale |
 | Scan diff (SH-04) | Real SH-03 and SH-05 runs before and after planting a user, a cron entry and listeners, plus hand-made run folders, under six shells | Runs taken on a real competition network |
-| Linux collector (SH-05) | Ubuntu 24.04 as root and as an unprivileged user, under the same six shells; a planted SUID binary is flagged | RHEL, SUSE, Alpine, FreeBSD, Solaris |
-| Web and database inventory (SV-01) | Ubuntu 24.04 with Apache, nginx, PHP 8.3, MariaDB 10.11 and PostgreSQL 16 with planted problems, as root and as a normal user, under six shells and three awk versions | RHEL (httpd), FreeBSD, MySQL 8, IIS and MSSQL (Windows twin SV-03 not built yet) |
+| Linux enum (SH-05) | Ubuntu 24.04 as root and as an unprivileged user, under the same six shells; a planted SUID binary is flagged | RHEL, SUSE, Alpine, FreeBSD, Solaris |
+| Web and database enum (SV-01) | Ubuntu 24.04 with Apache, nginx, PHP 8.3, MariaDB 10.11 and PostgreSQL 16 with planted problems, as root and as a normal user, under six shells and three awk versions | RHEL (httpd), FreeBSD, MySQL 8, IIS and MSSQL (Windows twin SV-03 not built yet) |
 | Backup (LX-31) | Ubuntu 24.04 as root and as a normal user, under six shells; a file restored from the archive matches byte for byte; the hash list catches a later change; copy with scp | RHEL, Alpine, FreeBSD; copying to a real remote host |
 | Linux safe fixes (LX-39) | A fake root with planted problems and a stand-in sysctl, under six shells: dry run, apply, full undo, protected list, second run. Live apply on Ubuntu 24.04 with Apache, nginx, MariaDB and PostgreSQL still answering afterwards; rsyslog started through its init script | systemd and OpenRC service starts; RHEL, Alpine; a real IPv6 network |
 | Linux password rotation (LX-20) | Stand-in tools on a fake root under six shells: rotation, protected skip, locking, hidden-hash fix, no password leaks, full undo. Live with the real chpasswd and usermod: new passwords verify, old ones fail, the unlisted account is locked and expired | FreeBSD (pw), RHEL, Alpine; PAM password-quality rules |
@@ -136,7 +138,7 @@ To add a script: copy a template into the right `roles/` folder, rename it to it
 | Network config backup and diff (NW-01) | Against a real OpenSSH server (Linux profile: an added firewall rule shows as HIGH, its removal too); every vendor against sample output from a stand-in ssh under six shells, including unreachable devices, changed host keys, old-algorithm devices and password handling | Real Cisco, Palo Alto, FortiGate, VyOS, pfSense and MikroTik devices |
 | Network config audit (NW-07) | A planted-problem and a clean sample config for each of seven vendors under six shells and three awk versions: every planted weakness found, no HIGH or MED on the clean configs, secrets masked | Configs from real devices |
 | Device password rotation (NW-10) | Live against a real OpenSSH server (new password logs in, old one refused, nothing leaked). Every vendor, the Cisco privilege level, the Palo Alto hash, the enable secret and the automatic revert against a stand-in device under six shells | Real Cisco, Palo Alto, FortiGate, VyOS and MikroTik devices |
-| Windows collector (SH-06) | Four live runs on Windows 11 with Windows PowerShell 5.1, elevated and not (all sections in about 9 seconds); replayed data under PowerShell 7: a domain controller with about 70 planted problems (all found) and a clean workstation | A real server or domain controller |
+| Windows enum (SH-06) | Four live runs on Windows 11 with Windows PowerShell 5.1, elevated and not (all sections in about 9 seconds); replayed data under PowerShell 7: a domain controller with about 70 planted problems (all found) and a clean workstation | A real server or domain controller |
 | Windows backup (WN-35) | Windows 11 with Windows PowerShell 5.1, elevated: all eight workstation items saved in 6 seconds. PowerShell 7 on Linux with stand-in programs and a fake DC with IIS, DNS and DHCP: every item, RESTORE.txt, hashes, size limit, copy off the box, failures | A real server: IIS, DNS, DHCP, GPO and AD items |
 | Windows password rotation (WN-20) | PowerShell 7 against stand-in accounts: typo stop, exclusions, password sheet (spaces, commas, disabled and missing names), service and SPN accounts, protected list, rejected password, domain mode, killed mid-change | Real Windows (test on a throwaway VM) |
 | Windows safe fixes (WN-43) | PowerShell 7 against stand-in state of a badly configured DC: every fix, a second run changing nothing, `-Undo` restoring the exact starting state (twice: safe fixes and the `-Include` ones), protected items, failures, a fix that does not stick, a key that cannot be backed up | Real Windows (test on a throwaway VM) |
@@ -150,4 +152,7 @@ The Windows library passes its tests on Windows PowerShell 5.1. It is written to
 - [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md): rules for writing a script
 - [`docs/STATUS.md`](docs/STATUS.md): what is built
 - [`docs/CHANGELOG.md`](docs/CHANGELOG.md): what changed, and when
-- [`docs/catalog.csv`](docs/catalog.csv): all 142 planned scripts with role, wave and level
+- [`docs/PLAN.md`](docs/PLAN.md): the direction, tiers, risk labels and the countdown rule
+- [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md): what is scored, and what to watch on each box
+- [`AGENTS.md`](AGENTS.md): rules for anyone, person or AI, changing the repo
+- [`docs/catalog.csv`](docs/catalog.csv): the focused list of scripts with role, tier and risk

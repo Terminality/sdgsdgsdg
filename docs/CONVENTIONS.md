@@ -4,7 +4,8 @@ Rules for writing a script in this repository. The libraries enforce most of the
 
 ## Where a script lives and what it is called
 
-- One script per catalog entry. The ID, name, role and wave come from `docs/catalog.csv`.
+- Read `docs/PLAN.md` first: tiers, risk labels and the countdown rule.
+- One script per catalog entry. The ID, name, role, tier and risk come from `docs/catalog.csv`.
 - File: `roles/<role_dir>/<ID>-<short-name>.sh` or `.ps1`, for example `roles/linux/LX-20-password-rotation.sh`.
 - A script that covers both platforms is two files with the same ID, one `.sh` and one `.ps1`.
 - The ID never changes, even if the script moves to another role. The folder is the owner.
@@ -51,11 +52,11 @@ Every script starts with the header block from the template: ID, NAME, ROLE, KIN
 16. The team automation account is on the protected list.
 17. Detection output is layered: unusual items on screen, everything in the CSV.
 
-Detection and fixing are separate scripts. A detection script writes findings with `cc_finding` / `Add-CcFinding`, each with a fix ID and a class (`safe`, `service`, `protected`). A fix script reads that file.
+Detection and fixing are separate scripts. An enum script writes findings with `cc_finding` / `Add-CcFinding`, each with a fix ID and a risk (`safe`, `service`, `access`; see `docs/PLAN.md`). A fix script is made of named fixes, each runnable alone, and reads that file. An `access` fix never runs in bulk and uses the countdown that reverts unless confirmed from a new session.
 
 ## Inventory scripts
 
-Scripts that only look (collectors, audits) follow the Linux collector's pattern:
+Scripts that only look (enum scripts, audits) follow the Linux enum's pattern:
 
 - Call `cc_use_run_dir` / `Use-CcRunDir` after starting, so the run's files sit in one folder.
 - One CSV per section; keep raw tool output with `cc_save` / `Save-CcOutput`.

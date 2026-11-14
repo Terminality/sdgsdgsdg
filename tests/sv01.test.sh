@@ -1,5 +1,5 @@
 #!/bin/sh
-# Tests for roles/applications/SV-01-web-db-inventory.sh.
+# Tests for roles/applications/SV-01-web-db-enum.sh.
 # Builds a fake site (WordPress marker, web shell in uploads, database dump,
 # .env, .git, phpinfo page) and Apache and nginx config files pointing at it,
 # then runs the web sections with --apache-conf / --nginx-conf so the result
@@ -7,7 +7,7 @@
 # checked for running cleanly, since they depend on the machine.
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
-C="$T_ROOT/roles/applications/SV-01-web-db-inventory.sh"
+C="$T_ROOT/roles/applications/SV-01-web-db-enum.sh"
 export CCDC_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
