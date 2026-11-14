@@ -1,6 +1,6 @@
 # Scored services
 
-**These services come from past competitions and practice. They can change.** Check the team packet each time and update this file. OS and scoring accounts are guesses.
+**These services come from past competitions and practice. They are not set in stone.** Check the team packet each time and update this file. OS and scoring accounts are guesses.
 
 | Box | OS (guess) | Checks | Keep open |
 | --- | --- | --- | --- |
