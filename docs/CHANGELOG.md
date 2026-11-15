@@ -2,6 +2,12 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-14: Linux backup asks questions
+
+- LX-31 asks like sqlmap: which box (offers Splunk's config, the mail folders ...), web roots (listed with sizes), home dotfiles and keys, hashing system programs, and typed answers for extra paths, paths to leave out (new `--skip`) and where to copy it. Over `--max-mb` it asks instead of stopping.
+- LX-31 looks like the enum: sections as it goes, colours, numbered `backup-N` folders, `output.txt`, `included.txt`.
+- A folder holding a left-out path is split into its parts, so leaving something out works with every tar, busybox's included.
+
 ## 2026-11-14: dist/ committed; shell and line-ending fixes
 
 - `dist/` was left out by an old `.gitignore` line; it is committed now, with a test that fails if it is ignored again.

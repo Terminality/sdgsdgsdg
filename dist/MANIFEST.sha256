@@ -4,7 +4,7 @@ ada876c4b5cd9231f0c2c591e9eabea2e621c34a17db8faec0584ca901c6acab  applications/S
 caa89c80d0fbf26b2e5dc061e0e10c5dcafb008a25eeecf5c4dc848faebf136e  linux/LX-20-password-rotation.sh
 2dc26ed24797b505fbbd1bb5cd25d8ce947a3a80433d13854f56a12a472a36c4  linux/LX-22-ssh-hardening.sh
 75096c89dbb58855a93304bb1180ef8dbdd29b54adf1d7bd5c4a6cae919651aa  linux/LX-25-firewall.sh
-ec57f8561e441edda91cf4734b81b618b32788c220da84aadb32c3d9aa395da6  linux/LX-31-backup.sh
+4507df2f8aa05019f13bff30b463afac8d4b84eb6961f1cc1945552c63758612  linux/LX-31-backup.sh
 bf3d04e109e7a3afc73a5b5f9a7b9afe836b360318e11f6b3d48b580ed75010c  linux/LX-39-safe-fixes.sh
 1f5604efa5fb93d2cdd62872fb1eb5e4a4076da98ec6c8ddb170d1a3c0c62505  linux/LX-40-change-watch.sh
 f3d0b06186b4aaedba2db52408c79b93881215349aa0d6c14b283f0382f6997a  linux/SH-05-linux-enum.sh
