@@ -1,10 +1,10 @@
 #!/bin/sh
 # =============================================================================
 # ID:       SH-05
-# NAME:     Linux collector
+# NAME:     Linux enum
 # ROLE:     Linux  (wave 1)
 # KIND:     readonly - changes nothing on the host
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   One run shows what a Unix host is and what is on it: who can log in, what
@@ -14,14 +14,18 @@
 #   inventory injects reuse its CSV files.
 #
 #   Output is layered so it is thorough without being overwhelming (rule 17):
-#     screen / summary.txt   one page: key facts, a count per section, and only
-#                            the HIGH and MEDIUM flags, worst first
+#     screen (live)          like linpeas: a header per section as it runs,
+#                            then what it found.  Red [!] FIX = HIGH, fix now;
+#                            yellow [*] LOOK = MED, look soon; grey = info.
+#                            Same text without colour in output.txt
+#     summary.txt            one page at the end: key facts, a count per
+#                            section, and the HIGH and MED flags, worst first
 #     <section>.csv          everything collected, one file per section
 #     flags.csv              every flag including LOW, with the reason
 #     raw/*.txt              untouched tool output (iptables-save, sshd -T ...)
 #
 # USAGE
-#   sh SH-05-linux-collector.sh [options]
+#   sh SH-05-linux-enum.sh [options]
 #   Run as root.  It works as a normal user, but several sections are then
 #   incomplete (shadow file, sudoers, other users' processes); the summary
 #   says which.
@@ -37,18 +41,25 @@
 #   --only a,b,c     run only these sections (names from --list)
 #   --skip a,b,c     run the profile without these sections
 #   --fast           skip the slow whole-disk searches (files, creds)
-#   --max-flags N    how many HIGH/MED flags to print on screen (default 30)
+#   --max-flags N    how many HIGH/MED flags to print in the end summary (default 30)
+#   --low            also show LOW flags live (they are always in flags.csv)
+#   --no-color       no colours (also off when the output is not a terminal,
+#                    or when NO_COLOR is set)
 #   --list           list the sections and exit
 #   --help           this text plus the common options
 #   Common options (--out, --debug, --quiet ...) come from the library.
 #
 # OUTPUTS  (under the --out folder; never next to this script)
-#   SH-05_<host>_<UTC time>.log                  log of the run
-#   SH-05_<host>_<UTC time>/summary.txt          the one-page summary
-#   SH-05_<host>_<UTC time>/flags.csv            severity,section,item,detail,time
-#   SH-05_<host>_<UTC time>/<section>.csv        see the manual for columns
-#   SH-05_<host>_<UTC time>/raw/*.txt            raw tool output
-#   SH-05_<host>_<UTC time>/logs/                copied logs (triage only)
+#   One numbered folder per run: linux-enum-1, linux-enum-2, ... (the higher
+#   the number, the newer the run)
+#   SH-05_<host>_<UTC time>.log      log of the run (in the --out folder)
+#   linux-enum-N/output.txt          everything shown live, without colour
+#   linux-enum-N/summary.txt         the one-page summary
+#   linux-enum-N/flags.csv           severity,section,item,detail,time
+#   linux-enum-N/<section>.csv       see the manual for columns
+#   linux-enum-N/raw/*.txt           raw tool output
+#   linux-enum-N/logs/               copied logs (triage only)
+#   linux-enum-N/run.txt             id, host and start time (read by SH-04)
 #
 # WHAT IT CHANGES
 #   Nothing.  It only reads.  It never prints or stores a password value:
@@ -105,14 +116,16 @@ PROFILE_TRIAGE="$PROFILE_FULL logs"
 
 usage() {
     cat <<'USAGE'
-SH-05 Linux collector - read-only inventory of a Unix host
-  sh SH-05-linux-collector.sh [options]
+SH-05 Linux enum - read-only look at a Unix host
+  sh SH-05-linux-enum.sh [options]
 
   --profile card|full|triage   how much to collect (default full)
   --only a,b,c                 run only these sections
   --skip a,b,c                 leave these sections out
   --fast                       skip the slow disk searches (files, creds)
-  --max-flags N                HIGH/MED flags shown on screen (default 30)
+  --max-flags N                HIGH/MED flags in the end summary (default 30)
+  --low                        also show LOW flags live
+  --no-color                   no colours
   --list                       list the sections and exit
   --help                       show this text
 
@@ -151,6 +164,8 @@ ONLY=""
 SKIP=""
 FAST=0
 MAXFLAGS=30
+SHOWLOW=0
+COLOR=1
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
@@ -159,6 +174,8 @@ while [ $# -gt 0 ]; do
         --skip)      [ $# -ge 2 ] || cc_die 2 "--skip needs a list of sections"; SKIP=$2; shift 2 ;;
         --fast)      FAST=1; shift ;;
         --max-flags) [ $# -ge 2 ] || cc_die 2 "--max-flags needs a number"; MAXFLAGS=$2; shift 2 ;;
+        --low)       SHOWLOW=1; shift ;;
+        --no-color|--no-colour) COLOR=0; shift ;;
         --list)      list_sections; exit 0 ;;
         --help|-h)   usage; exit 0 ;;
         *)           cc_die 2 "unknown option: $1 (try --help)" ;;
@@ -200,11 +217,32 @@ if [ "$FAST" = 1 ]; then
 fi
 
 # ---- Start ------------------------------------------------------------------
-cc_init "SH-05" "Linux collector" readonly
-cc_use_run_dir
+cc_init "SH-05" "Linux enum" readonly
+cc_use_numbered_dir linux-enum
 cc_detect_os
 W="$CC_RUN_DIR/.work"          # scratch files; removed at the end
 mkdir -p "$W" || cc_die 3 "cannot create $W"
+
+# ---- Live output (linpeas style) ---------------------------------------------
+# Printed to file descriptor 3, a copy of the real stdout taken here, so a
+# flag raised inside $( ... ) still reaches the screen instead of ending up
+# in the captured text.  output.txt gets the same lines without colour.
+exec 3>&1
+OUTF="$CC_RUN_DIR/output.txt"
+: >"$OUTF"
+if [ "$COLOR" = 1 ] && [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    C_RED=$(printf '\033[1;31m'); C_YEL=$(printf '\033[1;33m'); C_GRN=$(printf '\033[1;32m')
+    C_CYN=$(printf '\033[1;36m'); C_GRY=$(printf '\033[0;90m'); C_OFF=$(printf '\033[0m')
+else
+    C_RED=""; C_YEL=""; C_GRN=""; C_CYN=""; C_GRY=""; C_OFF=""
+fi
+# show COLOUR TEXT -> one line on screen in COLOUR, and plain in output.txt.
+show() {
+    printf '%s%s%s\n' "$1" "$2" "$C_OFF" >&3
+    printf '%s\n' "$2" >>"$OUTF"
+}
+show "$C_CYN" "SH-05 Linux enum | host $CC_HOST | profile $PROFILE | results in $CC_RUN_DIR"
+show "" "Legend: ${C_RED}[!] FIX${C_OFF} fix now (HIGH)   ${C_YEL}[*] LOOK${C_OFF} look soon (MED)   ${C_GRY}grey${C_OFF} info"
 IS_ROOT=0
 cc_is_root && IS_ROOT=1
 [ "$IS_ROOT" = 1 ] || cc_warn "not running as root: users, sudo, ports, processes and files will be incomplete"
@@ -245,7 +283,16 @@ sec_csv() {
 }
 
 # flag SEVERITY ITEM DETAIL  -> cc_flag with the current section filled in.
-flag() { cc_flag "$1" "$SEC" "$2" "$3"; }
+#   Also shows it live: HIGH red, MED yellow, LOW grey (only with --low).
+flag() {
+    cc_flag "$1" "$SEC" "$2" "$3"
+    case "$1" in
+        HIGH) show "$C_RED" "  [!] FIX   $2: $3" ;;
+        MED)  show "$C_YEL" "  [*] LOOK  $2: $3" ;;
+        LOW)  [ "$SHOWLOW" = 1 ] && show "$C_GRY" "  [-] info  $2: $3" ;;
+    esac
+    return 0
+}
 
 # emit_flags FILE  -> turn lines "SEVERITY|ITEM|DETAIL" (written by an awk
 #   program) into flags.  Lets awk do the checking without a loop per line.
@@ -257,7 +304,7 @@ emit_flags() {
 }
 
 # say TEXT  -> add a line to the summary's key-facts block.
-say() { printf '%s\n' "$*" >>"$W/summary_lines"; }
+say() { printf '%s\n' "$*" >>"$W/summary_lines"; show "$C_GRN" "  $*"; }
 
 # note TEXT -> attach a short note to this section's row in the summary table
 #   (for example "partial: not root").
@@ -419,6 +466,9 @@ s_users() {
             print "Accounts that can log in: " (logins == "" ? "none" : logins) >> sumf
             print "Admins (UID 0 or sudo/wheel/admin group): " (admins == "" ? "none" : admins) >> sumf
         }' /etc/passwd >"$W/f_users"
+    # The awk above wrote its two summary lines straight to the file; show them.
+    tail -n 2 "$W/summary_lines" >"$W/users_said"
+    while IFS= read -r _l; do show "$C_GRN" "  $_l"; done <"$W/users_said"
     emit_flags "$W/f_users"
 }
 
@@ -1443,10 +1493,19 @@ s_logs() {
 # Run the sections and write the summary
 # =============================================================================
 
+# nflags SEVERITY -> how many flags of that severity flags.csv holds so far.
+nflags() {
+    if [ -f "$CC_RUN_DIR/flags.csv" ]; then grep -c "^\"$1\"" "$CC_RUN_DIR/flags.csv"; else echo 0; fi
+    return 0
+}
+
 run_section() {
     SEC=$1; SEC_FILES=""; SEC_NOTE=""
     _rs_n=$((_rs_n + 1))
-    cc_info "[$_rs_n/$_rs_total] $SEC"
+    cc_note "[$_rs_n/$_rs_total] $SEC"
+    show "" ""
+    show "$C_CYN" "==========[ $_rs_n/$_rs_total  $SEC ]=========="
+    _rs_hi0=$(nflags HIGH); _rs_me0=$(nflags MED)
     _rs_t0=$(date +%s 2>/dev/null)
     "s_$SEC"
     _rs_t1=$(date +%s 2>/dev/null)
@@ -1455,6 +1514,12 @@ run_section() {
         [ -f "$_f" ] && _rows=$((_rows + $(wc -l <"$_f") - 1))
     done
     cc_debug "section $SEC: $_rows rows in $((${_rs_t1:-0} - ${_rs_t0:-0}))s"
+    _rs_hi=$(( $(nflags HIGH) - _rs_hi0 ))
+    _rs_me=$(( $(nflags MED) - _rs_me0 ))
+    [ "$_rs_hi" -eq 0 ] && [ "$_rs_me" -eq 0 ] && show "$C_GRN" "  [ok] nothing to fix here"
+    _rs_files=""
+    for _f in $SEC_FILES; do [ -f "$_f" ] && _rs_files="$_rs_files $(basename "$_f")"; done
+    show "$C_GRY" "  ($_rows rows${_rs_files:+ ->$_rs_files}${SEC_NOTE:+; $SEC_NOTE})"
     printf '%s|%s|%s\n' "$SEC" "$_rows" "$SEC_NOTE" >>"$W/sections"
 }
 
@@ -1470,7 +1535,7 @@ _flagsf="$CC_RUN_DIR/flags.csv"
 # shellcheck disable=SC2034
 CC_FLAGS=$_flagsf
 {
-    printf 'SH-05 Linux collector | host %s | %s | profile %s | root: %s\n' "$CC_HOST" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PROFILE" "$([ "$IS_ROOT" = 1 ] && echo yes || echo NO - partial)"
+    printf 'SH-05 Linux enum | host %s | %s | profile %s | root: %s\n' "$CC_HOST" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PROFILE" "$([ "$IS_ROOT" = 1 ] && echo yes || echo NO - partial)"
     printf 'OS: %s | kernel %s | init %s\n\n' "$CC_OS_NAME" "$(uname -r 2>/dev/null)" "$CC_INIT"
     cat "$W/summary_lines"
     printf '\n'
@@ -1488,6 +1553,9 @@ CC_FLAGS=$_flagsf
     cc_flag_report "$MAXFLAGS"
     printf '\nAll results: %s\n' "$CC_RUN_DIR"
 } >"$CC_RUN_DIR/summary.txt"
+show "" ""
+show "$C_CYN" "==========[ SUMMARY ]=========="
 cat "$CC_RUN_DIR/summary.txt"
+cat "$CC_RUN_DIR/summary.txt" >>"$OUTF"
 rm -rf "$W"
 cc_finish

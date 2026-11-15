@@ -20,6 +20,7 @@
 # USAGE
 #   sh SH-04-scan-diff.sh [--out DIR]                    newest two SH-03 runs
 #   sh SH-04-scan-diff.sh --type sh05 --host web01       newest two SH-05 runs of web01
+#                                                        (linux-enum-N folders too)
 #   sh SH-04-scan-diff.sh --old DIR1 --new DIR2          two specific run folders
 #
 # OPTIONS
@@ -115,28 +116,40 @@ if [ -n "$OLD$NEW" ] && { [ -z "$OLD" ] || [ -z "$NEW" ]; }; then cc_die 2 "give
 cc_init "SH-04" "Scan diff" readonly
 [ -n "$RUNS" ] || RUNS=$CC_OUT
 
-# run_type DIR -> sh03 or sh05 from the folder name, e.g. SH-05_web01_2026...
+# Run folders come in two shapes:
+#   SH-05_web01_20261111T140000Z   older runs: ID, host and time in the name
+#   linux-enum-3                   numbered runs: ID, host and time in run.txt
+# run_info DIR KEY -> a value from DIR/run.txt (id, host or time).
+run_info() { sed -n "s/^$2=//p" "$1/run.txt" 2>/dev/null | head -n 1; }
+# run_type DIR -> sh03 or sh05.
 run_type() {
     case "$(basename "$1")" in
         SH-03_*) echo sh03 ;;
-        SH-05_*) echo sh05 ;;
+        SH-05_*|linux-enum-*) echo sh05 ;;
         *) echo "" ;;
     esac
 }
-# run_host DIR -> the host part of a run folder name.  Folder names are
-#   <ID>_<host>_<UTC time>, so strip the ID in front and the time at the end
-#   (this keeps hosts whose names contain "_" whole).
-run_host() { basename "$1" | sed 's/^SH-0[0-9]_//; s/_[^_]*$//'; }
-# run_time DIR -> the time part, e.g. 20261111T140000Z.  The format sorts in
-#   time order as plain text.
-run_time() { basename "$1" | sed 's/^.*_//'; }
+# run_host DIR -> the host the run was made on.  For named folders strip the
+#   ID in front and the time at the end (keeps hosts whose names contain "_").
+run_host() {
+    if [ -f "$1/run.txt" ]; then run_info "$1" host
+    else basename "$1" | sed 's/^SH-0[0-9]_//; s/_[^_]*$//'
+    fi
+}
+# run_time DIR -> start time, e.g. 20261111T140000Z.  Sorts in time order as
+#   plain text.
+run_time() {
+    if [ -f "$1/run.txt" ]; then run_info "$1" time
+    else basename "$1" | sed 's/^.*_//'
+    fi
+}
 
 if [ -n "$OLD" ]; then
     [ -d "$OLD" ] || cc_die 2 "not a folder: $OLD"
     [ -d "$NEW" ] || cc_die 2 "not a folder: $NEW"
     OLD=$(cc_abspath "$OLD"); NEW=$(cc_abspath "$NEW")
     TYPE=$(run_type "$NEW")
-    [ -n "$TYPE" ] || cc_die 2 "$NEW is not an SH-03 or SH-05 run folder (its name must start with SH-03_ or SH-05_)"
+    [ -n "$TYPE" ] || cc_die 2 "$NEW is not an SH-03 or SH-05 run folder (its name must start with SH-03_, SH-05_ or linux-enum-). To see what a fix script changed, run the enum again and compare the two enum runs"
     [ "$(run_type "$OLD")" = "$TYPE" ] || cc_die 2 "the two folders are from different scripts: $(basename "$OLD") and $(basename "$NEW")"
 else
     [ -n "$TYPE" ] || TYPE=sh03
@@ -148,8 +161,9 @@ else
     # from one admin box); for SH-05 both runs must be of the same host.
     _tab=$(printf '\t')
     _cands=""
-    for _d in "$RUNS"/"$_prefix"_*; do
+    for _d in "$RUNS"/"$_prefix"_* "$RUNS"/linux-enum-*; do
         [ -d "$_d" ] && [ -f "$_d/summary.txt" ] || continue
+        [ "$(run_type "$_d")" = "$TYPE" ] || continue
         _cands="$_cands$(run_time "$_d")$_tab$(run_host "$_d")$_tab$_d
 "
     done

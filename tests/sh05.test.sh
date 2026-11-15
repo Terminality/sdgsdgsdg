@@ -19,9 +19,18 @@ r=$(run --help 2>&1); t_has "$r" "--profile" "--help shows the options"
 
 t_start "card profile runs and writes its files"
 r=$(run --out "$T_TMP/o1" --profile card 2>"$T_TMP/err1"); t_eq "$?" 0 "exits 0"
-RUN=$(ls -d "$T_TMP"/o1/SH-05_*/ 2>/dev/null | head -n 1)
+RUN=$(ls -d "$T_TMP"/o1/linux-enum-*/ 2>/dev/null | head -n 1)
 for f in summary.txt flags.csv facts.csv users.csv ports.csv services.csv autostart.csv sudo.csv; do t_file "$RUN/$f" "$f written"; done
 t_has "$r" "section        rows" "summary table printed"
+t_has "$r" "==========[ 1/7  system ]==========" "a header per section, printed live"
+t_has "$r" "[ok] nothing to fix here" "a section with nothing to fix says so"
+t_hasnt "$r" "$(printf '\033')" "no colour codes when the output is not a terminal"
+t_eq "$RUN" "$T_TMP/o1/linux-enum-1/" "the first run folder is linux-enum-1"
+t_file "$RUN/output.txt" "output.txt written"
+t_has "$(cat "$RUN/output.txt")" "==========[ 2/7  users ]==========" "output.txt has the live output"
+t_has "$(cat "$RUN/run.txt")" "id=SH-05" "run.txt records the ID"
+run --out "$T_TMP/o1" --only system >/dev/null 2>&1
+t_file "$T_TMP/o1/linux-enum-2/summary.txt" "the next run is linux-enum-2"
 t_has "$r" "Accounts that can log in:" "users summary line printed"
 t_fail "card does not run the slow sections" test -f "$RUN/suid.csv"
 t_fail "work folder removed" test -d "$RUN/.work"
@@ -31,10 +40,10 @@ t_hasnt "$(cat "$RUN"/*.csv "$T_TMP"/o1/*.log)" '$6$' "no password hash anywhere
 
 t_start "--only and --skip"
 run --out "$T_TMP/o2" --only system,users >/dev/null 2>&1; t_eq "$?" 0 "--only exits 0"
-R2=$(ls -d "$T_TMP"/o2/SH-05_*/ | head -n 1)
+R2=$(ls -d "$T_TMP"/o2/linux-enum-*/ | head -n 1)
 t_file "$R2/users.csv" "--only ran users"; t_fail "--only skipped ports" test -f "$R2/ports.csv"
 run --out "$T_TMP/o3" --profile card --skip ports,sudo >/dev/null 2>&1
-R3=$(ls -d "$T_TMP"/o3/SH-05_*/ | head -n 1)
+R3=$(ls -d "$T_TMP"/o3/linux-enum-*/ | head -n 1)
 t_fail "--skip left ports out" test -f "$R3/ports.csv"; t_file "$R3/users.csv" "--skip kept the rest"
 
 t_start "planted problems are flagged (root only)"
@@ -46,7 +55,7 @@ if [ "$(id -u)" = 0 ]; then
     cp "$_fb" "$P/find" && chmod 4755 "$P/find"
     printf 'type,value,note\n' >"$P/dummy"
     run --out "$T_TMP/o4" --only files >/dev/null 2>&1; t_eq "$?" 0 "files section exits 0"
-    R4=$(ls -d "$T_TMP"/o4/SH-05_*/ | head -n 1)
+    R4=$(ls -d "$T_TMP"/o4/linux-enum-*/ | head -n 1)
     t_ok "planted SUID copy of find is in suid.csv" grep -q "$P/find" "$R4/suid.csv"
     t_ok "planted SUID copy of find is flagged HIGH" grep -q "\"HIGH\",\"files\",\"$P/find\"" "$R4/flags.csv"
     rm -f "$P/find"

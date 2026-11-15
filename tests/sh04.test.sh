@@ -67,6 +67,22 @@ t_has "$f" '"HIGH","autostart","/etc/cron.d/x | root | * * * * * /tmp/.x"' "new 
 t_has "$f" '"HIGH","ports","tcp | 0.0.0.0 | 31337"' "backdoor port listening is HIGH"
 t_hasnt "$f" '"ports","tcp | 0.0.0.0 | 22"' "a PID change alone is not a change"
 
+t_start "numbered linux-enum-N runs"
+mk linux-enum-1 users.csv 'user,uid,gid,home,shell,can_login,password,groups' '"root","0","0","/root","/bin/bash","yes","set","root"'
+mk linux-enum-2 users.csv 'user,uid,gid,home,shell,can_login,password,groups' '"root","0","0","/root","/bin/bash","yes","set","root"' '"evil","0","0","/tmp","/bin/sh","yes","set","root"'
+printf 'id=SH-05\nhost=web01\ntime=20261111T160000Z\n' >"$R/linux-enum-1/run.txt"
+printf 'id=SH-05\nhost=web01\ntime=20261111T170000Z\n' >"$R/linux-enum-2/run.txt"
+out=$(run --runs "$R" --out "$O" --type sh05 2>&1); t_eq "$?" 0 "exit 0"
+t_has "$out" "Earlier: linux-enum-1" "numbered runs are picked up, older first"
+t_has "$out" "Later:   linux-enum-2" "and the newest is linux-enum-2"
+d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
+t_has "$(cat "$d/flags.csv")" '"HIGH","users","evil"' "a new root account between numbered runs is HIGH"
+out=$(run --old "$R/linux-enum-1" --new "$R/linux-enum-2" --out "$O" 2>&1); t_eq "$?" 0 "--old/--new with numbered folders works"
+out=$(run --old "$R/$A" --new "$R/linux-enum-2" --out "$O" 2>&1); t_eq "$?" 0 "an old-style and a numbered run can be compared"
+mkdir -p "$R/LX-39_web01_20261111T170000Z"
+out=$(run --old "$R/$A" --new "$R/LX-39_web01_20261111T170000Z" --out "$O" 2>&1); t_eq "$?" 2 "a fix script's run folder exits 2"
+t_has "$out" "run the enum again" "and says to run the enum again"
+
 t_start "explicit folders and errors"
 out=$(run --old "$R/$A" --new "$R/$B" --out "$O" 2>&1); t_eq "$?" 0 "--old/--new works"
 run --old "$R/$A" --out "$O" >/dev/null 2>&1; t_eq "$?" 2 "--old without --new exits 2"

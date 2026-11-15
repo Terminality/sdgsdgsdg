@@ -734,6 +734,33 @@ cc_use_run_dir() {
     cc_debug "run folder: $CC_RUN_DIR"
 }
 
+# cc_use_numbered_dir NAME  -> <out>/NAME-1, NAME-2, ... (next free number)
+#   Same as cc_use_run_dir, but the folder is named by a plain counter so it
+#   is easy to see which run came first.  The ID, host and start time go in
+#   <folder>/run.txt (id=, host=, time=), which SH-04 reads to match runs.
+cc_use_numbered_dir() {
+    _cc_nd_max=0
+    for _cc_nd_d in "$CC_OUT/$1"-*; do
+        [ -d "$_cc_nd_d" ] || continue
+        _cc_nd_x=${_cc_nd_d##*-}
+        case "$_cc_nd_x" in ''|*[!0-9]*) continue ;; esac
+        [ "$_cc_nd_x" -gt "$_cc_nd_max" ] && _cc_nd_max=$_cc_nd_x
+    done
+    # mkdir fails if the folder exists, so two runs started together still
+    # get different numbers.
+    _cc_nd_n=$((_cc_nd_max + 1))
+    while ! (umask 077; mkdir "$CC_OUT/$1-$_cc_nd_n" 2>/dev/null); do
+        [ -d "$CC_OUT/$1-$_cc_nd_n" ] || cc_die 3 "cannot create run folder $CC_OUT/$1-$_cc_nd_n (check that $CC_OUT is writable)"
+        _cc_nd_n=$((_cc_nd_n + 1))
+        [ "$_cc_nd_n" -le $((_cc_nd_max + 99)) ] || cc_die 3 "cannot find a free number for $CC_OUT/$1-N"
+    done
+    CC_RUN_DIR="$CC_OUT/$1-$_cc_nd_n"
+    (umask 077; mkdir -p "$CC_RUN_DIR/raw") || cc_die 3 "cannot create run folder $CC_RUN_DIR"
+    printf 'id=%s\nhost=%s\ntime=%s\n' "$CC_ID" "$CC_HOST" "$CC_TS" >"$CC_RUN_DIR/run.txt"
+    CC_CSV_DIR=$CC_RUN_DIR
+    cc_debug "run folder: $CC_RUN_DIR"
+}
+
 # cc_save NAME COMMAND [ARG...]
 #   Run a READ-ONLY command and keep its untouched output in
 #   <run folder>/raw/NAME.txt (or <out>/<ID>_<host>_<time>_NAME.txt without a
