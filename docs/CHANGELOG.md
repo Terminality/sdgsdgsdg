@@ -2,6 +2,10 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-14: Network scan checks for nmap
+
+- SH-03 says up front whether nmap is installed. If not, it explains what you lose, prints the install command for this box and asks whether to keep going with the fallback. `--engine nmap` without nmap stops with the install command.
+
 ## 2026-11-14: Network scan: more questions
 
 - SH-03 also asks how aggressive (nmap timing 1-5, `--speed`), how many top ports (`--top-ports`), extra ports to always scan (`--extra-ports`), which hosts get the full scan (asked after the quick scan, `--full-hosts`), and whether to run only safe vuln scripts or all of them (`--vuln-all`).

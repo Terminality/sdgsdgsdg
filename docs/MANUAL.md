@@ -591,7 +591,7 @@ Then it runs nmap in stages and shows nmap's own output as it goes: quick scan, 
 | `--engine` | Force `nmap`, `python`, `bash` or `nc` |
 | `--no-dns` / `--pn` | Skip name lookups / treat every address as up |
 
-**Without nmap** it falls back to python3, then bash, then `nc -z`: 53 common TCP ports, a banner instead of a version, no scripts, no UDP, at most 1024 addresses.
+**It checks for nmap first.** If nmap is missing it says so, prints the install command for your box (`sudo apt install nmap`, `dnf`, `yum`, `zypper`, `apk`, `pacman`) and asks whether to keep going without it. **Without nmap** it falls back to python3, then bash, then `nc -z`: 53 common TCP ports, a banner instead of a version, no scripts, no UDP, at most 1024 addresses.
 
 ### What it produces
 
