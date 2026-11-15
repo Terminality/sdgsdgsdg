@@ -1,6 +1,6 @@
 # Linux — hosts + services
 
-Scripts owned by this role. 8 of 10 are built.
+Scripts owned by this role. 9 of 11 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -15,6 +15,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LX-21 | Account lockdown (Linux) | Hardening: hard | access | planned |  |
 | LX-20 | Linux password rotation | Management | access | built | [`roles/linux/LX-20-password-rotation.sh`](../../roles/linux/LX-20-password-rotation.sh) |
 | LX-40 | Linux alerts | Alerts | none | built | [`roles/linux/LX-40-change-watch.sh`](../../roles/linux/LX-40-change-watch.sh) |
+| LX-41 | Linux session & command logging | Alerts | none | built | [`roles/linux/LX-41-session-log.sh`](../../roles/linux/LX-41-session-log.sh) |
 | SV-26 | Brute-force and spam banning | Alerts | service | built | [`roles/linux/SV-26-banning.sh`](../../roles/linux/SV-26-banning.sh) |
 
 Script files in this folder are named `<ID>-<short-name>.sh` or `.ps1`. What the tiers and risk levels mean, and the rules for each: `docs/PLAN.md`.
