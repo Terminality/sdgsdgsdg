@@ -2038,6 +2038,14 @@ sudo sh LX-41-session-log.sh --setup-auditd         # turn on full command loggi
 
 Privileged commands (`sudo`/`su`) are always captured from the auth log. **Every** command needs auditd. The script says whether auditd is on and, if not, prints the one rule to add — or adds it with `--setup-auditd`.
 
+### Catching a web shell
+
+A web server almost never runs shell commands, so LX-41 treats the web layer specially:
+
+- **A command run by the web-server account** (`www-data`, `apache`, `nginx`, `httpd`, ...) is always **HIGH** — that is the web shell executing. `--web-user NAME` adds accounts.
+- **Where a process runs from:** a program or working folder in `/tmp`, `/var/tmp`, `/dev/shm`, a web root, or a deleted binary is **HIGH**.
+- **The web access log** (apache/nginx, auto-found, or `--access-log FILE`) goes to `web.log`, and these requests alert: a known web-shell filename (`wso.php`, `c99.php`, ...), command-injection markers (`cmd=`, `shell_exec`, `base64_decode`, `;id`, `/bin/sh`, ...), and a request to a script that was **dropped into a web root after watching began** (`--webroot DIR` maps the URL to the file). So you see each command the attacker sends to the shell.
+
 ### Your own commands don't flood the alerts
 
 An **admin allowlist** decides what reaches the console. It starts from the `sudo`/`wheel`/`adm` group members plus whoever is running the script, and you add to it with `--admin "alice bob"` or `--admin-file`. For those accounts, a normal login or command is **logged but not alerted**. It only alerts on them if the command itself is dangerous. Everyone else alerts.

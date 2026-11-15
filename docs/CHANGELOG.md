@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-15: LX-41 web-shell and process-origin detection
+
+- A command run by a web-server account (`www-data`, `apache`, `nginx`, ...) is now always HIGH: that is the web shell executing. `--web-user` adds accounts.
+- A process whose folder or program is in `/tmp`, `/var/tmp`, `/dev/shm`, a web root, or is a deleted binary is flagged HIGH ("where it runs from").
+- New web section: reads apache/nginx access logs (auto-found, or `--access-log`) into `web.log` and alerts on requests to a known web-shell filename, requests with command-injection markers (`cmd=`, `shell_exec`, `base64_decode`, `;id`, `/bin/sh`, ...), and requests to a script that was dropped into a web root after watching began (`--webroot` maps the URL to the file). Still read-only.
+- Tested under six shells: web-user command, process origin, injection request, known shell name, dropped-shell request, and that plain requests are only logged.
+
 ## 2026-11-15: Linux session & command logging (LX-41)
 
 - New read-only monitor: reads the auth log and, when auditd is recording execve, the audit log. Logs every login (with source address and key vs password), failed and brute-force attempts, sudo/su and the command each sudo ran, and every command, to `logins.log`, `priv.log` and `commands.log` in a stable `sesslog-<host>/` folder. Privileged commands are captured even without auditd.

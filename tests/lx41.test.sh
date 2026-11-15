@@ -15,7 +15,7 @@ O="$T_TMP/out"; R="$T_TMP/root"; ST="$T_TMP/state"
 mkdir -p "$O" "$R/var/log/audit" "$R/etc"
 AUTH="$R/var/log/auth.log"; AUDIT="$R/var/log/audit/audit.log"
 
-printf 'root:x:0:0::/root:/bin/bash\nalice:x:1000:1000::/home/alice:/bin/bash\nbob:x:1001:1001::/home/bob:/bin/bash\n' >"$R/etc/passwd"
+printf 'root:x:0:0::/root:/bin/bash\nalice:x:1000:1000::/home/alice:/bin/bash\nbob:x:1001:1001::/home/bob:/bin/bash\nwww-data:x:33:33::/var/www:/usr/sbin/nologin\n' >"$R/etc/passwd"
 printf 'root:x:0:\nsudo:x:27:alice\n' >"$R/etc/group"
 
 t_start "options"
@@ -107,4 +107,41 @@ rm -f "$AUDIT"
 r=$(run --out "$O" --state "$T_TMP/state5" --root "$R" --from-start --no-color 2>&1)
 t_has "$r" "auditd is not logging commands" "says auditd is off"
 t_has "$r" "--setup-auditd" "and how to turn it on"
+
+# ---- web shell: web-user commands, process origin, access log ---------------
+mkdir -p "$R/var/www/html/uploads" "$R/var/log/apache2"
+t_start "web shell: command by the web-server user, and process origin"
+cat >"$AUDIT" <<'EOF2'
+type=SYSCALL msg=audit(1731631100.1:400): arch=c000003e syscall=59 success=yes uid=33 tty=pts9 comm="id" exe="/usr/bin/id" key="ccdc_cmd"
+type=EXECVE msg=audit(1731631100.1:400): argc=1 a0="id"
+type=CWD msg=audit(1731631100.1:400): cwd="/var/www/html"
+type=SYSCALL msg=audit(1731631100.2:401): arch=c000003e syscall=59 success=yes uid=1000 tty=pts0 comm="x" exe="/tmp/.x" key="ccdc_cmd"
+type=EXECVE msg=audit(1731631100.2:401): argc=1 a0="/tmp/.x"
+type=CWD msg=audit(1731631100.2:401): cwd="/tmp"
+EOF2
+STW="$T_TMP/stateweb"
+r=$(run --out "$O" --state "$STW" --root "$R" --from-start --no-color 2>&1)
+t_ok "a command by the web-server user is HIGH (web shell)" grep -q 'HIGH commands www-data .* web server account ran a command (web shell?): id' "$STW/alerts.log"
+t_ok "a process running from /tmp is HIGH" grep -q 'HIGH commands alice .* process running from program /tmp/.x' "$STW/alerts.log"
+
+t_start "web shell: the access log"
+cat >"$R/var/log/apache2/access.log" <<'EOF2'
+10.0.0.5 - - [15/Nov/2026:00:10:01 -0500] "GET /index.html HTTP/1.1" 200 120 "-" "Mozilla"
+10.9.9.9 - - [15/Nov/2026:00:10:02 -0500] "GET /app.php?cmd=id;whoami HTTP/1.1" 200 12 "-" "curl/8"
+10.9.9.9 - - [15/Nov/2026:00:10:03 -0500] "POST /wso.php HTTP/1.1" 200 44 "-" "curl/8"
+10.9.9.9 - - [15/Nov/2026:00:10:04 -0500] "POST /uploads/evil.php HTTP/1.1" 200 9 "-" "curl/8"
+EOF2
+STW2="$T_TMP/stateweb2"
+mkdir -p "$STW2"; : >"$STW2/.started"; sleep 1
+printf '<?php system($_GET[c]); ?>\n' >"$R/var/www/html/uploads/evil.php"   # dropped after .started
+r=$(run --out "$O" --state "$STW2" --root "$R" --from-start --no-color 2>&1)
+t_has "$r" "watching web access log(s)" "finds the access log"
+t_file "$STW2/web.log" "web.log written"
+A2="$STW2/alerts.log"
+t_ok "a command-injection request is HIGH" grep -q 'HIGH web .*10.9.9.9 GET /app.php .* command-injection' "$A2"
+t_ok "a known web-shell filename is HIGH" grep -q 'HIGH web .* request to a known web-shell filename (wso.php)' "$A2"
+t_ok "a request to a newly dropped script is HIGH" grep -q 'HIGH web .*dropped web shell.*uploads/evil.php' "$A2"
+t_fail "a plain request is not alerted" grep -q 'web .* /index.html' "$A2"
+t_ok "every request is still logged" grep -q 'GET /index.html' "$STW2/web.log"
+
 t_done

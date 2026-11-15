@@ -17,6 +17,9 @@
 #                and brute force, new sessions and logouts   (the auth log)
 #     priv       sudo and su use, and the command each sudo ran, and failures
 #     commands   every command run, with user, tty and folder   (auditd)
+#     web        a command by the web-server user (a web shell running), a
+#                process running from /tmp or a web root, and the web access
+#                log: requests to a dropped shell or with injection markers
 #
 #   Privileged commands (sudo/su) are always logged from the auth log.  To log
 #   EVERY command, auditd must be recording execve; the script says whether it
@@ -40,6 +43,11 @@
 #   --admin "U1 U2"    accounts whose normal activity should stay quiet
 #                      (added to the auto-detected sudo/wheel members and you)
 #   --admin-file FILE  one admin account per line (# comments allowed)
+#   --web-user NAME    treat NAME as a web-server account: a command it runs is
+#                      almost certainly a web shell, so it is always HIGH
+#   --webroot DIR      a web root (repeat); flags a process running from it and
+#                      maps a requested URL to a file to see if it is newly dropped
+#   --access-log FILE  a web access log (repeat); apache/nginx logs are auto-found
 #   --alert-own        also alert on admins' normal commands (noisy)
 #   --all-commands     alert on EVERY command, not only the suspicious ones
 #   --low              also print LOW alerts to the console (kept in the file either way)
@@ -63,6 +71,7 @@
 #   logins.log     every login, logout and failed attempt
 #   priv.log       every sudo/su, and the command sudo ran
 #   commands.log   every command (with auditd): time user tty cwd command
+#   web.log        every web request seen in the access log
 #
 # WHAT IT CHANGES
 #   Nothing, unless you pass --setup-auditd, which adds one auditd rule
@@ -1333,6 +1342,9 @@ LX-41 Linux session & command logging - who logs in, what they run, with alerts
   --count N          with --loop: stop after N checks
   --admin "U1 U2"    accounts whose normal activity stays quiet
   --admin-file FILE  one admin account per line
+  --web-user NAME    treat NAME as a web-server account (web shell if it runs a command)
+  --webroot DIR      a web root to watch processes and requests against (repeat)
+  --access-log FILE  a web access log to read (repeat; apache/nginx are auto-found)
   --alert-own        also alert on admins' normal commands
   --all-commands     alert on every command, not only suspicious ones
   --low              also show LOW alerts on the console
@@ -1354,6 +1366,7 @@ USAGE
 # ---- Options ----------------------------------------------------------------
 LOOP=0; COUNT=0; ADMIN_IN=""; ADMIN_FILE=""; ALERT_OWN=0; ALLCMD=0; SHOWLOW=0
 FROMSTART=0; ALERTCMD=""; SETUP_AUDITD=0; AUTHLOG=""; AUDITLOG=""; MAXMB=50; STATE=""; R=""; COLOR=1
+WEBUSERS_IN=""; WEBROOTS_IN=""; ACCESSLOGS_IN=""
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
@@ -1361,6 +1374,9 @@ while [ $# -gt 0 ]; do
         --count)       [ $# -ge 2 ] || cc_die 2 "--count needs a number"; COUNT=$2; shift 2 ;;
         --admin)       [ $# -ge 2 ] || cc_die 2 "--admin needs one or more names"; ADMIN_IN="$ADMIN_IN $2"; shift 2 ;;
         --admin-file)  [ $# -ge 2 ] || cc_die 2 "--admin-file needs a file"; [ -r "$2" ] || cc_die 2 "cannot read $2"; ADMIN_FILE=$2; shift 2 ;;
+        --web-user)    [ $# -ge 2 ] || cc_die 2 "--web-user needs a name"; WEBUSERS_IN="$WEBUSERS_IN $2"; shift 2 ;;
+        --webroot)     [ $# -ge 2 ] || cc_die 2 "--webroot needs a folder"; WEBROOTS_IN="$WEBROOTS_IN $2"; shift 2 ;;
+        --access-log)  [ $# -ge 2 ] || cc_die 2 "--access-log needs a file"; ACCESSLOGS_IN="$ACCESSLOGS_IN $2"; shift 2 ;;
         --alert-own)   ALERT_OWN=1; shift ;;
         --all-commands) ALLCMD=1; shift ;;
         --low)         SHOWLOW=1; shift ;;
@@ -1473,6 +1489,36 @@ is_admin() { case "$ADMINS" in *" $1 "*) return 0 ;; esac; return 1; }
 known_user() { [ -f "$PASSWD" ] || return 0; cut -d: -f1 "$PASSWD" | grep -qx "$1"; }
 cc_info "admin accounts (kept quiet): $(printf '%s' "$ADMINS" | sed 's/^ //;s/ $//')"
 
+# Web service accounts.  A command run by one of these is almost always a web
+# shell, so it is always HIGH.
+_webu=" www-data apache apache2 nginx httpd http daemon php php-fpm www tomcat tomcat8 tomcat9 jetty lighttpd "
+for _u in $WEBUSERS_IN; do _webu="$_webu$_u "; done
+WEBUSERS=" $(printf '%s' "$_webu" | tr ' ' '\n' | grep . | sort -u | tr '\n' ' ')"
+is_webuser() { case "$WEBUSERS" in *" $1 "*) return 0 ;; esac; return 1; }
+
+# Web roots: used to spot a process running from one, and to map a requested
+# URL to a file on disk (to see if that file is newly dropped).
+WEBROOTS=""
+for _d in /var/www /var/www/html /srv/www /srv/http /usr/share/nginx/html /usr/local/www /opt/lampp/htdocs $WEBROOTS_IN; do
+    case "$_d" in /*) _d="$R$_d" ;; esac
+    [ -d "$_d" ] && WEBROOTS="$WEBROOTS $_d"
+done
+
+# Access logs: given ones, plus the usual apache/nginx locations.
+ACCESSLOGS=""
+for _g in $ACCESSLOGS_IN "$R"/var/log/apache2/*access*.log "$R"/var/log/httpd/*access_log "$R"/var/log/nginx/*access*.log "$R"/var/log/lighttpd/*access*.log; do
+    [ -f "$_g" ] && [ -r "$_g" ] && ACCESSLOGS="$ACCESSLOGS $_g"
+done
+[ -n "$ACCESSLOGS" ] && cc_info "web access logs:$ACCESSLOGS"
+
+# Known web-shell filenames, and markers of a command-injection / shell request.
+WEBSHELL_NAMES='^(c99|r57|wso|b374k|alfa|cmd|shell|up|upload|backdoor|webshell|p0wny|weevely|phpspy|minishell|0day|antichat|mini|conf|sh|x)\.(php|phtml|php[0-9]|asp|aspx|jsp|cgi)$'
+WEB_INJECT='(cmd=|exec=|[?&]c=|[?&]x=|shell_exec|passthru|system\(|popen|proc_open|base64_decode|eval\(|assert\(|/bin/(ba|da|z)?sh|%2[fF]bin%2[fF]|;id|%3[bB]id|\|id|whoami|wget[ +%]|curl[ +%]|/dev/tcp/|php://input|allow_url|\.\./\.\./|%00)'
+
+# A marker file whose mtime is "when watching began": a web-root script newer
+# than this was dropped after we started looking.
+[ -f "$STATE/.started" ] || : >"$STATE/.started"
+
 # Patterns that are almost never a real admin command (reverse shells,
 # download-and-run, encoded commands, log/history wiping, account changes).
 SUSP_STRONG='(/dev/tcp/|/dev/udp/|bash -i|sh -i| -e /bin/|nc .*-e|ncat .*-e|socat .*exec|mkfifo .*\|.*sh|(curl|wget)[^|;]*\|[[:space:]]*(ba|da|z)?sh|base64[[:space:]]+(-d|--decode)|python[0-9.]*[[:space:]]+-c|perl[[:space:]]+-e|php[[:space:]]+-r|openssl[[:space:]]+s_client|chattr[[:space:]]+[+]i|history[[:space:]]+-c|unset[[:space:]]+HISTFILE|>[[:space:]]*/var/log/|truncate[^;]*/var/log/)'
@@ -1527,7 +1573,7 @@ new_lines() {
     fi
 }
 
-N_LOGIN=0; N_CMD=0
+N_LOGIN=0; N_CMD=0; N_WEB=0
 
 # ---- Section: logins and priv (from the auth log) ---------------------------
 # Writes the new auth-log lines to $STATE/.auth for parsing.
@@ -1603,7 +1649,11 @@ read_auth() {
 classify_cmd() {
     _cu=$1; _csrc=$2; _cc=$3; _csec=$4
     [ "$_csec" = commands ] && N_CMD=$((N_CMD + 1))
-    if printf '%s' "$_cc" | grep -Eq "$SUSP_STRONG"; then
+    if is_webuser "$_cu"; then
+        # A web server account almost never runs a command: this is the web
+        # shell executing.  Always HIGH, whatever the command is.
+        alert HIGH "$_csec" "$_cu" "web server account ran a command (web shell?): $_cc"
+    elif printf '%s' "$_cc" | grep -Eq "$SUSP_STRONG"; then
         alert HIGH "$_csec" "$_cu" "dangerous command: $_cc"
     elif ! known_user "$_cu"; then
         alert HIGH "$_csec" "$_cu" "command by an account not in /etc/passwd: $_cc"
@@ -1636,7 +1686,7 @@ read_audit() {
             v = s; sub(/[ \t].*/, "", v); return v
         }
         BEGIN { while ((getline l < passwd) > 0) { n = split(l, p, ":"); if (n >= 3) uname[p[3]] = p[1] } }
-        /type=SYSCALL/ { id = evid($0); if (id == "") next; uid[id] = field($0, "uid"); tty[id] = field($0, "tty"); succ[id] = field($0, "success") }
+        /type=SYSCALL/ { id = evid($0); if (id == "") next; uid[id] = field($0, "uid"); tty[id] = field($0, "tty"); succ[id] = field($0, "success"); exe[id] = field($0, "exe") }
         /type=CWD/     { id = evid($0); if (id != "") cwd[id] = field($0, "cwd") }
         /type=EXECVE/  {
             id = evid($0); if (id == "") next
@@ -1656,27 +1706,84 @@ read_audit() {
                 id = order[i]; u = uid[id]
                 nm = (u in uname) ? uname[u] : ("uid" u)
                 if (succ[id] == "no") continue
-                print nm "\t" (tty[id] == "" ? "?" : tty[id]) "\t" (cwd[id] == "" ? "?" : cwd[id]) "\t" argv[id]
+                print nm "\t" (tty[id] == "" ? "?" : tty[id]) "\t" (cwd[id] == "" ? "?" : cwd[id]) "\t" (exe[id] == "" ? "?" : exe[id]) "\t" argv[id]
             }
         }' "$STATE/.audit" >"$STATE/.cmds"
-    while IFS="$(printf '\t')" read -r _u _tty _cwd _cmd; do
+    while IFS="$(printf '\t')" read -r _u _tty _cwd _exe _cmd; do
         [ -n "$_cmd" ] || continue
         logcat commands.log "$(date -u +%Y-%m-%dT%H:%M:%SZ) $_u $_tty $_cwd  $_cmd"
         classify_cmd "$_u" audit "$_cmd" commands
+        # Where it runs FROM: a process whose folder or program lives in a
+        # world-writable spot or a web root, or a deleted binary, is a red
+        # flag on its own.  (A web-user command is already HIGH above.)
+        if ! is_webuser "$_u"; then
+            _org=""
+            case "$_cwd" in /tmp/*|/var/tmp/*|/dev/shm/*|/run/shm/*) _org="folder $_cwd" ;; esac
+            case "$_exe" in *"(deleted)") _org="a deleted program ($_exe)" ;; /tmp/*|/var/tmp/*|/dev/shm/*|/run/shm/*) _org="program $_exe" ;; esac
+            for _wr in $WEBROOTS; do
+                case "$_exe" in "$_wr"/*) _org="program under a web root ($_exe)" ;; esac
+                case "$_cwd" in "$_wr"/*) [ -n "$_org" ] || _org="a web root ($_cwd)" ;; esac
+            done
+            [ -n "$_org" ] && alert HIGH commands "$_u" "process running from $_org: $_cmd"
+        fi
     done <"$STATE/.cmds"
+}
+
+# ---- Section: web access log (what a web shell is being told to do) ---------
+read_web() {
+    [ -n "$ACCESSLOGS" ] || return 0
+    for _wl in $ACCESSLOGS; do
+        [ -r "$_wl" ] || continue
+        _wk=web_$(printf '%s' "$_wl" | tr -c 'A-Za-z0-9' '_')
+        new_lines "$_wk" "$_wl" >"$STATE/.web1"
+        [ -s "$STATE/.web1" ] || continue
+        # Common/combined access-log format: IP ... "METHOD PATH PROTO" STATUS ... "UA"
+        awk '{
+            ip = $1
+            if (match($0, /"[^"]*"/)) { req = substr($0, RSTART + 1, RLENGTH - 2); rest = substr($0, RSTART + RLENGTH) } else { req = ""; rest = "" }
+            m = ""; p = ""; nn = split(req, rq, " "); if (nn >= 1) m = rq[1]; if (nn >= 2) p = rq[2]
+            st = ""; if (match(rest, / [0-9][0-9][0-9] /)) st = substr(rest, RSTART + 1, 3)
+            ua = ""; s = $0; while (match(s, /"[^"]*"/)) { ua = substr(s, RSTART + 1, RLENGTH - 2); s = substr(s, RSTART + RLENGTH) }
+            if (p != "") print ip "\t" m "\t" p "\t" st "\t" ua
+        }' "$STATE/.web1" >"$STATE/.web2"
+        while IFS="$(printf '\t')" read -r _ip _m _p _st _ua; do
+            N_WEB=$((N_WEB + 1))
+            logcat web.log "$(date -u +%Y-%m-%dT%H:%M:%SZ) $_ip \"$_m $_p\" ${_st:-?} \"$_ua\""
+            _pp=${_p%%\?*}; _base=${_pp##*/}
+            _it="$_ip $_m $_pp"
+            if printf '%s' "$_base" | grep -Eiq "$WEBSHELL_NAMES"; then
+                alert HIGH web "$_it" "request to a known web-shell filename ($_base)"
+            elif printf '%s' "$_p" | grep -Eiq "$WEB_INJECT"; then
+                alert HIGH web "$_it" "command-injection / web-shell request: $_m $_pp"
+            else
+                case "$_base" in
+                    *.php|*.phtml|*.php[0-9]|*.asp|*.aspx|*.jsp|*.jspx|*.cgi|*.pl|*.py|*.sh)
+                        _rel=${_pp#/}
+                        for _wr in $WEBROOTS; do
+                            _f="$_wr/$_rel"
+                            if [ -f "$_f" ] && [ -n "$(find "$_f" -newer "$STATE/.started" 2>/dev/null)" ]; then
+                                alert HIGH web "$_it" "request to a script added/changed since watching began (dropped web shell?): $_rel"
+                                break
+                            fi
+                        done ;;
+                esac
+            fi
+        done <"$STATE/.web2"
+    done
 }
 
 # ---- One pass ---------------------------------------------------------------
 one_pass() {
-    N_LOGIN=0; N_CMD=0; AL_H=0; AL_M=0; AL_L=0
+    N_LOGIN=0; N_CMD=0; N_WEB=0; AL_H=0; AL_M=0; AL_L=0
     : >"$STATE/.newalerts"
     read_auth
     read_audit
+    read_web
     _t=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     if [ "$AL_H" -gt 0 ] || [ "$AL_M" -gt 0 ] || [ "$AL_L" -gt 0 ]; then
-        printf '%s  %d login event(s), %d command(s); alerts: %d HIGH, %d MED, %d LOW\n' "$_t" "$N_LOGIN" "$N_CMD" "$AL_H" "$AL_M" "$AL_L"
+        printf '%s  %d login event(s), %d command(s), %d web request(s); alerts: %d HIGH, %d MED, %d LOW\n' "$_t" "$N_LOGIN" "$N_CMD" "$N_WEB" "$AL_H" "$AL_M" "$AL_L"
     else
-        printf '%s  %d login event(s), %d command(s); nothing to flag\n' "$_t" "$N_LOGIN" "$N_CMD"
+        printf '%s  %d login event(s), %d command(s), %d web request(s); nothing to flag\n' "$_t" "$N_LOGIN" "$N_CMD" "$N_WEB"
     fi
     if [ -s "$STATE/.newalerts" ] && [ -n "$ALERTCMD" ]; then
         sh -c "$ALERTCMD" <"$STATE/.newalerts" >>"$CC_LOG" 2>&1 || cc_warn "--alert-cmd failed (exit $?): alerts are still in $ALERTS"
@@ -1698,6 +1805,7 @@ else
     show "${C_GRN:-}" "[ok] auditd is logging commands ($AUDITLOG)"
 fi
 [ "$FROMSTART" = 1 ] || cc_info "watching from now (use --from-start to include existing history)"
+if [ -n "$ACCESSLOGS" ]; then show "${C_GRN:-}" "[ok] watching web access log(s) for web-shell activity"; else cc_info "no web access log found; a command run by a web-server account is still caught as a web shell"; fi
 
 _checks=0
 while :; do
