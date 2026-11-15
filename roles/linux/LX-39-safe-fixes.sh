@@ -171,7 +171,7 @@ list_fixes() {
     cat <<'LIST'
 sysctl      SYN cookies, ASLR, no source-routed packets or redirects, link protection
 ipv6        IPv6 off with disable_ipv6 (loopback kept), never the boot option
-forwarding  IP forwarding off - only with --no-forwarding
+forwarding  IP forwarding off (asks first if the box routes or runs Docker; with no one to ask, only with --no-forwarding)
 coredumps   no setuid core dumps, core size limit 0
 perms       remove group/other write (and read on secrets) from key files
 tmp         sticky bit on /tmp, /var/tmp, /dev/shm

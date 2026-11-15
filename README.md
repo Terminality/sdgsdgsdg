@@ -4,6 +4,16 @@ Blue-team scripts for the Collegiate Cyber Defense Competition, written with Cla
 
 **Start here:** [`docs/PLAN.md`](docs/PLAN.md) (the plan), [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) (what is scored), [`AGENTS.md`](AGENTS.md) (rules for changing the repo). Core scripts are for Linux, Windows / AD and Network only; other roles write their own.
 
+## Getting a script onto a box
+
+Use the files in **[`dist/`](dist/)**: each one is a single standalone file with the library already inside. Copy one file and run it, no `lib` folder needed:
+
+```
+sudo sh LX-39-safe-fixes.sh
+```
+
+Copy `dist/MANIFEST.sha256` too if you want each script to check it wasn't changed. The scripts in `roles/` are the source and still need `lib/` next to them.
+
 ## Ready to use
 
 | Script | What it does | How to run it |
@@ -29,7 +39,7 @@ Blue-team scripts for the Collegiate Cyber Defense Competition, written with Cla
 | Windows safe fixes (WN-43) | Fixes that cannot break a scored service: SMBv1 and WDigest off, Zerologon enforced on DCs, UAC on, Guest off, sticky-keys and debugger backdoors, port forwards, WMI persistence, Defender exclusions removed, auditing on, and more. Every change recorded; `-Undo latest -Apply` puts the run back | `powershell -NoProfile -ExecutionPolicy Bypass -File roles\windows-ad\WN-43-safe-fixes.ps1 -Out C:\ccdc-out -Apply` |
 | Windows firewall (WN-25) | Default-deny inbound on every profile; opens scored, protected and safe listening ports and everything from the admin/scoring addresses; turns off allow-all and backdoor rules. Rolls itself back in 5 minutes unless kept from a new connection; `-Undo` restores the old firewall exactly | `powershell -NoProfile -ExecutionPolicy Bypass -File roles\windows-ad\WN-25-firewall.ps1 -Out C:\ccdc-out -Apply -AdminFrom 10.0.0.5` |
 
-The two shared libraries (`lib/lib.sh`, `lib/lib.ps1`) are also finished; every other script is built on them. Next up: the planned scripts in `docs/STATUS.md`.
+The two shared libraries (`lib/lib.sh`, `lib/lib.ps1`) are also finished; every other script is built on them. `tools/build.sh` pastes them into each script to make `dist/`. Next up: the planned scripts in `docs/STATUS.md`.
 
 Nothing here has been run on real competition systems yet. Read "What has and hasn't been tested" before relying on it.
 

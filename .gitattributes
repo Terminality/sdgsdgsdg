@@ -5,3 +5,7 @@
 *.md    text eol=lf
 # PowerShell runs with either ending; CRLF opens cleanly in Notepad on old Windows.
 *.ps1   text eol=crlf
+
+# Built single-file scripts: never converted, so their hashes match MANIFEST.sha256
+# on every machine (tools/build.sh writes LF for .sh, CRLF for .ps1).
+dist/** -text

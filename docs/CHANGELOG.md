@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-14: Single-file scripts (build step)
+
+- `tools/build.sh` (LB-03): copies every script into `dist/<role>/` with the library pasted in, so you copy one file and run it. Writes `dist/MANIFEST.sha256`; a built script checks itself against it when the manifest is next to it. `--check` reports whether `dist/` is out of date.
+- `dist/` is committed and kept byte-exact (`.gitattributes`: no line-ending conversion; LF for `.sh`, CRLF for `.ps1`).
+- `tests/build.test.sh`: `dist/` up to date, every built script runs with no `lib/`, a changed copy is refused, line endings, and a built PowerShell script runs alone.
+- Rule added to `AGENTS.md`: rebuild `dist/` after changing `roles/` or `lib/`.
+
 ## 2026-11-14: Linux safe fixes: leave-alone lists, account and SUID fixes
 
 - LX-39 asks "Leave any alone?" after each fix that acts on named items (accounts, paths, kernel settings, services), or takes `--exclude a,b`.

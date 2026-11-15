@@ -8,6 +8,7 @@ For people and AI tools.
 4. Never break a scored service or lock someone out. Follow the lockout rule in `docs/PLAN.md`.
 5. Follow `docs/CONVENTIONS.md` (POSIX sh, PowerShell 2.0, dry run by default, no passwords in output).
 6. Don't change scripts you weren't asked to change.
-7. Open a merge request. Don't push to `main`. Say what you tested.
-8. Keep docs short and plain.
-9. Make output human-readable: something a person can read in a terminal (sections, plain words, aligned tables), not formatted for web pages or spreadsheets.
+7. **Rebuild `dist/` after changing anything in `roles/` or `lib/`:** `sh tools/build.sh`. Never edit `dist/` by hand. The tests fail if it is out of date.
+8. Open a merge request. Don't push to `main`. Say what you tested.
+9. Keep docs short and plain.
+10. Make output human-readable: something a person can read in a terminal (sections, plain words, aligned tables), not formatted for web pages or spreadsheets.
