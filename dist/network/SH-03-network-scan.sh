@@ -1481,13 +1481,28 @@ fi
 # --ports replaces the quick and full scans.
 [ -n "$PORTS" ] && { A_QUICK=N; A_FULL=N; }
 
+# install_hint -> the command that installs nmap on this box.
+install_hint() {
+    if cc_have apt-get; then echo "sudo apt install nmap"
+    elif cc_have dnf; then echo "sudo dnf install nmap"
+    elif cc_have yum; then echo "sudo yum install nmap"
+    elif cc_have zypper; then echo "sudo zypper install nmap"
+    elif cc_have apk; then echo "sudo apk add nmap"
+    elif cc_have pacman; then echo "sudo pacman -S nmap"
+    else echo "install the nmap package (https://nmap.org/download)"
+    fi
+}
+
 # Pick the engine: the requested one, or the best available.
+NMAP_MISSING=0
+cc_have nmap || NMAP_MISSING=1
+[ "$ENGINE" = nmap ] && [ "$NMAP_MISSING" = 1 ] && cc_die 3 "nmap is not installed on this box. Install it: $(install_hint)"
 if [ -z "$ENGINE" ]; then
     if cc_have nmap; then ENGINE=nmap
     elif cc_have python3; then ENGINE=python
     elif cc_have bash && cc_have timeout; then ENGINE=bash
     elif cc_have nc; then ENGINE=nc
-    else cc_die 3 "no scanner available: install nmap (best), or make python3, bash with timeout, or nc available"
+    else cc_die 3 "no scanner available. Install nmap: $(install_hint)"
     fi
 fi
 case "$ENGINE" in
@@ -1546,6 +1561,16 @@ guess_target() {
 # Before the run folder exists, so a question answered wrong costs nothing.
 cc_color_init
 [ "$COLOR" = 1 ] || { C_RED=""; C_YEL=""; C_GRN=""; C_CYN=""; C_GRY=""; C_OFF=""; }
+# Quick check: is nmap here?  Without it the scan is much weaker, and the
+# scan questions (speed, ports, versions, scripts, vulns, UDP) are skipped.
+if [ "$NMAP_MISSING" = 1 ]; then
+    cc_show "$C_YEL" "[!] nmap is not installed on this box, so the scan questions are skipped."
+    cc_show "$C_YEL" "    Without it: $(printf '%s' "$FALLBACK_PORTS" | tr ',' '\n' | grep -c .) common TCP ports only, a banner instead of a version, no scripts, no vulns, no UDP."
+    cc_show "$C_YEL" "    Install it: $(install_hint)"
+    cc_ask "Keep going with the $ENGINE scan anyway?" Y || { cc_show "" "Install nmap and run again: $(install_hint)"; exit 3; }
+elif [ "$ENGINE" = nmap ]; then
+    cc_show "$C_GRN" "[ok] nmap found: $(nmap --version 2>/dev/null | head -n 1)"
+fi
 if [ -z "$TARGETS" ]; then
     _can=0; _cc_can_ask && _can=1
     [ "$_can" = 1 ] || cc_die 2 "nothing to scan: give --target or --targets-file (try --help)"

@@ -21,6 +21,23 @@ run --target 127.0.0.1 --ports '22;id' >/dev/null 2>&1; t_eq "$?" 2 "bad --ports
 run --target 127.0.0.1 --profile huge >/dev/null 2>&1; t_eq "$?" 2 "unknown profile exits 2"
 t_has "$(run --help 2>&1)" "--vuln / --no-vuln" "help lists the scan questions as flags"
 
+t_start "nmap check"
+# A PATH with every usual program except nmap.
+mkdir -p "$T_TMP/nonmap"
+for _f in /usr/local/bin/* /usr/bin/* /bin/*; do
+    _b=$(basename "$_f"); [ -e "$T_TMP/nonmap/$_b" ] || ln -s "$_f" "$T_TMP/nonmap/$_b" 2>/dev/null
+done
+rm -f "$T_TMP/nonmap/nmap"
+r=$(PATH="$T_TMP/nonmap" run --target 127.0.0.1 --ports 1 --out "$T_TMP/nn" 2>&1); t_eq "$?" 0 "without nmap it keeps going (default yes)"
+t_has "$r" "nmap is not installed on this box" "says nmap is missing"
+t_has "$r" "Install it:" "and how to install it"
+r=$(PATH="$T_TMP/nonmap" run --target 127.0.0.1 --engine nmap --out "$T_TMP/nn" 2>&1); t_eq "$?" 3 "--engine nmap without nmap exits 3"
+t_has "$r" "Install it:" "   with the install command"
+if command -v nmap >/dev/null 2>&1; then
+    r=$(run --target 127.0.0.1 --ports 1 --no-scripts --no-services --no-os --no-udp --out "$T_TMP/nn" 2>&1)
+    t_has "$r" "[ok] nmap found" "says when nmap is found"
+fi
+
 # ---- Fake nmap ----------------------------------------------------------------
 # Writes results for 10.9.9.5 by stage name (the -oA file name) and logs its
 # arguments.  quick: 21, 22.  full: adds 4444.  details: versions and the
@@ -168,6 +185,13 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     t_has "$(sed -n 2p "$STUBLOG")" "-p 8080" "extra port 8080 scanned"
     t_has "$(tail -n 1 "$STUBLOG")" "--script vuln 10.9.9.5" "all vuln scripts after 'n' to safe only, without default scripts"
     t_has "$(tail -n 1 "$STUBLOG")" "-sV" "versions after Enter (default yes)"
+    t_start "nmap check in a terminal"
+    printf 'n\n' >"$T_TMP/answers3"
+    CCDC_NO_TTY=0 PATH="$T_TMP/nonmap" script -qc "$SH $C --out $T_TMP/q3 --no-color --target 127.0.0.1" /dev/null <"$T_TMP/answers3" >"$T_TMP/tty3.out" 2>&1
+    t_has "$(cat "$T_TMP/tty3.out")" "Keep going with the" "asks whether to keep going without nmap"
+    t_has "$(cat "$T_TMP/tty3.out")" "Install nmap and run again" "stops after 'n'"
+    t_fail "and scans nothing" ls -d "$T_TMP"/q3/netscan-*/ 2>/dev/null
+
     t_start "picking hosts for the full scan in a terminal"
     : >"$STUBLOG"
     printf '10.9.9.6\n' >"$T_TMP/answers2"
