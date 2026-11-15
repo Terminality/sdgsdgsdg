@@ -1579,7 +1579,31 @@ done
 } >"$CC_RUN_DIR/summary.txt"
 show "" ""
 show "$C_CYN" "==========[ SUMMARY ]=========="
-cat "$CC_RUN_DIR/summary.txt"
+# The summary on screen is colour-coded; summary.txt and output.txt stay plain.
+#   red     HIGH flags, and sections that have any
+#   yellow  MED flags, and sections with MED but no HIGH
+#   green   key facts, and sections with nothing to fix
+#   cyan    headings
+awk -v R="$C_RED" -v Y="$C_YEL" -v G="$C_GRN" -v C="$C_CYN" -v D="$C_GRY" -v O="$C_OFF" '
+    /^section +rows +high/  { intable = 1; seen_table = 1; print C $0 O; next }
+    intable && /^$/         { intable = 0; print; next }
+    intable {
+        if ($3 + 0 > 0) print R $0 O
+        else if ($4 + 0 > 0) print Y $0 O
+        else print G $0 O
+        next
+    }
+    /^Flags:/               { print C $0 O; next }
+    /^HIGH - /              { mode = "H"; print R $0 O; next }
+    /^MED - /               { mode = "M"; print Y $0 O; next }
+    /^  \[/ && mode == "H"  { print R "  [!] FIX " substr($0, 3) O; next }
+    /^  \[/ && mode == "M"  { print Y "  [*] LOOK" substr($0, 2) O; next }
+    /^All (flags|results)/  { print D $0 O; next }
+    NR <= 2                 { print C $0 O; next }
+    /^$/                    { print; next }
+    !seen_table             { print G $0 O; next }
+                            { print }
+' "$CC_RUN_DIR/summary.txt" >&3
 cat "$CC_RUN_DIR/summary.txt" >>"$OUTF"
 rm -rf "$W"
 cc_finish
