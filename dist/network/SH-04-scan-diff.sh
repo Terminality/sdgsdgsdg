@@ -24,7 +24,7 @@
 #   sh SH-04-scan-diff.sh --old DIR1 --new DIR2          two specific run folders
 #
 # OPTIONS
-#   --old DIR       the earlier run folder (e.g. ~/ccdc-out/SH-03_admin_20261111T140000Z)
+#   --old DIR       the earlier run folder (e.g. ~/ccdc-out/netscan-1)
 #   --new DIR       the later run folder
 #   --type T        sh03 or sh05: which runs to pick when --old/--new are not
 #                   given (default sh03).  With folders given, the type comes
@@ -1345,7 +1345,7 @@ run_info() { sed -n "s/^$2=//p" "$1/run.txt" 2>/dev/null | head -n 1; }
 # run_type DIR -> sh03 or sh05.
 run_type() {
     case "$(basename "$1")" in
-        SH-03_*) echo sh03 ;;
+        SH-03_*|netscan-*) echo sh03 ;;
         SH-05_*|linux-enum-*) echo sh05 ;;
         *) echo "" ;;
     esac
@@ -1370,7 +1370,7 @@ if [ -n "$OLD" ]; then
     [ -d "$NEW" ] || cc_die 2 "not a folder: $NEW"
     OLD=$(cc_abspath "$OLD"); NEW=$(cc_abspath "$NEW")
     TYPE=$(run_type "$NEW")
-    [ -n "$TYPE" ] || cc_die 2 "$NEW is not an SH-03 or SH-05 run folder (its name must start with SH-03_, SH-05_ or linux-enum-). To see what a fix script changed, run the enum again and compare the two enum runs"
+    [ -n "$TYPE" ] || cc_die 2 "$NEW is not an SH-03 or SH-05 run folder (its name must start with netscan-, linux-enum-, SH-03_ or SH-05_). To see what a fix script changed, run the enum again and compare the two enum runs"
     [ "$(run_type "$OLD")" = "$TYPE" ] || cc_die 2 "the two folders are from different scripts: $(basename "$OLD") and $(basename "$NEW")"
 else
     [ -n "$TYPE" ] || TYPE=sh03
@@ -1382,7 +1382,7 @@ else
     # from one admin box); for SH-05 both runs must be of the same host.
     _tab=$(printf '\t')
     _cands=""
-    for _d in "$RUNS"/"$_prefix"_* "$RUNS"/linux-enum-*; do
+    for _d in "$RUNS"/"$_prefix"_* "$RUNS"/linux-enum-* "$RUNS"/netscan-*; do
         [ -d "$_d" ] && [ -f "$_d/summary.txt" ] || continue
         [ "$(run_type "$_d")" = "$TYPE" ] || continue
         _cands="$_cands$(run_time "$_d")$_tab$(run_host "$_d")$_tab$_d
@@ -1511,6 +1511,7 @@ if [ "$TYPE" = sh03 ]; then
     diff_csv hosts hosts.csv "ip" "hostname"
     diff_csv ports ports.csv "ip,proto,port" "service,version"
     diff_csv scored scored.csv "host,ip,service,port" "reachable"
+    [ -f "$(cfile "$OLD" vulns.csv)" ] && diff_csv vulns vulns.csv "ip,proto,port,script" "state,title"
     # HIGH first.  The awk conditions are single-quoted on purpose: $2, $5
     # are awk fields, not shell variables.
     # ports keys are "ip | proto | port"; scored keys "host | ip | service | port".
@@ -1518,6 +1519,8 @@ if [ "$TYPE" = sh03 ]; then
     flag_where scored HIGH "scored service was reachable and now is NOT: check it now" '$2 == "changed" && $5 == "no"'
     # shellcheck disable=SC2016
     flag_where ports HIGH "a backdoor-style port opened since the earlier scan" '$2 == "added" && kp[3] ~ /'"$BACKDOOR_PORTS"'/'
+    flag_rule vulns added HIGH "new vuln or script finding since the earlier scan"
+    flag_rule vulns removed LOW "vuln or script finding gone since the earlier scan"
     flag_rule scored added LOW "scored service check added (host list changed?)"
     flag_rule hosts added MED "host appeared since the earlier scan: find out what it is"
     flag_rule hosts removed MED "host no longer answers; if it runs a scored service, it is down"
@@ -1587,6 +1590,8 @@ _label=SH-03; [ "$TYPE" = sh05 ] && _label=SH-05
         [ "$_tot" -gt "$MAXLINES" ] && printf '  ... %d more in changes.txt\n' "$((_tot - MAXLINES))"
         printf '\n'
     fi
+    # Read by cc_flag_report in the library.
+    # shellcheck disable=SC2034
     CC_FLAGS_SHOW="$CC_RUN_DIR/flags.txt"
     cc_flag_report "$MAXFLAGS"
     printf '\nAll results: %s\n' "$CC_RUN_DIR"
