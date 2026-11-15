@@ -2,6 +2,14 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-14: Linux safe fixes asks questions and reverts on its own
+
+- LX-39 asks like sqlmap: which box (splunk / webmail / ecomm / other), then one question per fix; Enter takes the default; flags answer in advance; `--batch` takes every default.
+- LX-39 shows a dry-run plan, asks `Apply these N change(s)?`, applies, then asks `Keep these changes?`. A 2-minute revert timer starts with the script (`--timer`, `--no-timer`): unless kept, everything the run changed is undone by a systemd timer or detached job, so it still happens if the session dies. `revert.sh --force` undoes a run later.
+- LX-39 looks like the enum: linpeas-style sections and colours, numbered `safe-fixes-N` folders, `output.txt`, readable `plan.txt` and `fixes.txt`. A file is no longer listed twice in one plan.
+- lib.sh: `--batch`, `cc_ask`, `cc_ask_text`, `cc_color_init`, `cc_show`, `cc_now`, `cc_timer_start`, `cc_timer_finish`; changes are refused once the timer has run out. Tests never wait for answers (`CCDC_NO_TTY`).
+- Fixed: the SH-05 privesc test failed under ksh (a test bug, not a script bug) and a lint false alarm.
+
 ## 2026-11-14: Linux enum privesc section
 
 - SH-05 `privesc` section (in the card profile): root cron jobs, start-up scripts and root services whose files others can change; writable key files and a readable shadow file; risky PATH folders and `.` on the PATH; sudo rules for GTFOBins programs and kept LD_PRELOAD; old sudo (Baron Samedit), pkexec (PwnKit) and kernels (Dirty COW, Dirty Pipe), checked against the package changelog or kernel build date to avoid false alarms.

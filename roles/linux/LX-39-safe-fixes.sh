@@ -4,7 +4,7 @@
 # NAME:     Linux safe fixes
 # ROLE:     Linux  (wave 2, first 15 minutes)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.1.0
+# VERSION:  2.0.0
 #
 # PURPOSE
 #   The Linux twin of WN-43: only fixes that cannot break a scored service,
@@ -34,9 +34,23 @@
 #   Also REPORTED (never changed): extra /etc/hosts entries, IP forwarding
 #   left on, services bound to a specific IPv6 address.
 #
+# HOW A RUN GOES  (sqlmap style: it asks, Enter takes the default)
+#   1. A 2-minute revert timer starts (root only).  If the changes are not
+#      kept before it runs out - for example because you got kicked off the
+#      box - everything this run changed is put back.  It runs outside the
+#      script (systemd timer, else a detached job), so a dead session does
+#      not stop it.
+#   2. Questions: which box this is, then one per fix.  Flags answer them in
+#      advance; --batch takes every default without asking.
+#   3. The plan: every change it would make, then "Apply these N changes?"
+#   4. The changes, shown as they are made.
+#   5. "Keep these changes?" - log in from a NEW session first.  y keeps
+#      them; n or no answer before the timer undoes them.
+#
 # USAGE
-#   sudo sh LX-39-safe-fixes.sh                    dry run: shows what it would do
-#   sudo sh LX-39-safe-fixes.sh --apply            make the changes
+#   sudo sh LX-39-safe-fixes.sh                    ask everything, then apply if you say so
+#   sudo sh LX-39-safe-fixes.sh --apply --batch    no questions: defaults, apply, keep
+#   sudo sh LX-39-safe-fixes.sh --batch            no questions, dry run only
 #   sudo sh LX-39-safe-fixes.sh --apply --skip ipv6
 #
 # OPTIONS
@@ -48,14 +62,24 @@
 #                    trust, the sysctl and limits files).  For fixing a
 #                    mounted disk image, and for the tests.  Kernel settings
 #                    and services still act on the running system
+#   --box NAME       splunk | webmail | ecomm | other (skips that question)
+#   --timer SECONDS  revert timer length (default 120)
+#   --no-timer       no revert timer (you accept the risk)
+#   --no-color       no colours
+#   --batch          never ask: take every default (from the common options)
 #   --list           list the fixes and exit
 #   --help           this text plus the common options
 #
-# OUTPUTS  (under --out, in LX-39_<host>_<UTC time>/)
+# OUTPUTS  (under --out, one numbered folder per run: safe-fixes-1, -2, ...)
+#   output.txt    everything shown on screen, without colours
 #   summary.txt   counts per fix, every change, and the items to check by hand
-#   fixes.csv     fix,item,before,after,status
+#   plan.txt      what it would change (the dry-run pass)
+#   fixes.txt     what it did: fix, item, before, after, status
 #                 (status: changed | would change | already ok | failed |
 #                  refused | skipped | check by hand)
+#   csv/          plan.csv and fixes.csv
+#   revert.sh     undoes this run (sh revert.sh --force); undo.txt, revert.log,
+#                 KEEP and REVERTED belong to the revert timer
 #   The undo log (<out>/undo-<host>.log) gets one line per change; run its
 #   commands from the bottom up to roll back.  Files are backed up first
 #   under <out>/backup/<host>/.
@@ -84,7 +108,7 @@
 #     kernel has no IPv6.  After the first real --apply check "ip -6 addr
 #     show lo" still lists ::1.
 #   - Inside a container some kernel settings are read-only; those show as
-#     failed in fixes.csv and the rest still apply.
+#     failed in fixes.txt and the rest still apply.
 #   - The preload fix trusts the package database.  On a box where the red
 #     team replaced packages, check the quarantined file by hand.
 #
@@ -115,6 +139,11 @@ LX-39 Linux safe fixes - hardening that cannot break a scored service
   --keep-ipv6      leave IPv6 on (same as --skip ipv6)
   --no-forwarding  also turn IP forwarding off (NOT on routers, firewalls or Docker hosts)
   --root DIR       treat DIR as / for the file fixes (disk images, tests)
+  --box NAME       splunk | webmail | ecomm | other (skips that question)
+  --timer SECONDS  revert timer length (default 120)
+  --no-timer       no revert timer (you accept the risk)
+  --no-color       no colours
+  --batch          never ask: take every default
   --list           list the fixes and exit
   --help           show this text
 
@@ -137,14 +166,18 @@ hosts       report extra /etc/hosts entries (report only)
 LIST
 }
 
-ONLY=""; SKIP=""; NOFWD=0; R=""
+ONLY=""; SKIP=""; NOFWD=0; R=""; BOX=""; TIMER=120; NOTIMER=0; FWDFLAG=0
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
         --only)          [ $# -ge 2 ] || cc_die 2 "--only needs a list of fixes"; ONLY=$2; shift 2 ;;
         --skip)          [ $# -ge 2 ] || cc_die 2 "--skip needs a list of fixes"; SKIP="$SKIP,$2"; shift 2 ;;
         --keep-ipv6)     SKIP="$SKIP,ipv6"; shift ;;
-        --no-forwarding) NOFWD=1; shift ;;
+        --no-forwarding) NOFWD=1; FWDFLAG=1; shift ;;
+        --box)           [ $# -ge 2 ] || cc_die 2 "--box needs splunk, webmail, ecomm or other"; BOX=$2; shift 2 ;;
+        --timer)         [ $# -ge 2 ] || cc_die 2 "--timer needs a number of seconds"; TIMER=$2; shift 2 ;;
+        --no-timer)      NOTIMER=1; shift ;;
+        --no-color|--no-colour) CC_NOCOLOR=1; shift ;;
         --root)          [ $# -ge 2 ] || cc_die 2 "--root needs a folder"
                          [ -d "$2" ] || cc_die 2 "--root: not a folder: $2"
                          R=$(cd "$2" && pwd); [ "$R" = / ] && R=""; shift 2 ;;
@@ -153,38 +186,101 @@ while [ $# -gt 0 ]; do
         *)               cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
+case "$TIMER" in ''|*[!0-9]*) cc_die 2 "--timer needs a whole number of seconds" ;; esac
+[ "$TIMER" -ge 2 ] || cc_die 2 "--timer must be at least 2 seconds"
+case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
 for _n in $(printf '%s,%s' "$ONLY" "$SKIP" | tr ',' ' '); do
     case " $ALL_FIXES " in *" $_n "*) ;; *) cc_die 2 "unknown fix '$_n' (see --list)" ;; esac
 done
 FIXES=$ALL_FIXES
 [ -n "$ONLY" ] && FIXES=$(printf '%s' "$ONLY" | tr ',' ' ')
 # Naming forwarding in --only is asking for it, like --no-forwarding.
-case ",$ONLY," in *,forwarding,*) NOFWD=1 ;; esac
+case ",$ONLY," in *,forwarding,*) NOFWD=1; FWDFLAG=1 ;; esac
 _keep=""
 for _f in $FIXES; do
     case ",$SKIP," in *",$_f,"*) continue ;; esac
-    # forwarding is opt-in: it runs only when --no-forwarding was given.
-    [ "$_f" = forwarding ] && [ "$NOFWD" = 0 ] && continue
     _keep="$_keep $_f"
 done
 FIXES=$_keep
+# SETTLED: true when a flag already decided the fixes, so no per-fix questions.
+SETTLED=0; [ -n "$ONLY$SKIP" ] && SETTLED=1
 
 # The sysctl program.  CCDC_SYSCTL lets the tests use a stand-in by full
 # path: busybox sh runs its own built-in sysctl in preference to PATH.
 SYSCTL=${CCDC_SYSCTL:-sysctl}
 
+cc_color_init
+
+# protected_check -> with no protected list, ask before changing anything.
+#   Sets CC_NO_PROTECTED=1 on yes; returns 1 on no.
+protected_check() {
+    [ "$CC_NO_PROTECTED" = 1 ] && return 0
+    _pc=${CC_PROTECTED:-${CC_OUT:-${CCDC_OUT:-${HOME:-/root}/ccdc-out}}/protected.csv}
+    [ -r "$_pc" ] && return 0
+    cc_show "$C_YEL" "[*] No protected list at $_pc (the list of scored ports, services and accounts no script may touch)."
+    if cc_ask "Continue without a protected list? LX-39 does not touch ports or services anyway" N; then CC_NO_PROTECTED=1; return 0; fi
+    return 1
+}
+if [ "$CC_APPLY" = 1 ] && ! protected_check; then
+    cc_show "$C_YEL" "[*] Staying in dry run: nothing will be changed."
+    CC_APPLY=0
+fi
+APPLY_FLAG=$CC_APPLY
+
 cc_init "LX-39" "Linux safe fixes" changes
 cc_detect_os
 if [ "$CC_APPLY" = 1 ] && [ -z "$R" ]; then cc_require_root; fi
-cc_use_run_dir
+cc_use_numbered_dir safe-fixes
+CC_CSV_DIR="$CC_RUN_DIR/csv"
+mkdir -p "$CC_CSV_DIR" || cc_die 3 "cannot create $CC_CSV_DIR"
 W="$CC_RUN_DIR/.work"
 mkdir -p "$W" || cc_die 3 "cannot create $W"
-CSV=$(cc_csv_new fixes "fix,item,before,after,status")
-[ -n "$R" ] && cc_info "file fixes act on $R (as if it were /)"
+# Everything shown on screen also goes to output.txt (start line from the log).
+OUTF="$CC_RUN_DIR/output.txt"
+grep -v '\[NOTE\]\|\[DEBUG\]' "$CC_LOG" >"$OUTF" 2>/dev/null || : >"$OUTF"
+CC_TEE=$OUTF
+cc_show "$C_CYN" "LX-39 Linux safe fixes | host $CC_HOST | results in $CC_RUN_DIR"
+cc_show "" "Legend: ${C_GRN}[+] changed${C_OFF}  ${C_YEL}[~] would change  [*] check by hand${C_OFF}  ${C_RED}[x] failed${C_OFF}  ${C_GRN}[ok] already right${C_OFF}"
+[ -n "$R" ] && cc_show "$C_GRY" "File fixes act on $R (as if it were /)"
+
+# Can this run change anything?  Root (or --root) and either --apply or
+# someone at the keyboard to say yes.
+CANAPPLY=0
+if [ "$CC_APPLY" = 1 ] || _cc_can_ask; then
+    if [ -n "$R" ] || cc_is_root; then CANAPPLY=1; fi
+fi
+if [ "$CANAPPLY" = 0 ]; then
+    if cc_is_root || [ -n "$R" ]; then cc_show "$C_GRY" "Dry run only (--batch without --apply): nothing will be changed."
+    else cc_show "$C_GRY" "Dry run only (not root): nothing will be changed. Run with sudo to make changes."; fi
+elif [ "$NOTIMER" = 1 ]; then
+    cc_show "$C_YEL" "[*] No revert timer (--no-timer): if a change locks you out, nothing puts it back."
+else
+    cc_timer_start "$TIMER"
+    cc_show "$C_YEL" "[*] Revert timer started: everything this run changes is undone in $((TIMER / 60)):$(printf '%02d' $((TIMER % 60))) unless you keep it at the end."
+fi
 
 # ---- Helpers ----------------------------------------------------------------
-# row ITEM BEFORE AFTER STATUS -> one line in fixes.csv for the current fix.
-row() { cc_csv_row "$CSV" "$FIX" "$1" "$2" "$3" "$4"; }
+# row ITEM BEFORE AFTER STATUS -> one line in the CSV for the current fix,
+#   and one coloured line on screen ("already ok" lines are only counted).
+OKN=0
+row() {
+    cc_csv_row "$CSV" "$FIX" "$1" "$2" "$3" "$4"
+    _rw_ch=""; [ -n "$2$3" ] && _rw_ch="  ${2:-(none)} -> ${3:-(none)}"
+    case "$4" in
+        "would change")  cc_show "$C_YEL" "  [~] $1$_rw_ch" ;;
+        changed)         cc_show "$C_GRN" "  [+] $1$_rw_ch" ;;
+        failed)          cc_show "$C_RED" "  [x] FAILED $1$_rw_ch" ;;
+        refused)         cc_show "$C_YEL" "  [-] refused (protected list): $1" ;;
+        "check by hand") cc_show "$C_YEL" "  [*] check: $1 - $3" ;;
+        "already ok"*|skipped*) OKN=$((OKN + 1)) ;;
+        *)               cc_show "$C_YEL" "  [*] $1: $4" ;;
+    esac
+    return 0
+}
+# ok_line -> "[ok] N already right" for the block just shown.
+ok_line() { [ "$OKN" -gt 0 ] && cc_show "$C_GRN" "  [ok] $OKN already right"; OKN=0; return 0; }
+# header TEXT -> a section header, linpeas style.
+header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
 # result RC -> the status word for a change that was just attempted.
 result() { if [ "$CC_APPLY" != 1 ]; then echo "would change"; elif [ "$1" -eq 0 ]; then echo changed; else echo failed; fi; }
 # P PATH -> PATH under the --root folder (or PATH itself).
@@ -237,6 +333,10 @@ set_mode() {
     [ -n "$_sm_old" ] || return 0
     _sm_new=$(mode_calc "$_sm_old" "$_sm_c" "$_sm_s")
     _sm_item=${_sm_p#"$R"}
+    # Each path once per pass: the world-writable sweep would otherwise list
+    # a file the named rules above already handled.
+    grep -qxF "$_sm_p" "$W/handled" 2>/dev/null && return 0
+    printf '%s\n' "$_sm_p" >>"$W/handled"
     if [ "$_sm_new" = "$_sm_old" ]; then
         [ -n "$_sm_q" ] || row "$_sm_item" "$_sm_old" "$_sm_old" "already ok"
         return 0
@@ -260,7 +360,7 @@ want_sysctl() {
 
 # ---- Fixes --------------------------------------------------------------------
 : >"$W/sysctl_want"; : >"$W/report"
-# report ITEM TEXT -> something to check by hand (summary and fixes.csv).
+# report ITEM TEXT -> something to check by hand (summary and the CSV).
 report() { printf '%s|%s|%s\n' "$FIX" "$1" "$2" >>"$W/report"; row "$1" "" "$2" "check by hand"; }
 
 KEEPLO=0    # 1 = the ipv6 fix ran: keep IPv6 on the loopback interface
@@ -493,10 +593,64 @@ fix_hosts() {
     [ -s "$W/hosts_extra" ] || row "/etc/hosts" "only local names" "" "already ok"
 }
 
-# ---- Run the fixes ------------------------------------------------------------
+# ---- Questions ------------------------------------------------------------------
+# fix_desc NAME -> the one-line description from --list.
+fix_desc() { list_fixes | awk -v f="$1" '$1 == f { $1 = ""; sub(/^ +/, ""); print }'; }
+
+header "QUESTIONS (Enter = the default in capitals)"
+if [ -z "$BOX" ]; then
+    cc_ask_text "Which box is this? splunk / webmail / ecomm / other" other
+    BOX=$CC_ANSWER
+    case "$BOX" in splunk|webmail|ecomm|other) ;; *) cc_show "$C_GRY" "    '$BOX' is not one of the four: using other"; BOX=other ;; esac
+fi
+case "$BOX" in
+    splunk)  cc_show "$C_GRY" "    Scored here: chrony (123/udp), Splunk management (8089), search, SSH, ping. LX-39 touches none of them." ;;
+    webmail) cc_show "$C_GRY" "    Scored here: IMAP, SMTP, webmail login, SSH, ping. LX-39 touches none of them." ;;
+    ecomm)   cc_show "$C_GRY" "    Scored here: HTTP, ping. If the store runs in Docker, IP forwarding must stay on." ;;
+esac
+if [ "$SETTLED" = 1 ]; then
+    # --only / --skip decided the list.  forwarding still needs --no-forwarding
+    # (or naming it in --only), because routers and Docker hosts need it.
+    _keep=""
+    for _f in $FIXES; do [ "$_f" = forwarding ] && [ "$NOFWD" = 0 ] && continue; _keep="$_keep $_f"; done
+    FIXES=$_keep
+    cc_show "$C_GRY" "    Fixes chosen by --only/--skip:$FIXES"
+else
+    _keep=""
+    for _f in $FIXES; do
+        case "$_f" in
+            forwarding)
+                if [ "$FWDFLAG" = 1 ]; then _keep="$_keep $_f"; continue; fi
+                # Nobody to ask (--batch, no terminal): forwarding stays on
+                # unless --no-forwarding said otherwise.
+                if ! _cc_can_ask; then cc_show "$C_GRY" "    IP forwarding: left on (turn it off with --no-forwarding)"; continue; fi
+                _d=N; [ "$BOX" = ecomm ] && _d=Y
+                if cc_ask "Does this box route traffic or run Docker/containers? (they need IP forwarding)" "$_d"; then
+                    cc_show "$C_GRY" "    IP forwarding stays on."
+                elif cc_ask "Turn IP forwarding off? (forwarding)" Y; then
+                    _keep="$_keep $_f"; NOFWD=1
+                fi ;;
+            ipv6)  cc_ask "Turn IPv6 off? Check no scored service uses IPv6 first (ipv6)" Y && _keep="$_keep $_f" ;;
+            hosts) cc_ask "Check /etc/hosts for odd entries? Report only (hosts)" Y && _keep="$_keep $_f" ;;
+            *)     cc_ask "$(fix_desc "$_f")? ($_f)" Y && _keep="$_keep $_f" ;;
+        esac
+    done
+    FIXES=$_keep
+fi
+case " $FIXES " in *" forwarding "*) NOFWD=1 ;; esac
+
+# ---- The fixes, as one pass ---------------------------------------------------
+# run_all runs every chosen fix and the kernel settings step.  It runs twice:
+# first as a dry run to show the plan, then (if you say yes) for real.
+run_all() {
+: >"$W/sysctl_want"; : >"$W/report"; : >"$W/handled"; KEEPLO=0
+_ra_q=$CC_QUIET; CC_QUIET=1        # the coloured lines replace WOULD/DO lines
+_ra_i=0; _ra_n=$(printf '%s\n' $FIXES | grep -c .)
 for FIX in $FIXES; do
-    cc_info "fix: $FIX"
+    _ra_i=$((_ra_i + 1))
+    header "$_ra_i/$_ra_n  $FIX"
     "fix_$FIX"
+    ok_line
 done
 
 # IP forwarding left on is worth a look even when it is not being changed.
@@ -507,6 +661,7 @@ fi
 
 # ---- Kernel settings: one file for boot, then the running values -------------
 if [ -s "$W/sysctl_want" ]; then
+    header "kernel settings (sysctl, ipv6, forwarding, coredumps)"
     _sd=$(P /etc/sysctl.d)
     if [ -d "$_sd" ]; then _sf="$_sd/99-zz-ccdc-safe.conf"; _sfi=/etc/sysctl.d/99-zz-ccdc-safe.conf
     else _sf=$(P /etc/sysctl.conf); _sfi=/etc/sysctl.conf; fi
@@ -557,6 +712,42 @@ if [ -s "$W/sysctl_want" ]; then
             row "$_k" "$_cur" 0 "already ok"
         fi
     fi
+    ok_line
+fi
+CC_QUIET=$_ra_q
+}
+
+# ---- Plan, then apply -----------------------------------------------------------
+CSV=$(cc_csv_new plan "fix,item,before,after,status")
+_real_apply=$CC_APPLY; CC_APPLY=0
+header "PLAN (dry run: nothing is changed yet)"
+run_all
+CC_APPLY=$_real_apply
+NCH=$(awk "$CC_AWK_CSV"'NR > 1 { csvsplit($0, f); if (f[5] == "would change") n++ } END { print n + 0 }' "$CSV")
+cc_csv_pretty "$CSV" "$CC_RUN_DIR/plan.txt" 80
+APPLIED=0
+header "DECISION"
+if [ "$NCH" -eq 0 ]; then
+    cc_show "$C_GRN" "[ok] Nothing to change: every chosen fix is already in place."
+elif [ "$CANAPPLY" = 0 ]; then
+    cc_show "$C_GRY" "$NCH change(s) planned. Dry run only, so nothing was changed."
+else
+    _ad=N; [ "$APPLY_FLAG" = 1 ] && _ad=Y
+    if cc_ask "Apply these $NCH change(s)?" "$_ad"; then
+        if [ "$APPLY_FLAG" = 0 ] && ! protected_check; then
+            cc_show "$C_YEL" "[*] Not applied: no protected list."
+        elif cc_timer_fired || { [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -lt 3 ]; }; then
+            cc_die 3 "the revert timer ran out before anything was changed. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
+        else
+            CC_APPLY=1; APPLIED=1; CC_N_WOULD=0    # the plan pass counted these
+            CSV=$(cc_csv_new fixes "fix,item,before,after,status")
+            header "APPLYING"
+            run_all
+            cc_csv_pretty "$CSV" "$CC_RUN_DIR/fixes.txt" 80
+        fi
+    else
+        cc_show "$C_GRY" "Not applied. The plan is in $CC_RUN_DIR/plan.txt"
+    fi
 fi
 
 # ---- Summary ------------------------------------------------------------------
@@ -582,20 +773,46 @@ fi
     awk "$CC_AWK_CSV"'NR > 1 { csvsplit($0, f); if (f[5] == "changed" || f[5] == "would change" || f[5] == "failed")
         printf "  %-13s %-10s %s%s\n", toupper(f[5]), f[1], f[2], (f[3] != "" || f[4] != "" ? "  [" f[3] " -> " f[4] "]" : "") }' "$CSV" | head -n 60
     _nch=$(awk "$CC_AWK_CSV"'NR > 1 { csvsplit($0, f); if (f[5] == "changed" || f[5] == "would change" || f[5] == "failed") n++ } END { print n + 0 }' "$CSV")
-    [ "$_nch" -gt 60 ] && printf '  ... %d more in fixes.csv\n' "$((_nch - 60))"
+    [ "$_nch" -gt 60 ] && printf '  ... %d more in fixes.txt\n' "$((_nch - 60))"
     [ "$_nch" -eq 0 ] && printf '  Nothing to change: every fix was already in place.\n'
     if [ -s "$W/report" ]; then
         printf '\nCheck by hand (not changed):\n'
         awk -F'|' '{ l = "  " $2 ": " $3; if (length(l) > 200) l = substr(l, 1, 197) "..."; print l }' "$W/report"
     fi
     printf '\n'
-    if [ "$CC_APPLY" = 1 ]; then
-        printf 'Undo: the commands are in %s (run them from the bottom up).\n' "$CC_UNDO"
+    if [ "$APPLIED" = 1 ]; then
+        printf 'Undo this run at any time: sh %s/revert.sh --force\n' "$CC_RUN_DIR"
+        printf '(every host change is also in %s)\n' "$CC_UNDO"
     else
-        printf 'Dry run: nothing changed.  Run again with --apply to make these changes.\n'
+        printf 'Nothing was changed.\n'
     fi
     printf 'All results: %s\n' "$CC_RUN_DIR"
 } >"$CC_RUN_DIR/summary.txt"
-cat "$CC_RUN_DIR/summary.txt"
+# Without a timer, revert.sh still needs writing for "undo at any time".
+if [ "$APPLIED" = 1 ] && [ -z "$CC_TIMER_DIR" ]; then
+    cc_show "$C_GRY" "Undo commands: $CC_UNDO (newest at the bottom)"
+fi
+header "SUMMARY"
+# Coloured on screen: red failed, green changed, yellow would-change and
+# check-by-hand, cyan headings.  summary.txt and output.txt stay plain.
+awk -v R="$C_RED" -v Y="$C_YEL" -v G="$C_GRN" -v C="$C_CYN" -v D="$C_GRY" -v O="$C_OFF" '
+    NR == 1 || /^fix +changes/ { intable = /^fix/; print C $0 O; next }
+    intable && /^$/            { intable = 0; print; next }
+    intable                    { if ($4 + 0 > 0) print R $0 O; else if ($2 + 0 > 0) print Y $0 O; else print G $0 O; next }
+    /^  CHANGED/               { print G $0 O; next }
+    /^  FAILED/                { print R $0 O; next }
+    /^  WOULD CHANGE/          { print Y $0 O; next }
+    /^Check by hand/           { hand = 1; print Y $0 O; next }
+    hand && /^  /              { print Y $0 O; next }
+    /^Nothing to change/ || /^  Nothing to change/ { print G $0 O; next }
+                               { hand = 0; print D $0 O }
+' "$CC_RUN_DIR/summary.txt"
+cat "$CC_RUN_DIR/summary.txt" >>"$OUTF"
 rm -rf "$W"
+if [ "$APPLIED" = 1 ]; then
+    header "KEEP OR REVERT"
+    cc_timer_finish
+elif [ -n "$CC_TIMER_DIR" ]; then
+    cc_timer_cancel; : >"$CC_TIMER_DIR/KEEP"
+fi
 cc_finish

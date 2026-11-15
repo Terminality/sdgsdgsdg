@@ -80,9 +80,11 @@ printf '#!/bin/sh\necho other\n' >"$B/other"; chmod 777 "$B/other"
 printf '%s\n' "17 * * * * root $B/backup.sh >/dev/null" "18 * * * * root sh $B/safe.sh" "19 * * * * bob $B/other" >"$F/etc/crontab"
 printf '[Service]\nExecStart=%s --flag\n' "$B/svc" >"$F/etc/systemd/system/bad.service"
 printf '[Service]\nUser=redis\nExecStart=%s\n' "$B/other" >"$F/etc/systemd/system/redis.service"
-printf '%s\n' 'Defaults env_keep += "LD_PRELOAD"' 'bob ALL=(root) NOPASSWD: /usr/bin/vim, /usr/bin/id' 'root ALL=(ALL) ALL' >"$F/etc/sudoers"
+printf '%s\n' 'Defaults env_keep += "LD_PRELOAD"' 'bob ALL=(root) NOPASSWD: /usr/bin/vim, /usr/bin/id' 'root ALL=(ALL) ALL' >"$F/etc/sudoers"  # posix-ok: sudoers text, not shell
 printf 'root:x:0:\n' >"$F/etc/shadow"; chmod 644 "$F/etc/shadow"
-r=$(CCDC_TEST_ROOT="$F" run --out "$T_TMP/o6" --only privesc 2>&1); t_eq "$?" 0 "privesc exits 0"
+# export inside $( ): ksh does not pass VAR=x in front of a function call on
+# to the programs the function starts.
+r=$(CCDC_TEST_ROOT="$F"; export CCDC_TEST_ROOT; run --out "$T_TMP/o6" --only privesc 2>&1); t_eq "$?" 0 "privesc exits 0"
 R6=$(ls -d "$T_TMP"/o6/linux-enum-*/ | head -n 1)
 t_has "$r" "==========[ 1/1  privesc ]==========" "privesc section runs"
 t_has "$r" "[!] FIX   $B/backup.sh: a root cron job runs this file, and anyone can write it" "writable root cron script is a FIX"
@@ -95,7 +97,7 @@ t_hasnt "$r" "/usr/bin/id with sudo" "a harmless sudo program is not flagged"
 t_has "$r" "sudo keeps LD_PRELOAD" "env_keep LD_PRELOAD is a FIX"
 t_has "$r" "anyone can read the password hashes" "readable shadow file is a FIX"
 t_has "$(cat "$R6/privesc.txt")" "CHECK" "privesc.txt is a readable table"
-r=$(PATH=".:$PATH" run --out "$T_TMP/o7" --only privesc 2>&1)
+r=$(PATH=".:$PATH"; export PATH; run --out "$T_TMP/o7" --only privesc 2>&1)
 t_has "$r" "the PATH includes the current folder" "'.' on the PATH is a FIX"
 
 t_start "it changes nothing"

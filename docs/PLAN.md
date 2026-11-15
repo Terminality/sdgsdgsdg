@@ -48,7 +48,7 @@ We got kicked off a box in practice once, so anything marked `access` has to:
 
 Before you run anything like that, keep a second session open and make sure there's a backup admin account with a password you know.
 
-The firewall scripts already roll themselves back (5 minutes on Windows, 2 on Linux). They still need to be moved to 1 minute.
+The firewall scripts already roll themselves back (5 minutes on Windows, 2 on Linux). LX-39 (Linux safe fixes) has a 2-minute revert timer from the moment it starts, built into the library (`cc_timer_start`) so other Linux scripts can use it next.
 
 ## Staying safe
 

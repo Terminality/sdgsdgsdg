@@ -98,6 +98,10 @@ CC_CSV_DIR=""               # when set, CSV files go here instead of CC_OUT
 CC_RUN_DIR=""               # per-run folder, set by cc_use_run_dir
 CC_FLAGS=""                 # path of this run's flags.csv, once one is written
 CC_TEE=""                   # copy of screen lines, when a script sets it
+: "${CC_BATCH:=0}"          # 1 = never ask: take every default (--batch)
+CC_RUN_UNDO=""              # this run's undo lines, for the revert timer
+CC_TIMER_DIR=""             # folder holding revert.sh, KEEP, REVERTED
+CC_TIMER_DEADLINE=0         # epoch second when the revert timer fires
 CC_SHIFT=1                  # how many arguments cc_common_flag consumed
 
 # -----------------------------------------------------------------------------
@@ -254,6 +258,7 @@ Common options (every script in the kit):
                      DIR/protected.csv)
   --no-protected     allow --apply without a protected list (dangerous)
   --force-scored     allow changes to accounts on the protected list
+  --batch            never ask questions: take every default (like sqlmap)
   --quiet            only print warnings and errors
   --debug            print debugging detail
   --version          print the library version and exit
@@ -278,6 +283,7 @@ cc_common_flag() {
         --protected=*)  CC_PROTECTED=${1#--protected=} ;;
         --no-protected) CC_NO_PROTECTED=1 ;;
         --force-scored) CC_FORCE_SCORED=1 ;;
+        --batch)        CC_BATCH=1 ;;
         --quiet)        CC_QUIET=1 ;;
         --debug)        CC_DEBUG=1 ;;
         --version)      printf 'ccdc kit library %s\n' "$CC_LIB_VERSION"; exit 0 ;;
@@ -379,6 +385,7 @@ cc_run() {
         CC_N_WOULD=$((CC_N_WOULD + 1))
         return 0
     fi
+    cc_timer_fired && { cc_log REFUSED "$_cc_run_desc: the revert timer already ran out, so nothing more is changed"; CC_N_REFUSED=$((CC_N_REFUSED + 1)); return 4; }
     cc_log DO "$_cc_run_desc  [$*]"
     "$@" >>"$CC_LOG" 2>&1
     _cc_run_rc=$?
@@ -402,6 +409,7 @@ cc_run_quiet() {
         CC_N_WOULD=$((CC_N_WOULD + 1))
         return 0
     fi
+    cc_timer_fired && { cc_log REFUSED "$_cc_runq_desc: the revert timer already ran out, so nothing more is changed"; CC_N_REFUSED=$((CC_N_REFUSED + 1)); return 4; }
     cc_log DO "$_cc_runq_desc"
     "$@" >/dev/null 2>&1
     _cc_runq_rc=$?
@@ -424,6 +432,9 @@ cc_undo_add() {
     [ "$CC_APPLY" = 1 ] || return 0
     [ -f "$CC_UNDO" ] || (umask 077; : >>"$CC_UNDO")
     printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CC_ID" "$1" "$2" >>"$CC_UNDO"
+    # This run's own copy, which the revert timer replays.
+    [ -n "$CC_RUN_UNDO" ] && printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CC_ID" "$1" "$2" >>"$CC_RUN_UNDO"
+    return 0
 }
 
 # cc_backup_file PATH
@@ -453,6 +464,258 @@ cc_backup_file() {
     fi
     cc_err "backup FAILED for $_cc_bk_src - do not change this file"
     return 1
+}
+
+# -----------------------------------------------------------------------------
+# Screen colours, questions and the revert timer
+# -----------------------------------------------------------------------------
+# Scripts that talk to the operator (sqlmap style) use these:
+#   cc_color_init            set C_RED C_YEL C_GRN C_CYN C_GRY C_OFF
+#   cc_show COLOUR TEXT      one line on screen, plain copy in CC_TEE
+#   cc_ask QUESTION Y|N      yes/no question; Enter takes the default
+#   cc_ask_text QUESTION DEF free-text question; answer in CC_ANSWER
+#   cc_timer_start SECONDS   arm a revert that runs even if the session dies
+#   cc_timer_finish          "keep these changes?" - keep, or revert
+# --batch (CC_BATCH=1) or no terminal: every question takes its default.
+
+# cc_now -> seconds since 1970.  'date +%s' is not POSIX; awk's srand() is.
+cc_now() {
+    _cc_now=$(date +%s 2>/dev/null)
+    case "$_cc_now" in ''|*[!0-9]*) awk 'BEGIN { srand(); print srand() }' ;; *) printf '%s\n' "$_cc_now" ;; esac
+}
+
+# cc_color_init -> colours on when stdout is a terminal, NO_COLOR is unset
+#   and the script did not set CC_NOCOLOR=1.
+cc_color_init() {
+    if [ "${CC_NOCOLOR:-0}" != 1 ] && [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+        C_RED=$(printf '\033[1;31m'); C_YEL=$(printf '\033[1;33m'); C_GRN=$(printf '\033[1;32m')
+        C_CYN=$(printf '\033[1;36m'); C_GRY=$(printf '\033[0;90m'); C_OFF=$(printf '\033[0m')
+    else
+        C_RED=""; C_YEL=""; C_GRN=""; C_CYN=""; C_GRY=""; C_OFF=""
+    fi
+}
+
+# cc_show COLOUR TEXT -> TEXT on screen in COLOUR; a plain copy in CC_TEE.
+cc_show() {
+    printf '%s%s%s\n' "$1" "$2" "${C_OFF:-}"
+    [ -n "$CC_TEE" ] && printf '%s\n' "$2" >>"$CC_TEE" 2>/dev/null
+    return 0
+}
+
+# cc_timer_left -> seconds until the revert timer fires (0 when it has, or
+#   when no timer is running).
+cc_timer_left() {
+    [ "$CC_TIMER_DEADLINE" -gt 0 ] || { echo 0; return 0; }
+    _cc_tl=$((CC_TIMER_DEADLINE - $(cc_now)))
+    [ "$_cc_tl" -lt 0 ] && _cc_tl=0
+    echo "$_cc_tl"
+}
+# cc_timer_fired -> true once the revert has run (or is running).
+cc_timer_fired() { [ -n "$CC_TIMER_DIR" ] && { [ -f "$CC_TIMER_DIR/REVERTED" ] || [ -d "$CC_TIMER_DIR/.revert.lock" ]; }; }
+
+# _cc_read VAR -> read one line from the terminal into VAR.  Stops at the
+#   revert deadline when the shell's read has -t (bash, ksh, mksh, busybox);
+#   dash's read has no -t and waits.  Returns 1 if no line was read.
+_cc_read() {
+    _cc_rd_left=$(cc_timer_left)
+    if [ "$_cc_rd_left" -gt 0 ] && [ "${_CC_READ_T:-}" = "" ]; then
+        if ( read -r -t 1 _x </dev/null ) 2>/dev/null; [ $? -eq 1 ]; then _CC_READ_T=1; else _CC_READ_T=0; fi
+    fi
+    if [ "$_cc_rd_left" -gt 0 ] && [ "$_CC_READ_T" = 1 ]; then
+        # shellcheck disable=SC3045
+        read -r -t "$_cc_rd_left" "$1" </dev/tty 2>/dev/null  # posix-ok: -t only where the shell has it
+    else
+        read -r "$1" </dev/tty 2>/dev/null
+    fi
+}
+
+# _cc_left_txt -> " (1:42 left)" while the revert timer runs, else nothing.
+_cc_left_txt() {
+    _cc_lt=$(cc_timer_left)
+    [ "$_cc_lt" -gt 0 ] && printf ' (%d:%02d left)' $((_cc_lt / 60)) $((_cc_lt % 60))
+    return 0
+}
+
+# _cc_can_ask -> true when there is someone to ask.
+#   CCDC_NO_TTY=1 says there is nobody (the test suite sets it, so tests
+#   never wait for an answer when run from a terminal).
+_cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${CCDC_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
+
+# cc_ask QUESTION DEFAULT -> 0 for yes, 1 for no.  DEFAULT is Y or N.
+#   Enter takes the default.  With --batch or no terminal the default is
+#   taken and shown.  If the revert timer runs out while waiting, the script
+#   stops (nothing has been changed while questions are still being asked).
+cc_ask() {
+    _cc_ak_q=$1; _cc_ak_d=${2:-N}
+    case "$_cc_ak_d" in Y|y) _cc_ak_h="Y/n"; _cc_ak_d=Y ;; *) _cc_ak_h="y/N"; _cc_ak_d=N ;; esac
+    if ! _cc_can_ask; then
+        cc_show "${C_CYN:-}" "[?] $_cc_ak_q [$_cc_ak_h] $_cc_ak_d (default)"
+    else
+        while :; do
+            printf '%s[?]%s %s [%s]%s ' "${C_CYN:-}" "${C_OFF:-}" "$_cc_ak_q" "$_cc_ak_h" "$(_cc_left_txt)" >/dev/tty
+            if ! _cc_read _cc_ak_a; then
+                printf '\n' >/dev/tty
+                [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
+                _cc_ak_a=""
+            fi
+            case "$_cc_ak_a" in
+                '') _cc_ak_a=$_cc_ak_d; break ;;
+                y|Y|yes|YES|Yes) _cc_ak_a=Y; break ;;
+                n|N|no|NO|No) _cc_ak_a=N; break ;;
+                *) printf '    please answer y or n\n' >/dev/tty ;;
+            esac
+        done
+        [ -n "$CC_TEE" ] && printf '[?] %s [%s] %s\n' "$_cc_ak_q" "$_cc_ak_h" "$_cc_ak_a" >>"$CC_TEE"
+        cc_note "asked: $_cc_ak_q -> $_cc_ak_a"
+        _cc_ak_d=$_cc_ak_a
+    fi
+    [ "$_cc_ak_d" = Y ]
+}
+
+# cc_ask_text QUESTION DEFAULT -> the answer in CC_ANSWER (DEFAULT on Enter,
+#   with --batch, or with no terminal).
+cc_ask_text() {
+    CC_ANSWER=$2
+    if ! _cc_can_ask; then
+        cc_show "${C_CYN:-}" "[?] $1 ${2:-(none)} (default)"
+        return 0
+    fi
+    printf '%s[?]%s %s [%s]%s ' "${C_CYN:-}" "${C_OFF:-}" "$1" "${2:-Enter for none}" "$(_cc_left_txt)" >/dev/tty
+    if ! _cc_read _cc_at_a; then
+        printf '\n' >/dev/tty
+        [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
+        _cc_at_a=""
+    fi
+    [ -n "$_cc_at_a" ] && CC_ANSWER=$_cc_at_a
+    [ -n "$CC_TEE" ] && printf '[?] %s %s\n' "$1" "$CC_ANSWER" >>"$CC_TEE"
+    cc_note "asked: $1 -> $CC_ANSWER"
+    return 0
+}
+
+# cc_timer_start SECONDS
+#   Arm the revert timer: after SECONDS, every change this run recorded with
+#   cc_undo_add is undone (newest first) unless cc_timer_finish was answered
+#   "keep".  The revert runs outside this shell (a systemd timer, else a
+#   detached background job) so it still happens if the SSH or console
+#   session is killed - which is the point.  Needs CC_RUN_DIR.
+#   Files in the run folder:
+#     undo.txt     this run's undo lines        revert.sh   runs them
+#     KEEP         made by "keep" (or by hand, from another session)
+#     REVERTED     made when the revert has run  revert.log  what it did
+cc_timer_start() {
+    _cc_ts_s=$1
+    [ -n "$CC_RUN_DIR" ] || cc_die 1 "cc_timer_start needs a run folder (cc_use_run_dir first)"
+    CC_TIMER_DIR=$CC_RUN_DIR
+    CC_RUN_UNDO="$CC_TIMER_DIR/undo.txt"
+    (umask 077; : >"$CC_RUN_UNDO")
+    _cc_ts_r="$CC_TIMER_DIR/revert.sh"
+    # The revert script stands alone (no library): it may run after this
+    # script and the kit are gone.  It can also be run by hand at any time.
+    {
+        printf '#!/bin/sh\n'
+        printf '# Undo everything run %s changed, newest first.  Written by %s.\n' "$(basename "$CC_TIMER_DIR")" "$CC_ID"
+        printf '# Run it by hand to revert now:  sh %s\n' "$_cc_ts_r"
+        printf 'D=%s\n' "$(cc_shquote "$CC_TIMER_DIR")"
+        cat <<'REVERT'
+[ -f "$D/KEEP" ] && [ "${1:-}" != --force ] && exit 0
+mkdir "$D/.revert.lock" 2>/dev/null || exit 0
+{
+    echo "revert started $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    awk '{ a[NR] = $0 } END { for (i = NR; i > 0; i--) print a[i] }' "$D/undo.txt" >"$D/.undo.rev"
+    T=$(printf '	')
+    while IFS="$T" read -r _t _id _desc _cmd; do
+        [ -n "$_cmd" ] || continue
+        if sh -c "$_cmd"; then echo "undone: $_desc"; else echo "FAILED to undo: $_desc  [$_cmd]"; fi
+    done <"$D/.undo.rev"
+    rm -f "$D/.undo.rev"
+    echo "revert finished $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} >>"$D/revert.log" 2>&1
+: >"$D/REVERTED"
+REVERT
+    } >"$_cc_ts_r"
+    chmod 700 "$_cc_ts_r"
+    CC_TIMER_DEADLINE=$(( $(cc_now) + _cc_ts_s ))
+    CC_TIMER_HOW=""
+    # 1. A systemd transient timer: survives logout and a killed session.
+    if [ "${CCDC_TIMER_METHOD:-}" != background ] && cc_is_root && [ -d /run/systemd/system ] && cc_have systemd-run; then
+        CC_TIMER_ID="ccdc-revert-$$-$(cc_now)"
+        if systemd-run --quiet --unit "$CC_TIMER_ID" --on-active="${_cc_ts_s}s" --timer-property=AccuracySec=1s /bin/sh "$_cc_ts_r" >>"$CC_LOG" 2>&1; then
+            CC_TIMER_HOW=systemd
+        fi
+    fi
+    # 2. A detached background job: nohup ignores the hang-up a dropped SSH
+    #    session sends; setsid (where present) leaves the session entirely.
+    if [ -z "$CC_TIMER_HOW" ]; then
+        _cc_ts_set=""; cc_have setsid && _cc_ts_set=setsid
+        # shellcheck disable=SC2086
+        nohup $_cc_ts_set sh -c 'sleep "$1"; sh "$2"' sh "$_cc_ts_s" "$_cc_ts_r" >/dev/null 2>&1 &
+        CC_TIMER_ID=$!
+        CC_TIMER_HOW=background
+    fi
+    printf 'how=%s\nid=%s\ndeadline=%s\n' "$CC_TIMER_HOW" "$CC_TIMER_ID" "$CC_TIMER_DEADLINE" >"$CC_TIMER_DIR/timer.txt"
+    cc_note "revert timer armed: ${_cc_ts_s}s ($CC_TIMER_HOW $CC_TIMER_ID)"
+    return 0
+}
+
+# cc_timer_cancel -> stop the pending revert (KEEP is what makes it safe;
+#   stopping the job just tidies up).
+cc_timer_cancel() {
+    [ -n "$CC_TIMER_DIR" ] || return 0
+    case "$CC_TIMER_HOW" in
+        systemd)    systemctl stop "$CC_TIMER_ID.timer" "$CC_TIMER_ID.service" >/dev/null 2>&1 ;;
+        background) kill "$CC_TIMER_ID" 2>/dev/null ;;
+    esac
+    CC_TIMER_DEADLINE=0
+    return 0
+}
+
+# cc_timer_finish
+#   Ask "keep these changes?".  y: keep (KEEP file, timer stopped).  n, or no
+#   answer before the timer: revert now.  With --batch: keep.  With no
+#   terminal and no --batch: leave the timer running and say how to keep the
+#   changes from another session.  Returns 0 if the changes were kept.
+cc_timer_finish() {
+    [ -n "$CC_TIMER_DIR" ] || return 0
+    if [ ! -s "$CC_RUN_UNDO" ]; then
+        cc_timer_cancel; : >"$CC_TIMER_DIR/KEEP"
+        return 0
+    fi
+    if cc_timer_fired; then
+        cc_show "${C_RED:-}" "[!] The revert timer already ran out: the changes were undone (see $CC_TIMER_DIR/revert.log)"
+        return 1
+    fi
+    if [ "$CC_BATCH" = 1 ]; then
+        : >"$CC_TIMER_DIR/KEEP"; cc_timer_cancel
+        cc_show "${C_GRN:-}" "[+] Changes kept (--batch). Revert later with: sh $CC_TIMER_DIR/revert.sh --force"
+        return 0
+    fi
+    if ! _cc_can_ask; then
+        cc_show "${C_YEL:-}" "[*] No terminal to ask. The changes are undone in $(cc_timer_left)s unless you run, from any session:"
+        cc_show "${C_YEL:-}" "      touch $CC_TIMER_DIR/KEEP"
+        return 0
+    fi
+    cc_show "${C_YEL:-}" "[*] Check you can still get in: open a NEW SSH or console session and log in now."
+    if cc_ask_keep; then
+        if cc_timer_fired; then
+            cc_show "${C_RED:-}" "[!] Too late: the timer ran out and the changes were undone (see $CC_TIMER_DIR/revert.log)"
+            return 1
+        fi
+        : >"$CC_TIMER_DIR/KEEP"; cc_timer_cancel
+        cc_show "${C_GRN:-}" "[+] Changes kept. Revert later with: sh $CC_TIMER_DIR/revert.sh --force"
+        return 0
+    fi
+    cc_timer_cancel
+    sh "$CC_TIMER_DIR/revert.sh" --force
+    cc_show "${C_RED:-}" "[!] Changes undone. What was done: $CC_TIMER_DIR/revert.log"
+    return 1
+}
+
+# cc_ask_keep -> the keep question.  No answer by the deadline counts as no.
+cc_ask_keep() {
+    printf '%s[?]%s Keep these changes? [y/N]%s ' "${C_CYN:-}" "${C_OFF:-}" "$(_cc_left_txt)" >/dev/tty
+    if ! _cc_read _cc_kp_a; then printf '\n' >/dev/tty; _cc_kp_a=""; fi
+    [ -n "$CC_TEE" ] && printf '[?] Keep these changes? [y/N] %s\n' "${_cc_kp_a:-N}" >>"$CC_TEE"
+    case "$_cc_kp_a" in y|Y|yes|YES|Yes) return 0 ;; *) return 1 ;; esac
 }
 
 # -----------------------------------------------------------------------------
