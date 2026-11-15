@@ -452,7 +452,7 @@ Run it as root. As a normal user it still works, but the summary marks several s
 
 | Option | What it does |
 | --- | --- |
-| `--profile card` | system, users, ports, services, autostart, ssh, sudo. Use it in the first minutes |
+| `--profile card` | system, users, ports, services, autostart, ssh, sudo, privesc. Use it in the first minutes |
 | `--profile full` (default) | card plus processes, connections, sessions, packages, files, firewall, pam, mac, trust, creds, containers, modules |
 | `--profile triage` | full plus copying the logs. Use it when you think the box is compromised, before anything else changes |
 | `--only a,b` / `--skip a,b` | Pick sections. `--list` shows the names |
@@ -475,6 +475,7 @@ Each run gets a numbered folder: `<out>/linux-enum-1`, `linux-enum-2`, ... Highe
 | `csv/` | The same data as CSV, for SH-04 |
 | `summary.txt` | The end summary: key facts, a row per section, the HIGH and MED flags |
 | `run.txt` | Script ID, host and start time (SH-04 uses it) |
+| `privesc.txt` | Ways to become root, like linpeas checks: files root runs (cron, services, start-up) that others can change, writable key files (`/etc/passwd`, sudoers, root's files), a readable shadow file, risky PATH folders or `.` on the PATH, sudo rules for shell-escape programs (vim, less, find ...) or keeping LD_PRELOAD, and old sudo, pkexec or kernel versions with known root bugs (Baron Samedit, PwnKit, Dirty COW, Dirty Pipe) unless the package changelog shows the fix |
 
 The tables below are named by their CSV file; each one is also a readable `.txt` in the run folder.
 
