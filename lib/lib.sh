@@ -97,6 +97,7 @@ CC_N_FLAG=0                 # flags written by cc_flag (this shell only; the
 CC_CSV_DIR=""               # when set, CSV files go here instead of CC_OUT
 CC_RUN_DIR=""               # per-run folder, set by cc_use_run_dir
 CC_FLAGS=""                 # path of this run's flags.csv, once one is written
+CC_TEE=""                   # copy of screen lines, when a script sets it
 CC_SHIFT=1                  # how many arguments cc_common_flag consumed
 
 # -----------------------------------------------------------------------------
@@ -112,12 +113,19 @@ cc_log() {
     _cc_log_level=$1
     shift
     _cc_log_line="$(date -u +%H:%M:%SZ) [$_cc_log_level] $CC_ID: $*"
+    _cc_log_show=0
     case "$_cc_log_level" in
-        DEBUG) [ "$CC_DEBUG" = 1 ] && printf '%s\n' "$_cc_log_line" >&2 ;;
-        WARN|ERROR|REFUSED) printf '%s\n' "$_cc_log_line" >&2 ;;
+        DEBUG) [ "$CC_DEBUG" = 1 ] && _cc_log_show=1 ;;
+        WARN|ERROR|REFUSED) _cc_log_show=1 ;;
         NOTE) ;;            # log file only: detail that would flood the screen
-        *) [ "$CC_QUIET" = 1 ] || printf '%s\n' "$_cc_log_line" >&2 ;;
+        *) [ "$CC_QUIET" = 1 ] || _cc_log_show=1 ;;
     esac
+    if [ "$_cc_log_show" = 1 ]; then
+        printf '%s\n' "$_cc_log_line" >&2
+        # CC_TEE: a file that keeps a copy of everything shown on screen
+        # (SH-05 sets it to its output.txt).
+        [ -n "$CC_TEE" ] && printf '%s\n' "$_cc_log_line" >>"$CC_TEE" 2>/dev/null
+    fi
     if [ -n "$CC_LOG" ]; then
         printf '%s\n' "$_cc_log_line" >>"$CC_LOG" 2>/dev/null
     fi

@@ -17,7 +17,8 @@
 #     screen (live)          like linpeas: a header per section as it runs,
 #                            then what it found.  Red [!] FIX = HIGH, fix now;
 #                            yellow [*] LOOK = MED, look soon; grey = info.
-#                            Same text without colour in output.txt
+#                            Everything on screen (including warnings) is
+#                            saved without colour in output.txt
 #     summary.txt            one page at the end: key facts, a count per
 #                            section, and the HIGH and MED flags, worst first
 #     <section>.txt          everything collected, one readable table per section
@@ -235,7 +236,10 @@ mkdir -p "$W" || cc_die 3 "cannot create $W"
 # in the captured text.  output.txt gets the same lines without colour.
 exec 3>&1
 OUTF="$CC_RUN_DIR/output.txt"
-: >"$OUTF"
+# Start with the lines already shown before the run folder existed (the
+# start line, any early warnings), taken from the log.
+grep -v '\[NOTE\]\|\[DEBUG\]' "$CC_LOG" >"$OUTF" 2>/dev/null || : >"$OUTF"
+CC_TEE=$OUTF                   # info and warning lines go in output.txt too
 if [ "$COLOR" = 1 ] && [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
     C_RED=$(printf '\033[1;31m'); C_YEL=$(printf '\033[1;33m'); C_GRN=$(printf '\033[1;32m')
     C_CYN=$(printf '\033[1;36m'); C_GRY=$(printf '\033[0;90m'); C_OFF=$(printf '\033[0m')

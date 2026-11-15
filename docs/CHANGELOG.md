@@ -8,7 +8,8 @@ What changed, newest first. Each entry names the scripts touched and how they we
 - SH-05 run folders are numbered: `linux-enum-1`, `linux-enum-2`, ... `run.txt` keeps the ID, host and time.
 - SH-04 compares the numbered folders, including against older `SH-05_...` folders.
 - SH-05 and SH-04 write a readable table per file (`users.txt`, `ports.txt`, `flags.txt` HIGH first, `changes.txt` additions first); the CSV copies move to `csv/`. SH-04 results go in numbered `diff-N` folders.
-- lib.sh: `cc_use_numbered_dir NAME`, `cc_csv_pretty CSV TXT`.
+- SH-05 saves the whole terminal output, warnings and info lines included, to `output.txt`.
+- lib.sh: `cc_use_numbered_dir NAME`, `cc_csv_pretty CSV TXT`., and `CC_TEE` (copy of screen lines to a file).
 - Rules: output must be human-readable in a terminal (`AGENTS.md`, `docs/CONVENTIONS.md`, `docs/PLAN.md`).
 
 ## 2026-11-14: New direction
