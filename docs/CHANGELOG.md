@@ -7,6 +7,7 @@ What changed, newest first. Each entry names the scripts touched and how they we
 - LX-31 asks like sqlmap: which box (offers Splunk's config, the mail folders ...), web roots (listed with sizes), home dotfiles and keys, hashing system programs, and typed answers for extra paths, paths to leave out (new `--skip`) and where to copy it. Over `--max-mb` it asks instead of stopping.
 - LX-31 looks like the enum: sections as it goes, colours, numbered `backup-N` folders, `output.txt`, `included.txt`.
 - A folder holding a left-out path is split into its parts, so leaving something out works with every tar, busybox's included.
+- Revert timer (library): under yash, a script run inside `$( )` or a pipe waited for the timer before finishing (yash kept a copy of the output pipe); the background job is now started from a redirected subshell.
 
 ## 2026-11-14: dist/ committed; shell and line-ending fixes
 
