@@ -1024,11 +1024,29 @@ Run the backup (LX-31) first. **Put every account the scoring engine logs in wit
 
 ### How to run it
 
+Just run it. It asks like sqlmap: Enter takes the default.
+
 ```sh
-sudo sh LX-20-password-rotation.sh --out /root/ccdc-out                                 # dry run
-sudo sh LX-20-password-rotation.sh --out /root/ccdc-out --apply --protected /root/protected.csv
-sudo sh LX-20-password-rotation.sh --out /root/ccdc-out --apply --protected /root/protected.csv --keep /root/team.txt --kick
+sudo sh LX-20-password-rotation.sh --protected /root/protected.csv          # asks about every account
+sudo sh LX-20-password-rotation.sh --apply --batch --protected /root/protected.csv   # defaults, no questions
+sudo sh LX-20-password-rotation.sh --apply --batch --protected /root/protected.csv --keep /root/team.txt --kick
 ```
+
+What a run looks like:
+
+1. **Revert timer: 5 minutes** (`--timer` to change it). Unless you keep the changes at the end, `/etc/shadow` and `/etc/passwd` go back: old passwords, nothing locked. It runs outside the script, so it happens even if your session died.
+2. **The account table:** every account with UID, shell, password state (set, empty, locked), last login, and the default action. **Hidden accounts are in red:** a second UID 0, an empty password, a hash in `/etc/passwd`, a system account that can log in, an account in only one of `passwd`/`shadow`. System accounts with no password are summed up in one line. Domain/LDAP accounts are listed in a note.
+3. **"Go through each account one by one?"** `n` takes the actions in the table. `y` asks about each one:
+   - `r` random password
+   - `s` set one: typed twice, not shown, never logged
+   - `d` disable: locked **and** expired, so SSH keys stop working too
+   - `k` keep
+   - `a` the default for all the rest
+
+   The account you're logged in as, and accounts on the protected list, need an extra yes.
+4. **"End the running sessions of the accounts you disable?"** A lock doesn't end a login already in progress.
+5. **The plan,** then `Apply these N change(s)?`, then each change as it's made.
+6. **"Keep these changes?"** Open a **new** session and log in with the new password first. `n`, or no answer before the timer, puts everything back.
 
 | Option | What it does |
 | --- | --- |
@@ -1041,7 +1059,11 @@ sudo sh LX-20-password-rotation.sh --out /root/ccdc-out --apply --protected /roo
 | `--no-root` | Leave root's password alone |
 | `--include-me` | Also rotate the account that ran `sudo`. Skipped by default so you can still use `sudo` |
 | `--kick` | Also end every running process of a locked account (logs out a red team session) |
-| `--print` | Show the new passwords on screen at the end |
+| `--print` | Show the new passwords on screen at the end (never saved to `output.txt`) |
+| `--timer SECONDS` | Revert timer length (default 300) |
+| `--no-timer` | No revert timer (you accept the risk) |
+| `--batch` | Never ask: take every default. With `--apply`, the changes are kept |
+| `--no-color` | No colours |
 
 Random passwords use letters and digits without look-alikes (`0 O 1 l I`) plus `_` and `-`, so they survive being typed into shells, SQL and web forms.
 
@@ -1052,7 +1074,7 @@ Random passwords use letters and digits without look-alikes (`0 O 1 l I`) plus `
 | Usable password (hash set, or EMPTY) | New password |
 | On the protected list | Skipped; listed as `skipped (protected)` |
 | Human account not on `--keep` | Locked and expired (password kept, so unlocking restores it) |
-| Extra UID 0 account not on `--keep` | Locked and expired: it is root under another name |
+| Extra UID 0 account | Disabled (locked and expired) by default: it is root under another name |
 | Password hash in `/etc/passwd` itself | Moved into `/etc/shadow` with `pwconv`, then rotated. A hash there is used instead of the shadow one, so changing only shadow would leave the old password working |
 | System account without a password (`*`, `!`) | Left alone |
 | Service account with a password but no login shell | Rotated, with a note: check no service logs in with its old password |
@@ -1061,13 +1083,15 @@ Accounts below `UID_MIN` are never locked: services and cron jobs run as them.
 
 ### What it produces
 
-In `<out>/LX-20_<host>_<UTC time>/`:
+In a numbered folder: `<out>/passwords-1`, `passwords-2`, ...
 
 | File | Contents |
 | --- | --- |
+| `output.txt` | Everything shown on screen. Never a password |
+| `accounts.txt` | Every account and what was done, as a table (CSV copy in `csv/`). No passwords |
+| `revert.sh` | Undoes this run: old passwords back, locks removed (`sh revert.sh --force`) |
 | `summary.txt` | Counts, every account and what happened, warnings (empty passwords, extra UID 0, Samba accounts). No passwords |
-| `accounts.csv` | `user,uid,shell,password_state,action,note`. No passwords |
-| `passwords.csv` | `host,user,password,time`, mode 600, written only with `--apply` |
+| `passwords.csv` | `host,user,password,time`, mode 600, written only when changes are applied. If the run is undone it is renamed `passwords-UNDONE-not-valid.csv`, so nobody hands out passwords that no longer work |
 
 `/etc/shadow` and `/etc/passwd` are backed up before the first change. The undo log restores them from that backup, which also brings back the OLD passwords: that way no password hash is ever written into a log.
 

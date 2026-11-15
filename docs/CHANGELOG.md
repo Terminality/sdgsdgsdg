@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-14: Linux password rotation asks about every account
+
+- LX-20 shows every account in a table (UID, shell, password state, last login, default action) with hidden accounts in red: a second UID 0, an empty password, a hash in /etc/passwd, a system account that can log in, an account in only one of passwd/shadow; domain/LDAP accounts in a note.
+- Then per account: `[r]`andom, `[s]`et (typed twice, hidden, never logged), `[d]`isable (locked and expired, stops SSH keys), `[k]`eep, `[a]`ll the rest. The current account and protected accounts need an extra yes, which counts for that account only. It asks whether to end the sessions of disabled accounts.
+- Plan, `Apply?`, then a 5-minute revert timer (`--timer`, `--no-timer`) restores /etc/shadow and /etc/passwd unless kept; an undone run renames passwords.csv to passwords-UNDONE-not-valid.csv.
+- Extra UID 0 accounts are disabled by default. Numbered `passwords-N` folders, `output.txt`, `accounts.txt`. Flags and `--batch` work as before.
+
 ## 2026-11-14: Linux backup asks questions
 
 - LX-31 asks like sqlmap: which box (offers Splunk's config, the mail folders ...), web roots (listed with sizes), home dotfiles and keys, hashing system programs, and typed answers for extra paths, paths to leave out (new `--skip`) and where to copy it. Over `--max-mb` it asks instead of stopping.
