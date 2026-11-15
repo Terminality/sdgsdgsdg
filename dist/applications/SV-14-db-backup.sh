@@ -725,9 +725,13 @@ REVERT
     #    session sends; setsid (where present) leaves the session entirely.
     if [ -z "$CC_TIMER_HOW" ]; then
         _cc_ts_set=""; cc_have setsid && _cc_ts_set=setsid
+        # The redirections are on the wrapping ( ), not on nohup: yash keeps
+        # a saved copy of the old stdout in the process that waits for a
+        # redirected background job, so whatever read this script's output
+        # ($( ), a pipe) would hang until the timer fired.
         # shellcheck disable=SC2086
-        nohup $_cc_ts_set sh -c 'sleep "$1"; sh "$2"' sh "$_cc_ts_s" "$_cc_ts_r" >/dev/null 2>&1 &
-        CC_TIMER_ID=$!
+        ( nohup $_cc_ts_set sh -c 'sleep "$1"; sh "$2"' sh "$_cc_ts_s" "$_cc_ts_r" & echo $! >"$CC_TIMER_DIR/timer.pid" ) >/dev/null 2>&1 </dev/null
+        CC_TIMER_ID=$(cat "$CC_TIMER_DIR/timer.pid" 2>/dev/null)
         CC_TIMER_HOW=background
     fi
     printf 'how=%s\nid=%s\ndeadline=%s\n' "$CC_TIMER_HOW" "$CC_TIMER_ID" "$CC_TIMER_DEADLINE" >"$CC_TIMER_DIR/timer.txt"
