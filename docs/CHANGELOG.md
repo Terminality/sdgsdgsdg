@@ -2,6 +2,16 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-14: Linux enum output
+
+- SH-05 prints like linpeas: a header per section as it runs, red `[!] FIX` for HIGH, yellow `[*] LOOK` for MED, green key facts. `--low` shows LOW flags too, `--no-color` turns colours off. Same output saved to `output.txt`.
+- SH-05 run folders are numbered: `linux-enum-1`, `linux-enum-2`, ... `run.txt` keeps the ID, host and time.
+- SH-04 compares the numbered folders, including against older `SH-05_...` folders.
+- SH-05 and SH-04 write a readable table per file (`users.txt`, `ports.txt`, `flags.txt` HIGH first, `changes.txt` additions first); the CSV copies move to `csv/`. SH-04 results go in numbered `diff-N` folders.
+- SH-05 saves the whole terminal output, warnings and info lines included, to `output.txt`.
+- lib.sh: `cc_use_numbered_dir NAME`, `cc_csv_pretty CSV TXT`., and `CC_TEE` (copy of screen lines to a file).
+- Rules: output must be human-readable in a terminal (`AGENTS.md`, `docs/CONVENTIONS.md`, `docs/PLAN.md`).
+
 ## 2026-11-14: New direction
 
 - Added `docs/PLAN.md`, `docs/ENVIRONMENT.md`, `AGENTS.md`, `CLAUDE.md`.

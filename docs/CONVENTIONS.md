@@ -50,7 +50,7 @@ Every script starts with the header block from the template: ID, NAME, ROLE, KIN
 14. Block IPv6 unless a scored service or an inject needs it.
 15. The kit's hash is checked before each run (automatic once `MANIFEST.sha256` exists).
 16. The team automation account is on the protected list.
-17. Detection output is layered: unusual items on screen, everything in the CSV.
+17. Output is for people reading a terminal, not for web pages: plain words, sections, aligned tables. Unusual items on screen; everything in readable `.txt` tables; CSV only as a copy in `csv/` for other scripts.
 
 Detection and fixing are separate scripts. An enum script writes findings with `cc_finding` / `Add-CcFinding`, each with a fix ID and a risk (`safe`, `service`, `access`; see `docs/PLAN.md`). A fix script is made of named fixes, each runnable alone, and reads that file. An `access` fix never runs in bulk and uses the countdown that reverts unless confirmed from a new session.
 
@@ -58,8 +58,9 @@ Detection and fixing are separate scripts. An enum script writes findings with `
 
 Scripts that only look (enum scripts, audits) follow the Linux enum's pattern:
 
-- Call `cc_use_run_dir` / `Use-CcRunDir` after starting, so the run's files sit in one folder.
-- One CSV per section; keep raw tool output with `cc_save` / `Save-CcOutput`.
+- Call `cc_use_numbered_dir NAME` after starting, so each run gets a numbered folder (`linux-enum-1`, `linux-enum-2`, ...). Windows scripts still use `Use-CcRunDir`.
+- Print a header per section as it runs, then what was found: red `[!] FIX` for HIGH, yellow `[*] LOOK` for MED (see SH-05).
+- One readable `.txt` table per section (`cc_csv_pretty`), with the CSV copy in `csv/`. Keep raw tool output with `cc_save` / `Save-CcOutput`.
 - Mark anything unusual with `cc_flag` / `Add-CcFlag`: `HIGH` (look now), `MED` (look soon), `LOW` (file only). Write the detail for someone who has never seen the box: what is wrong and why it matters.
 - End with a one-page summary and `cc_flag_report` / `Show-CcFlagReport`. Only HIGH and MED reach the screen.
 - Tune for precision. Run the script on a real system before calling it built, and tighten any check that flags normal things. A screen full of false alarms hides the real one.

@@ -209,6 +209,30 @@ run "$S/badsev.sh" --out "$OUT" >/dev/null 2>&1; t_eq "$?" 1 "bad severity is re
 mk csvp 'printf "%s\n" "\"a\",\"b,c\",\"d \"\"q\"\"\",\"\"" | awk "$CC_AWK_CSV"'"'"'{ n = csvsplit($0, f); print n "|" f[1] "|" f[2] "|" f[3] "|" f[4] "|" }'"'"
 t_eq "$(run "$S/csvp.sh")" '4|a|b,c|d "q"||' "CSV parser handles commas, doubled quotes and empty fields"
 
+t_start "numbered run folders"
+mk numbered 'while [ $# -gt 0 ]; do cc_common_flag "$@" && { shift "$CC_SHIFT"; continue; }; shift; done
+cc_init T-13 "numbered" readonly
+cc_use_numbered_dir thing; echo "a=$CC_RUN_DIR"
+cc_use_numbered_dir thing; echo "b=$CC_RUN_DIR"
+cc_finish'
+mkdir -p "$T_TMP/num/thing-9" "$T_TMP/num/thing-x" "$T_TMP/num/other-50"
+r=$(run "$S/numbered.sh" --out "$T_TMP/num" 2>/dev/null)
+t_eq "$(printf '%s\n' "$r" | sed -n 's/^a=//p')" "$T_TMP/num/thing-10" "next number after the highest existing one"
+t_eq "$(printf '%s\n' "$r" | sed -n 's/^b=//p')" "$T_TMP/num/thing-11" "a second folder gets the next number"
+t_has "$(cat "$T_TMP/num/thing-10/run.txt")" "id=T-13" "run.txt records the ID"
+t_ok "raw folder created" test -d "$T_TMP/num/thing-10/raw"
+
+t_start "readable tables"
+mk pretty 'printf "%s\n" "name,note" "\"bob\",\"has, comma\"" "\"a\",\"0123456789012345\"" >"$T/p.csv"
+cc_csv_pretty "$T/p.csv" "$T/p.txt" 10; cat "$T/p.txt"
+printf "name,note\n" >"$T/e.csv"; cc_csv_pretty "$T/e.csv" "$T/e.txt"; cat "$T/e.txt"'
+r=$(run "$S/pretty.sh" 2>/dev/null)
+t_has "$r" "NAME  NOTE" "header in capitals, columns aligned"
+t_has "$r" "----  ----------" "dashed line as wide as each column"
+t_has "$r" "bob   has, comma" "commas inside a value kept"
+t_has "$r" "a     0123456..." "long values cut with ..."
+t_has "$r" "(nothing found)" "an empty CSV says so"
+
 t_start "kit integrity check"
 unset CCDC_SKIP_VERIFY
 mkdir -p "$T_TMP/dist"; cp "$S/init.sh" "$T_TMP/dist/v.sh"

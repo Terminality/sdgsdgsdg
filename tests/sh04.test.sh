@@ -31,7 +31,7 @@ t_eq "$rc" 0 "exit 0"
 t_has "$out" "Earlier: $A" "picks the older finished run"
 t_has "$out" "Later:   $B" "picks the newest finished run, skips the unfinished one"
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
-f=$(cat "$d/flags.csv"); c=$(cat "$d/changes.csv")
+f=$(cat "$d/csv/flags.csv"); c=$(cat "$d/csv/changes.csv")
 t_has "$c" '"hosts","added","10.0.0.9"' "new host listed"
 t_has "$c" '"hosts","removed","10.0.0.6"' "vanished host listed"
 t_has "$c" '"ports","changed","10.0.0.5 | tcp | 80","http | nginx 1.24","http | nginx 1.25"' "version change listed"
@@ -40,6 +40,10 @@ t_hasnt "$f" '"MED","ports","10.0.0.5 | tcp | 4444"' "backdoor port is not also 
 t_has "$f" '"HIGH","scored","db | 10.0.0.6 | mysql | 3306"' "scored service going down is HIGH"
 t_hasnt "$c" '"22"' "unchanged port not listed"
 t_file "$d/summary.txt" "summary written"
+t_has "$d" "/diff-" "diff results go in a numbered diff-N folder"
+t_has "$(sed -n 1p "$d/changes.txt")" "SECTION" "changes.txt is a readable table"
+t_has "$(sed -n 3p "$d/changes.txt")" "added" "additions are listed first"
+t_has "$(sed -n 3p "$d/flags.txt")" "HIGH" "flags.txt lists HIGH first"
 
 # ---- two collector runs of one host -------------------------------------------
 A="SH-05_web01_20261111T140000Z"; B="SH-05_web01_20261111T150000Z"
@@ -60,12 +64,34 @@ t_has "$out" "Earlier: $A" "older run of the newest run's host"
 t_has "$out" "root and the other was not" "warns about root / non-root runs"
 t_has "$out" "skipped (not in both runs)" "a section missing from both runs is skipped"
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
-f=$(cat "$d/flags.csv")
+f=$(cat "$d/csv/flags.csv")
 t_has "$f" '"HIGH","users","sysupd"' "new account is HIGH"
 t_has "$f" '"MED","users","bob"' "group change is MED"
 t_has "$f" '"HIGH","autostart","/etc/cron.d/x | root | * * * * * /tmp/.x"' "new cron entry is HIGH"
 t_has "$f" '"HIGH","ports","tcp | 0.0.0.0 | 31337"' "backdoor port listening is HIGH"
 t_hasnt "$f" '"ports","tcp | 0.0.0.0 | 22"' "a PID change alone is not a change"
+
+t_start "numbered linux-enum-N runs"
+mk linux-enum-1 users.csv 'user,uid,gid,home,shell,can_login,password,groups' '"root","0","0","/root","/bin/bash","yes","set","root"'
+mk linux-enum-2 users.csv 'user,uid,gid,home,shell,can_login,password,groups' '"root","0","0","/root","/bin/bash","yes","set","root"' '"evil","0","0","/tmp","/bin/sh","yes","set","root"'
+printf 'id=SH-05\nhost=web01\ntime=20261111T160000Z\n' >"$R/linux-enum-1/run.txt"
+printf 'id=SH-05\nhost=web01\ntime=20261111T170000Z\n' >"$R/linux-enum-2/run.txt"
+out=$(run --runs "$R" --out "$O" --type sh05 2>&1); t_eq "$?" 0 "exit 0"
+t_has "$out" "Earlier: linux-enum-1" "numbered runs are picked up, older first"
+t_has "$out" "Later:   linux-enum-2" "and the newest is linux-enum-2"
+d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
+t_has "$(cat "$d/csv/flags.csv")" '"HIGH","users","evil"' "a new root account between numbered runs is HIGH"
+out=$(run --old "$R/linux-enum-1" --new "$R/linux-enum-2" --out "$O" 2>&1); t_eq "$?" 0 "--old/--new with numbered folders works"
+out=$(run --old "$R/$A" --new "$R/linux-enum-2" --out "$O" 2>&1); t_eq "$?" 0 "an old-style and a numbered run can be compared"
+mkdir -p "$R/LX-39_web01_20261111T170000Z"
+out=$(run --old "$R/$A" --new "$R/LX-39_web01_20261111T170000Z" --out "$O" 2>&1); t_eq "$?" 2 "a fix script's run folder exits 2"
+t_has "$out" "run the enum again" "and says to run the enum again"
+
+mkdir -p "$R/linux-enum-3/csv"; mv "$R/linux-enum-2/users.csv" "$R/linux-enum-3/csv/users.csv"; : >"$R/linux-enum-3/summary.txt"
+printf 'id=SH-05\nhost=web01\ntime=20261111T180000Z\n' >"$R/linux-enum-3/run.txt"
+out=$(run --old "$R/linux-enum-1" --new "$R/linux-enum-3" --out "$O" 2>&1); t_eq "$?" 0 "CSV files kept in csv/ are found"
+d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
+t_has "$(cat "$d/csv/flags.csv")" '"HIGH","users","evil"' "and compared"
 
 t_start "explicit folders and errors"
 out=$(run --old "$R/$A" --new "$R/$B" --out "$O" 2>&1); t_eq "$?" 0 "--old/--new works"

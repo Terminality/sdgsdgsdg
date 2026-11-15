@@ -13,6 +13,7 @@ The scripts that still need to be built are what we're planning for now, and tha
 - **Enum scripts** just look around. They don't change anything.
 - **Fix scripts** are a bunch of small fixes, and you can run just one if that's all you need (`--list`, `--only`, `--skip`, or `-List`, `-Only`, `-Skip` on Windows).
 - Nothing actually changes until you add `--apply` (`-Apply` on Windows). Without it, it's a dry run.
+- Output should be easy to read in a terminal: sections, plain words, readable tables. Not formatted for web pages.
 
 ## Tiers
 

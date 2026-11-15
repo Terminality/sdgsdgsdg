@@ -10,3 +10,4 @@ For people and AI tools.
 6. Don't change scripts you weren't asked to change.
 7. Open a merge request. Don't push to `main`. Say what you tested.
 8. Keep docs short and plain.
+9. Make output human-readable: something a person can read in a terminal (sections, plain words, aligned tables), not formatted for web pages or spreadsheets.

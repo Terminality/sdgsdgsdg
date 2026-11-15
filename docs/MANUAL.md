@@ -457,16 +457,29 @@ Run it as root. As a normal user it still works, but the summary marks several s
 | `--profile triage` | full plus copying the logs. Use it when you think the box is compromised, before anything else changes |
 | `--only a,b` / `--skip a,b` | Pick sections. `--list` shows the names |
 | `--fast` | Skip the two slow disk searches (files, creds) |
-| `--max-flags N` | How many HIGH/MED flags to print (default 30) |
+| `--max-flags N` | How many HIGH/MED flags to print in the end summary (default 30) |
+| `--low` | Also show LOW flags while it runs |
+| `--no-color` | No colours (they are also off when output goes to a file or pipe) |
+
+While it runs it prints like linpeas: a header per section, then what it found. **Red `[!] FIX`** = HIGH, fix now. **Yellow `[*] LOOK`** = MED, look soon. Green = key facts. `[ok]` = nothing to fix in that section. The summary comes at the end.
 
 ### What it produces
 
-Everything for one run is in `<out>/SH-05_<host>_<UTC time>/`:
+Each run gets a numbered folder: `<out>/linux-enum-1`, `linux-enum-2`, ... Higher number = newer run.
 
 | File | Contents |
 | --- | --- |
-| `summary.txt` | The page printed on screen: key facts, a row per section, the HIGH and MED flags |
-| `flags.csv` | Every flag, including LOW: severity, section, item, detail, time |
+| `output.txt` | Everything shown while it ran, without colours |
+| `<section>.txt` | Each section as a readable table (`users.txt`, `ports.txt`, ...) |
+| `flags.txt` | Every flag including LOW, HIGH first |
+| `csv/` | The same data as CSV, for SH-04 |
+| `summary.txt` | The end summary: key facts, a row per section, the HIGH and MED flags |
+| `run.txt` | Script ID, host and start time (SH-04 uses it) |
+
+The tables below are named by their CSV file; each one is also a readable `.txt` in the run folder.
+
+| File | Contents |
+| --- | --- |
 | `facts.csv`, `addresses.csv` | Host name, OS, kernel, init system, uptime, IPv6 on or off, addresses, DNS |
 | `users.csv` | Every account: UID, shell, whether it can log in, password state (`set`, `EMPTY`, `locked`; never the hash), groups |
 | `ports.csv` | Listening ports: protocol, address, port, `any` or `local`, pid, process, user, program file |
@@ -660,13 +673,14 @@ Processes and connections are not compared: they change every second. Line numbe
 
 ### What it produces
 
-In `<out>/SH-04_<host>_<UTC time>/`:
+In a numbered folder: `<out>/diff-1`, `diff-2`, ...
 
 | File | Contents |
 | --- | --- |
 | `summary.txt` | Per-section counts of added, removed and changed; the changes (added first); the HIGH and MED flags |
-| `changes.csv` | `section,change,key,old,new` for every difference |
-| `flags.csv` | Every flag |
+| `changes.txt` | Every difference as a readable table, additions first |
+| `flags.txt` | Every flag, HIGH first |
+| `csv/` | The same as CSV (`changes.csv`, `flags.csv`) |
 
 ### What it flags
 
@@ -691,7 +705,7 @@ Each change gets one flag: a backdoor port that is HIGH is not also listed as ME
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `need two finished SH-03 runs ... found 1` (exit 3) | Only one finished run in the folder, or the runs are elsewhere | Run the scan again, point `--runs` at the folder, or give `--old` and `--new` |
-| `... is not an SH-03 or SH-05 run folder` (exit 2) | The folder was renamed, or you gave the parent folder | Give the run folder itself; its name must start with `SH-03_` or `SH-05_` |
+| `... is not an SH-03 or SH-05 run folder` (exit 2) | The folder was renamed, or you gave the parent folder | Give the run folder itself; its name must start with `SH-03_`, `SH-05_` or `linux-enum-`. To see what a fix script changed, run the enum again and compare the two enum folders |
 | `the two folders are from different scripts` (exit 2) | One SH-03 run and one SH-05 run | Compare runs of the same script |
 | `comparing two different hosts` warning | `--old`/`--new` point at enum runs of two machines | Usually a mistake; pick two runs of one host |
 | Everything in a section shows as added | The earlier run had that section empty (e.g. not root, or a different profile) | Rerun both the same way; check the warning about root |

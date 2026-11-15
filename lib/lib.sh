@@ -97,6 +97,7 @@ CC_N_FLAG=0                 # flags written by cc_flag (this shell only; the
 CC_CSV_DIR=""               # when set, CSV files go here instead of CC_OUT
 CC_RUN_DIR=""               # per-run folder, set by cc_use_run_dir
 CC_FLAGS=""                 # path of this run's flags.csv, once one is written
+CC_TEE=""                   # copy of screen lines, when a script sets it
 CC_SHIFT=1                  # how many arguments cc_common_flag consumed
 
 # -----------------------------------------------------------------------------
@@ -112,12 +113,19 @@ cc_log() {
     _cc_log_level=$1
     shift
     _cc_log_line="$(date -u +%H:%M:%SZ) [$_cc_log_level] $CC_ID: $*"
+    _cc_log_show=0
     case "$_cc_log_level" in
-        DEBUG) [ "$CC_DEBUG" = 1 ] && printf '%s\n' "$_cc_log_line" >&2 ;;
-        WARN|ERROR|REFUSED) printf '%s\n' "$_cc_log_line" >&2 ;;
+        DEBUG) [ "$CC_DEBUG" = 1 ] && _cc_log_show=1 ;;
+        WARN|ERROR|REFUSED) _cc_log_show=1 ;;
         NOTE) ;;            # log file only: detail that would flood the screen
-        *) [ "$CC_QUIET" = 1 ] || printf '%s\n' "$_cc_log_line" >&2 ;;
+        *) [ "$CC_QUIET" = 1 ] || _cc_log_show=1 ;;
     esac
+    if [ "$_cc_log_show" = 1 ]; then
+        printf '%s\n' "$_cc_log_line" >&2
+        # CC_TEE: a file that keeps a copy of everything shown on screen
+        # (SH-05 sets it to its output.txt).
+        [ -n "$CC_TEE" ] && printf '%s\n' "$_cc_log_line" >>"$CC_TEE" 2>/dev/null
+    fi
     if [ -n "$CC_LOG" ]; then
         printf '%s\n' "$_cc_log_line" >>"$CC_LOG" 2>/dev/null
     fi
@@ -734,6 +742,63 @@ cc_use_run_dir() {
     cc_debug "run folder: $CC_RUN_DIR"
 }
 
+# cc_use_numbered_dir NAME  -> <out>/NAME-1, NAME-2, ... (next free number)
+#   Same as cc_use_run_dir, but the folder is named by a plain counter so it
+#   is easy to see which run came first.  The ID, host and start time go in
+#   <folder>/run.txt (id=, host=, time=), which SH-04 reads to match runs.
+cc_use_numbered_dir() {
+    _cc_nd_max=0
+    for _cc_nd_d in "$CC_OUT/$1"-*; do
+        [ -d "$_cc_nd_d" ] || continue
+        _cc_nd_x=${_cc_nd_d##*-}
+        case "$_cc_nd_x" in ''|*[!0-9]*) continue ;; esac
+        [ "$_cc_nd_x" -gt "$_cc_nd_max" ] && _cc_nd_max=$_cc_nd_x
+    done
+    # mkdir fails if the folder exists, so two runs started together still
+    # get different numbers.
+    _cc_nd_n=$((_cc_nd_max + 1))
+    while ! (umask 077; mkdir "$CC_OUT/$1-$_cc_nd_n" 2>/dev/null); do
+        [ -d "$CC_OUT/$1-$_cc_nd_n" ] || cc_die 3 "cannot create run folder $CC_OUT/$1-$_cc_nd_n (check that $CC_OUT is writable)"
+        _cc_nd_n=$((_cc_nd_n + 1))
+        [ "$_cc_nd_n" -le $((_cc_nd_max + 99)) ] || cc_die 3 "cannot find a free number for $CC_OUT/$1-N"
+    done
+    CC_RUN_DIR="$CC_OUT/$1-$_cc_nd_n"
+    (umask 077; mkdir -p "$CC_RUN_DIR/raw") || cc_die 3 "cannot create run folder $CC_RUN_DIR"
+    printf 'id=%s\nhost=%s\ntime=%s\n' "$CC_ID" "$CC_HOST" "$CC_TS" >"$CC_RUN_DIR/run.txt"
+    CC_CSV_DIR=$CC_RUN_DIR
+    cc_debug "run folder: $CC_RUN_DIR"
+}
+
+# cc_csv_pretty CSV TXT [WIDTH]
+#   Write CSV as an aligned table people can read in a terminal (cat, less -S):
+#   header in capitals, a dashed line, then one row per line.  Columns wider
+#   than WIDTH (default 60) are cut with "...".  The CSV is not changed.
+cc_csv_pretty() {
+    [ -f "$1" ] || return 0
+    awk -v maxw="${3:-60}" "$CC_AWK_CSV"'
+        function cut(s) { if (length(s) > maxw) s = substr(s, 1, maxw - 3) "..."; return s }  # awk, not shell: posix-ok
+        NR == FNR {
+            n = csvsplit($0, f); if (n > nc) nc = n
+            for (i = 1; i <= n; i++) { v = cut(f[i]); if (length(v) > w[i]) w[i] = length(v) }
+            next
+        }
+        {
+            n = csvsplit($0, f); line = ""
+            for (i = 1; i <= nc; i++) {
+                v = (i <= n) ? cut(f[i]) : ""
+                if (FNR == 1) v = toupper(v)
+                line = line sprintf("%-" w[i] "s", v) (i < nc ? "  " : "")
+            }
+            sub(/ +$/, "", line); print line
+            if (FNR == 1) {
+                line = ""
+                for (i = 1; i <= nc; i++) { d = sprintf("%" w[i] "s", ""); gsub(/ /, "-", d); line = line d (i < nc ? "  " : "") }
+                print line
+            }
+        }
+        END { if (FNR <= 1) print "(nothing found)" }' "$1" "$1" >"$2"
+}
+
 # cc_save NAME COMMAND [ARG...]
 #   Run a READ-ONLY command and keep its untouched output in
 #   <run folder>/raw/NAME.txt (or <out>/<ID>_<host>_<time>_NAME.txt without a
@@ -817,7 +882,9 @@ cc_flag_report() {
         printf 'Flags: none\n'
         return 0
     fi
-    awk -v max="$_cc_fr_max" -v file="$CC_FLAGS" "$CC_AWK_CSV"'
+    # CC_FLAGS_SHOW: the path to name on screen, when a script writes a
+    # readable copy of flags.csv (SH-05 writes flags.txt).
+    awk -v max="$_cc_fr_max" -v file="${CC_FLAGS_SHOW:-$CC_FLAGS}" "$CC_AWK_CSV"'
         NR == 1 { next }
         {
             csvsplit($0, f)
