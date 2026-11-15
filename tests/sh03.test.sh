@@ -55,7 +55,9 @@ XML
     4-udp) P="161/open/udp//snmp//net-snmp/" ;;
 esac
 b=${b%.noscripts}
-printf 'Host: 10.9.9.5 (web01)%sStatus: Up\nHost: 10.9.9.5 (web01)%sPorts: %s%sIgnored State: closed (997)\n' "$T" "$T" "$P" "$T" >"$b.gnmap"
+# The quick scan also sees 10.9.9.6 up, with no open ports.
+case "$(basename "$b")" in 1-quick) printf 'Host: 10.9.9.6 ()%sStatus: Up\n' "$T" >"$b.gnmap" ;; *) : >"$b.gnmap" ;; esac
+printf 'Host: 10.9.9.5 (web01)%sStatus: Up\nHost: 10.9.9.5 (web01)%sPorts: %s%sIgnored State: closed (997)\n' "$T" "$T" "$P" "$T" >>"$b.gnmap"
 : >"$b.nmap"; [ -f "$b.xml" ] || : >"$b.xml"
 echo "Nmap scan report for web01 (10.9.9.5)"
 echo "21/tcp open  ftp"
@@ -74,7 +76,8 @@ R="$T_TMP/s/netscan-1"
 t_file "$R/run.txt" "numbered folder netscan-1 with run.txt"
 t_eq "$(sed -n 1p "$STUBLOG" | grep -c -- '--top-ports 1000')" 1 "1: quick scan of the top 1000 ports"
 t_has "$(sed -n 1p "$STUBLOG")" "10.9.9.0/24" "   on the whole target"
-t_has "$(sed -n 2p "$STUBLOG")" "-p- --stats-every 60s 10.9.9.5" "2: full scan only on the host that was up"
+t_has "$(sed -n 1p "$STUBLOG")" "-T4" "   at speed 4 (default)"
+t_has "$(sed -n 2p "$STUBLOG")" "-p- --stats-every 60s 10.9.9.5 10.9.9.6" "2: full scan only on the hosts that were up (all, the default)"
 t_has "$(sed -n 3p "$STUBLOG")" "-p 21,22,4444" "3: details only on the open ports"
 t_has "$(sed -n 3p "$STUBLOG")" "default or (vuln and safe)" "   with default scripts and safe vuln scripts"
 t_eq "$(grep -c . "$STUBLOG")" 3 "no UDP scan (default no)"
@@ -97,10 +100,26 @@ t_ok "vsftpd 2.3.4 flagged HIGH" grep -q '"HIGH","ports","10.9.9.5 tcp/21","vsft
 t_ok "shell answering on a port flagged HIGH" grep -q '"HIGH","ports","10.9.9.5 tcp/4444","answers like a shell' "$F"
 t_ok "4444 flagged as a backdoor-style port" grep -q '"MED","ports","10.9.9.5 tcp/4444"' "$F"
 S=$(cat "$R/summary.txt")
-t_has "$S" "Hosts up: 1 | open ports: 3 | vulnerable: 1" "summary counts hosts, ports, vulns"
+t_has "$S" "Hosts up: 2 | open ports: 3 | vulnerable: 1" "summary counts hosts, ports, vulns"
 t_has "$S" "Vulns and script findings" "summary lists the vulns"
 t_has "$S" "Open ports" "summary lists the ports per host"
 t_has "$r" "[!] FIX   10.9.9.5 tcp/4444: test-vuln says VULNERABLE" "flags shown live"
+
+t_start "fake nmap: speed, top ports, extra ports, picked hosts"
+: >"$STUBLOG"
+srun --out "$T_TMP/s2" --target 10.9.9.0/24 --speed 2 --top-ports 100 --extra-ports 8080,9000-9001 --full-hosts 10.9.9.6 --no-services --no-scripts --no-os --no-udp >/dev/null 2>&1
+t_eq "$?" 0 "exits 0"
+t_has "$(sed -n 1p "$STUBLOG")" "-T2" "--speed 2 gives -T2"
+t_has "$(sed -n 1p "$STUBLOG")" "--top-ports 100" "--top-ports 100"
+t_has "$(sed -n 2p "$STUBLOG")" "-p 8080,9000-9001 10.9.9.0/24" "extra ports scanned on every target"
+t_has "$(sed -n 3p "$STUBLOG")" "-p- --stats-every 60s 10.9.9.6" "full scan only on the picked host"
+t_hasnt "$(sed -n 3p "$STUBLOG")" "10.9.9.5" "   and not the others"
+run --target 10.9.9.5 --speed 9 >/dev/null 2>&1; t_eq "$?" 2 "--speed 9 exits 2"
+run --target 10.9.9.5 --top-ports 0 >/dev/null 2>&1; t_eq "$?" 2 "--top-ports 0 exits 2"
+run --target 10.9.9.5 --extra-ports 'x;y' >/dev/null 2>&1; t_eq "$?" 2 "bad --extra-ports exits 2"
+: >"$STUBLOG"
+srun --out "$T_TMP/s2" --target 10.9.9.5 --no-quick --no-full --ports 22 --vuln-all --no-scripts --no-os --no-udp >/dev/null 2>&1
+t_has "$(tail -n 1 "$STUBLOG")" "--script vuln 10.9.9.5" "--vuln-all runs every vuln script"
 
 t_start "fake nmap: --ports, --no-full, UDP, profiles"
 : >"$STUBLOG"
@@ -132,16 +151,31 @@ t_ok "new vuln between runs flagged HIGH" grep -q '"HIGH","vulns"' "$(ls -d "$T_
 if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&1; then
     t_start "questions in a terminal (fake nmap)"
     : >"$STUBLOG"
-    # target, quick (Enter), full (n), services (Enter), scripts (n), vuln (y),
-    # then OS (n) and UDP (Enter) when root.
-    printf '10.9.9.5\n\nn\n\nn\ny\nn\n\n' >"$T_TMP/answers"
+    # target, speed (5), quick (Enter), top ports (100), extra ports (8080),
+    # full (n), services (Enter), scripts (n), vuln (y), safe only (n), then
+    # OS (n) and UDP (Enter) when root.
+    printf '10.9.9.5\n5\n\n100\n8080\nn\n\nn\ny\nn\nn\n\n' >"$T_TMP/answers"
     CCDC_NO_TTY=0 PATH="$T_TMP/bin:$PATH" script -qc "$SH $C --out $T_TMP/q --no-color --no-dns" /dev/null <"$T_TMP/answers" >"$T_TMP/tty.out" 2>&1
     t_has "$(cat "$T_TMP/tty.out")" "What should I scan?" "asks for the target"
     t_has "$(cat "$T_TMP/tty.out")" "vuln scripts" "asks about vuln scripts"
     t_has "$(sed -n 1p "$STUBLOG")" "10.9.9.5" "scans the typed target"
     t_eq "$(grep -c -- '-p-' "$STUBLOG")" 0 "no full scan after 'n'"
-    t_has "$(tail -n 1 "$STUBLOG")" "--script vuln and safe" "vuln scripts after 'y', without default scripts"
+    t_has "$(cat "$T_TMP/tty.out")" "How aggressive?" "asks how aggressive"
+    t_has "$(cat "$T_TMP/tty.out")" "How many top ports" "asks how many top ports"
+    t_has "$(cat "$T_TMP/tty.out")" "other ports to always scan" "asks for extra ports"
+    t_has "$(sed -n 1p "$STUBLOG")" "-T5 --open" "speed 5 after '5'"
+    t_has "$(sed -n 1p "$STUBLOG")" "--top-ports 100" "top 100 after '100'"
+    t_has "$(sed -n 2p "$STUBLOG")" "-p 8080" "extra port 8080 scanned"
+    t_has "$(tail -n 1 "$STUBLOG")" "--script vuln 10.9.9.5" "all vuln scripts after 'n' to safe only, without default scripts"
     t_has "$(tail -n 1 "$STUBLOG")" "-sV" "versions after Enter (default yes)"
+    t_start "picking hosts for the full scan in a terminal"
+    : >"$STUBLOG"
+    printf '10.9.9.6\n' >"$T_TMP/answers2"
+    CCDC_NO_TTY=0 PATH="$T_TMP/bin:$PATH" script -qc "$SH $C --out $T_TMP/q --no-color --target 10.9.9.0/24 --speed 4 --top-ports 10 --no-extra-ports --full --no-services --no-scripts --no-vuln --no-os --no-udp" /dev/null <"$T_TMP/answers2" >"$T_TMP/tty2.out" 2>&1
+    t_has "$(cat "$T_TMP/tty2.out")" "Full scan which hosts?" "asks which hosts get the full scan"
+    t_has "$(cat "$T_TMP/tty2.out")" "up: 10.9.9.5 10.9.9.6" "after showing the hosts that are up"
+    t_has "$(sed -n 2p "$STUBLOG")" "-p- --stats-every 60s 10.9.9.6" "full scan only on the typed host"
+    t_hasnt "$(sed -n 2p "$STUBLOG")" "10.9.9.5" "   and not the other"
 else
     t_start "(skipped: no 'script' command for the terminal test)"
 fi
