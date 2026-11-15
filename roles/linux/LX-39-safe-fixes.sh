@@ -29,6 +29,16 @@
 #                 classic rootkit hook) -> the file is quarantined; LD_PRELOAD
 #                 lines in /etc/environment are commented out
 #     trust       .rhosts, .shosts, hosts.equiv, shosts.equiv quarantined
+#     uid0        accounts other than root with UID 0 (root-equivalent
+#                 backdoors) locked and expired, so neither a password nor
+#                 an SSH key logs in.  Undo puts the password and date back
+#     emptypw     accounts with an EMPTY password locked (anyone could log
+#                 in as them without one)
+#     suid        the SUID bit removed from programs that should never have
+#                 it (copies of bash, find, vim, python ... from GTFOBins)
+#                 and from anything SUID in /tmp, /var/tmp, /dev/shm, /home
+#   Every fix that acts on items (files, accounts, settings, services) asks
+#   which ones to leave alone, or takes --exclude a,b,c.
 #     forwarding  IP forwarding off - ONLY with --no-forwarding, because
 #                 routers, firewalls and Docker hosts need it
 #   Also REPORTED (never changed): extra /etc/hosts entries, IP forwarding
@@ -57,6 +67,9 @@
 #   --only a,b       run only these fixes (names from --list)
 #   --skip a,b       leave these fixes out
 #   --keep-ipv6      same as --skip ipv6
+#   --exclude a,b    items no fix may touch: paths (/etc/crontab), account
+#                    names (bob), kernel settings (net.ipv4.tcp_syncookies),
+#                    services (auditd).  Answers the "leave alone" questions
 #   --no-forwarding  also turn IP forwarding off (not on routers/firewalls/Docker)
 #   --root DIR       treat DIR as / for every FILE fix (perms, tmp, preload,
 #                    trust, the sysctl and limits files).  For fixing a
@@ -127,7 +140,9 @@ while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$
 . "$_cc_d/lib/lib.sh"
 # <<< CCDC-LIB
 
-ALL_FIXES="sysctl ipv6 forwarding coredumps perms tmp logging preload trust hosts"
+ALL_FIXES="sysctl ipv6 forwarding coredumps perms tmp logging preload trust uid0 emptypw suid hosts"
+# Fixes that act on named items, so they can ask which ones to leave alone.
+EXCL_FIXES="sysctl perms logging preload trust uid0 emptypw suid"
 
 usage() {
     cat <<'USAGE'
@@ -137,6 +152,7 @@ LX-39 Linux safe fixes - hardening that cannot break a scored service
   --only a,b       run only these fixes
   --skip a,b       leave these fixes out
   --keep-ipv6      leave IPv6 on (same as --skip ipv6)
+  --exclude a,b    items to leave alone: paths, account names, kernel settings, services
   --no-forwarding  also turn IP forwarding off (NOT on routers, firewalls or Docker hosts)
   --root DIR       treat DIR as / for the file fixes (disk images, tests)
   --box NAME       splunk | webmail | ecomm | other (skips that question)
@@ -155,24 +171,29 @@ list_fixes() {
     cat <<'LIST'
 sysctl      SYN cookies, ASLR, no source-routed packets or redirects, link protection
 ipv6        IPv6 off with disable_ipv6 (loopback kept), never the boot option
-forwarding  IP forwarding off - only with --no-forwarding
+forwarding  IP forwarding off (asks first if the box routes or runs Docker; with no one to ask, only with --no-forwarding)
 coredumps   no setuid core dumps, core size limit 0
 perms       remove group/other write (and read on secrets) from key files
 tmp         sticky bit on /tmp, /var/tmp, /dev/shm
 logging     start rsyslog / syslog-ng / auditd if installed and stopped
 preload     quarantine /etc/ld.so.preload with unowned libraries; LD_PRELOAD lines
 trust       quarantine .rhosts, .shosts, hosts.equiv, shosts.equiv
+uid0        lock and expire accounts other than root with UID 0
+emptypw     lock accounts that have an empty password
+suid        remove SUID from programs that should never have it (GTFOBins copies, /tmp)
 hosts       report extra /etc/hosts entries (report only)
 LIST
 }
 
-ONLY=""; SKIP=""; NOFWD=0; R=""; BOX=""; TIMER=120; NOTIMER=0; FWDFLAG=0
+ONLY=""; SKIP=""; NOFWD=0; R=""; BOX=""; TIMER=120; NOTIMER=0; FWDFLAG=0; EXCL=""; EXCLFLAG=0
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
         --only)          [ $# -ge 2 ] || cc_die 2 "--only needs a list of fixes"; ONLY=$2; shift 2 ;;
         --skip)          [ $# -ge 2 ] || cc_die 2 "--skip needs a list of fixes"; SKIP="$SKIP,$2"; shift 2 ;;
         --keep-ipv6)     SKIP="$SKIP,ipv6"; shift ;;
+        --exclude)       [ $# -ge 2 ] || cc_die 2 "--exclude needs a list (paths, account names, settings, services)"
+                         EXCL="$EXCL,$2"; EXCLFLAG=1; shift 2 ;;
         --no-forwarding) NOFWD=1; FWDFLAG=1; shift ;;
         --box)           [ $# -ge 2 ] || cc_die 2 "--box needs splunk, webmail, ecomm or other"; BOX=$2; shift 2 ;;
         --timer)         [ $# -ge 2 ] || cc_die 2 "--timer needs a number of seconds"; TIMER=$2; shift 2 ;;
@@ -273,9 +294,16 @@ row() {
         refused)         cc_show "$C_YEL" "  [-] refused (protected list): $1" ;;
         "check by hand") cc_show "$C_YEL" "  [*] check: $1 - $3" ;;
         "already ok"*|skipped*) OKN=$((OKN + 1)) ;;
+        excluded*)       cc_show "$C_GRY" "  [-] left alone (you excluded it): $1" ;;
         *)               cc_show "$C_YEL" "  [*] $1: $4" ;;
     esac
     return 0
+}
+# is_excluded ITEM -> true if ITEM is on the leave-alone list (--exclude or
+#   an answer to a "leave alone" question).
+is_excluded() {
+    case ",$EXCL," in *",$1,"*) return 0 ;; esac
+    return 1
 }
 # ok_line -> "[ok] N already right" for the block just shown.
 ok_line() { [ "$OKN" -gt 0 ] && cc_show "$C_GRN" "  [ok] $OKN already right"; OKN=0; return 0; }
@@ -337,6 +365,7 @@ set_mode() {
     # a file the named rules above already handled.
     grep -qxF "$_sm_p" "$W/handled" 2>/dev/null && return 0
     printf '%s\n' "$_sm_p" >>"$W/handled"
+    if is_excluded "$_sm_item"; then row "$_sm_item" "$_sm_old" "" "excluded"; return 0; fi
     if [ "$_sm_new" = "$_sm_old" ]; then
         [ -n "$_sm_q" ] || row "$_sm_item" "$_sm_old" "$_sm_old" "already ok"
         return 0
@@ -351,6 +380,7 @@ set_mode() {
 # want_sysctl KEY VALUE -> queue one kernel setting for the sysctl step.
 #   Keys this kernel does not have are recorded as skipped.
 want_sysctl() {
+    if is_excluded "$1"; then row "$1" "" "" "excluded"; return 0; fi
     if ! _ws_cur=$("$SYSCTL" -n "$1" 2>/dev/null); then
         row "$1" "" "$2" "skipped (not on this kernel)"
         return 0
@@ -383,6 +413,10 @@ fix_sysctl() {
     want_sysctl fs.protected_hardlinks 1
     want_sysctl kernel.kptr_restrict 1
     want_sysctl kernel.dmesg_restrict 1
+    want_sysctl kernel.unprivileged_bpf_disabled 1
+    want_sysctl net.ipv4.tcp_rfc1337 1
+    want_sysctl fs.protected_fifos 1
+    want_sysctl fs.protected_regular 1
     # Not here on purpose: rp_filter (strict mode breaks multi-homed routers),
     # ip_forward (routers and Docker need it), ptrace_scope (debuggers).
 }
@@ -504,6 +538,7 @@ svc_state() {
 fix_logging() {
     [ -n "$R" ] && { row "(all)" "" "" "skipped (--root: services belong to the running system)"; return 0; }
     for _s in rsyslog syslog-ng auditd; do
+        if is_excluded "$_s"; then row "$_s" "" "" "excluded"; continue; fi
         _st=$(svc_state "$_s")
         case "$_st" in
             missing) cc_debug "logging: $_s not installed" ;;
@@ -532,6 +567,7 @@ pkg_owner() {
 }
 fix_preload() {
     _pl=$(P /etc/ld.so.preload)
+    if is_excluded /etc/ld.so.preload; then row /etc/ld.so.preload "" "" "excluded"; _pl=/nonexistent/ld.so.preload; fi
     if [ -s "$_pl" ]; then
         # Every library named in it: owned by a package, or a red flag.
         _bad=""
@@ -570,12 +606,92 @@ fix_trust() {
     _n=0
     while IFS= read -r _f; do
         [ -e "$(P "$_f")" ] || continue
+        if is_excluded "$_f"; then row "$_f" "" "" "excluded"; continue; fi
         _n=$((_n + 1))
         cc_quarantine "$(P "$_f")"
         _rc=$?
         if [ "$_rc" -eq 4 ]; then row "$_f" present present refused; else row "$_f" "lets other hosts log in without a password" quarantined "$(result "$_rc")"; fi
     done <"$W/trust"
     [ "$_n" -eq 0 ] && row "(rhosts-style files)" none "" "already ok"
+}
+
+# ---- Accounts -------------------------------------------------------------------
+# The shadow file is edited with awk into a copy, then written back with
+# cat (keeps its owner and mode).  The password field is never logged or
+# stored: a lock only adds "!" in front, and the undo only removes it.
+
+# uid0_list -> accounts other than root with UID 0.
+uid0_list() { awk -F: '$3 == "0" && $1 != "root" { print $1 }' "$(P /etc/passwd)" 2>/dev/null; }
+# emptypw_list -> accounts whose password field in shadow is empty.
+emptypw_list() { awk -F: 'NF > 1 && $2 == "" { print $1 }' "$(P /etc/shadow)" 2>/dev/null; }
+
+# lock_account USER EXPIRE WHY
+#   Put "!" in front of USER's password (no password login) and, with
+#   EXPIRE=1, set the account's expiry to day 1 (no login at all, SSH keys
+#   included).  The undo removes the "!" and puts the old expiry back.
+lock_account() {
+    _la_u=$1; _la_e=$2; _la_why=$3
+    _la_sf=$(P /etc/shadow)
+    [ -r "$_la_sf" ] || { row "$_la_u" "" "" "skipped (cannot read /etc/shadow)"; return 0; }
+    if is_excluded "$_la_u"; then row "$_la_u" "" "" "excluded"; return 0; fi
+    # State without the secret: L = locked already, and the expiry field.
+    _la_st=$(awk -F: -v u="$_la_u" '$1 == u { print (($2 ~ /^[!*]/) ? "L" : "U") "|" $8; exit }' "$_la_sf")
+    [ -n "$_la_st" ] || { row "$_la_u" "" "" "skipped (not in /etc/shadow)"; return 0; }
+    _la_lk=${_la_st%%|*}; _la_old8=${_la_st#*|}
+    _la_bang=0; [ "$_la_lk" = U ] && _la_bang=1
+    _la_exp=0; [ "$_la_e" = 1 ] && [ "$_la_old8" != 1 ] && _la_exp=1
+    _la_before="unlocked"; [ "$_la_lk" = L ] && _la_before="locked"
+    [ "$_la_e" = 1 ] && _la_before="$_la_before, expires ${_la_old8:-never}"
+    _la_after="locked"; [ "$_la_e" = 1 ] && _la_after="locked, expired"
+    if [ "$_la_bang" = 0 ] && [ "$_la_exp" = 0 ]; then row "$_la_u" "$_la_before" "$_la_after" "already ok"; return 0; fi
+    if ! cc_guard account "$_la_u"; then row "$_la_u" "$_la_before" "$_la_after" refused; return 0; fi
+    awk -F: -v OFS=: -v u="$_la_u" -v b="$_la_bang" -v e="$_la_exp" '
+        $1 == u { if (b == 1) $2 = "!" $2; if (e == 1) $8 = 1 } { print }' "$_la_sf" >"$W/shadow.new"
+    cc_run "lock account $_la_u ($_la_why)" sh -c 'cat "$1" >"$2"' sh "$W/shadow.new" "$_la_sf"
+    _la_rc=$?
+    rm -f "$W/shadow.new"
+    if [ "$_la_rc" -eq 0 ]; then
+        _la_q=$(cc_shquote "$_la_sf"); _la_t=$(cc_shquote "$_la_sf.ccdc-tmp")
+        cc_undo_add "unlock account $_la_u" "awk -F: -v OFS=: -v u=$(cc_shquote "$_la_u") -v b=$_la_bang -v e=$_la_exp -v o=$(cc_shquote "$_la_old8") '\$1 == u { if (b == 1) sub(/^!/, \"\", \$2); if (e == 1) \$8 = o } { print }' $_la_q >$_la_t && cat $_la_t >$_la_q && rm -f $_la_t"
+    fi
+    row "$_la_u" "$_la_before" "$_la_after" "$(result "$_la_rc")"
+}
+
+fix_uid0() {
+    uid0_list >"$W/uid0"
+    [ -s "$W/uid0" ] || { row "(accounts with UID 0)" "only root" "" "already ok"; return 0; }
+    while IFS= read -r _u; do lock_account "$_u" 1 "UID 0 = root-equivalent; a classic backdoor account"; done <"$W/uid0"
+}
+
+fix_emptypw() {
+    [ -r "$(P /etc/shadow)" ] || { row /etc/shadow "" "" "skipped (cannot read it)"; return 0; }
+    emptypw_list >"$W/emptypw"
+    [ -s "$W/emptypw" ] || { row "(accounts with an empty password)" none "" "already ok"; return 0; }
+    while IFS= read -r _u; do lock_account "$_u" 0 "empty password: anyone could log in as it"; done <"$W/emptypw"
+}
+
+# ---- SUID programs ------------------------------------------------------------------
+# Programs that give a root shell when SUID (GTFOBins), but are never SUID on
+# a normal system.  The usual SUID programs (passwd, sudo, su, mount, ping,
+# pkexec, chsh ...) are not on this list and are never touched.
+GTFO=" ash awk base64 bash busybox cat chmod chown cp csh curl cut dash date dd diff ed emacs env expect find flock gdb grep head hexdump ionice ip jq ksh less lua make more mv nano nawk gawk mawk nc ncat nice nmap node nohup od openssl perl php pico python python2 python3 rlwrap rsync run-parts rvim sed setarch socat sort sqlite3 strace systemctl tac tail tar taskset tclsh tee time timeout unshare vi view vim watch wget xargs xxd zip zsh "
+
+# suid_list -> SUID files that should not be SUID, one path per line.
+suid_list() {
+    for _d in /bin /sbin /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin /opt /tmp /var/tmp /dev/shm /home /root; do
+        [ -d "$(P "$_d")" ] && [ ! -h "$(P "$_d")" ] && find "$(P "$_d")" -xdev -type f -perm -4000 2>/dev/null
+    done | sort -u | while IFS= read -r _p; do
+        _i=${_p#"$R"}
+        case "$_i" in /tmp/*|/var/tmp/*|/dev/shm/*|/home/*|/root/*) printf '%s\n' "$_i"; continue ;; esac
+        _b=$(basename "$_i" | sed 's/[0-9.]*$//')
+        case "$GTFO" in *" $_b "*) printf '%s\n' "$_i" ;; esac
+    done
+}
+
+fix_suid() {
+    suid_list >"$W/suid"
+    [ -s "$W/suid" ] || { row "(SUID programs)" "only the usual ones" "" "already ok"; return 0; }
+    while IFS= read -r _i; do set_mode "$(P "$_i")" 4000 0000 "SUID on a program that gives a root shell"; done <"$W/suid"
 }
 
 fix_hosts() {
@@ -632,11 +748,32 @@ else
                 fi ;;
             ipv6)  cc_ask "Turn IPv6 off? Check no scored service uses IPv6 first (ipv6)" Y && _keep="$_keep $_f" ;;
             hosts) cc_ask "Check /etc/hosts for odd entries? Report only (hosts)" Y && _keep="$_keep $_f" ;;
+            uid0|emptypw|suid)
+                # Show what it found first, so you know what you are answering.
+                case "$_f" in uid0) uid0_list >"$W/found" ;; emptypw) emptypw_list >"$W/found" ;; suid) suid_list >"$W/found" ;; esac
+                if [ ! -s "$W/found" ]; then cc_show "$C_GRY" "    $_f: nothing found ($(fix_desc "$_f"))"; continue; fi
+                cc_show "$C_YEL" "    $_f found: $(tr '\n' ' ' <"$W/found")"
+                cc_ask "$(fix_desc "$_f")? ($_f)" Y && _keep="$_keep $_f" ;;
             *)     cc_ask "$(fix_desc "$_f")? ($_f)" Y && _keep="$_keep $_f" ;;
         esac
+        # A fix that acts on named items: ask what to leave alone (unless
+        # --exclude already said).
+        case " $_keep " in *" $_f "*) ;; *) continue ;; esac
+        case " $EXCL_FIXES " in *" $_f "*) ;; *) continue ;; esac
+        [ "$EXCLFLAG" = 1 ] && continue
+        case "$_f" in
+            uid0|emptypw) _what="account names" ;;
+            suid|perms|trust|preload) _what="paths" ;;
+            sysctl) _what="settings, e.g. net.ipv4.tcp_syncookies" ;;
+            logging) _what="services: rsyslog, syslog-ng, auditd" ;;
+        esac
+        cc_ask_text "  Leave any alone for $_f? ($_what, comma list)" ""
+        [ -n "$CC_ANSWER" ] && EXCL="$EXCL,$CC_ANSWER"
     done
     FIXES=$_keep
 fi
+EXCL=$(printf '%s' "$EXCL" | tr -d ' ')
+[ -n "$(printf '%s' "$EXCL" | tr -d ',')" ] && cc_show "$C_GRY" "    Left alone:$(printf '%s' "$EXCL" | tr ',' ' ')"
 case " $FIXES " in *" forwarding "*) NOFWD=1 ;; esac
 
 # ---- The fixes, as one pass ---------------------------------------------------

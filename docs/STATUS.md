@@ -1,6 +1,6 @@
 # Build status
 
-22 of 28 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+23 of 29 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -13,7 +13,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | Hardening: hard | 2 | 6 |
 | Management | 3 | 3 |
 | Alerts | 2 | 3 |
-| Kit | 2 | 2 |
+| Kit | 3 | 3 |
 
 ## Enum (look only)
 
@@ -82,5 +82,6 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | --- | --- | --- | --- | --- |
 | LB-01 | Shell library (lib.sh) | none | built | `lib/lib.sh` |
 | LB-02 | PowerShell library (lib.ps1) | none | built | `lib/lib.ps1` |
+| LB-03 | Build step | none | built | `tools/build.sh` |
 
 `built` means written and passing the local tests. `tested` means it has also been run on the real target systems. A "To do" in the catalog description is a change still owed to a built script.

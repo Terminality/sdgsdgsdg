@@ -896,7 +896,7 @@ sudo sh LX-39-safe-fixes.sh --apply --skip ipv6    # flags answer questions in a
 What a run looks like:
 
 1. **Revert timer starts: 2 minutes.** If you don't keep the changes before it runs out (for example because you got kicked off), everything this run changed is put back. It runs outside the script (a systemd timer, or a detached job), so a dead SSH session doesn't stop it.
-2. **Questions:** which box this is (splunk / webmail / ecomm / other), then one per fix. The time left is shown.
+2. **Questions:** which box this is (splunk / webmail / ecomm / other), then one per fix. For fixes that act on accounts or SUID files it first lists what it found. After a yes, a fix that acts on named items asks **"Leave any alone?"**: type a comma list (account names, paths, settings, services) or press Enter for none. The time left is shown.
 3. **Plan:** a dry run shows every change (yellow `[~]`), then asks `Apply these N change(s)?`
 4. **Applying:** each change shown as it's made (green `[+]`, red `[x]` if it failed).
 5. **Keep or revert:** open a **new** SSH or console session and log in. Then `y` keeps the changes; `n`, or no answer before the timer, undoes them.
@@ -906,6 +906,7 @@ With no terminal (run remotely) and no `--batch`, it says how to keep the change
 | Option | What it does |
 | --- | --- |
 | `--box NAME` | splunk, webmail, ecomm or other: answers the box question |
+| `--exclude a,b` | Items no fix may touch: paths (`/etc/crontab`), account names (`bob`), kernel settings (`net.ipv4.tcp_syncookies`), services (`auditd`). Answers every "leave any alone?" question |
 | `--timer SECONDS` | Revert timer length (default 120) |
 | `--no-timer` | No revert timer (you accept the risk) |
 | `--batch` | Never ask: take every default. With `--apply`, the changes are kept |
@@ -921,7 +922,7 @@ Without a protected list it asks whether to go on (`--no-protected` answers yes)
 
 | Fix | What it does | Why it is safe |
 | --- | --- | --- |
-| `sysctl` | SYN cookies on; full address-space randomization; source-routed packets and ICMP redirects refused and not sent; odd-source packets logged; symlink and hardlink protection; kernel pointers and kernel log hidden from normal accounts | None of these change what a service listens on or answers |
+| `sysctl` | SYN cookies on; full address-space randomization; no unprivileged BPF; protected FIFOs and regular files in sticky folders; RFC 1337 TIME-WAIT protection; source-routed packets and ICMP redirects refused and not sent; odd-source packets logged; symlink and hardlink protection; kernel pointers and kernel log hidden from normal accounts | None of these change what a service listens on or answers |
 | `ipv6` | IPv6 off on every interface except loopback (`lo` is switched back on after `all` is switched off, so `::1` stays), with the kernel setting `disable_ipv6`, written for boot too. Only tried against a stand-in so far: after the first real run check `ip -6 addr show lo` | Services listening on `[::]` keep working for IPv4. NOT the `ipv6.disable=1` boot option, which stops such services from starting at all. Services bound to one specific IPv6 address are listed first under "check by hand" |
 | `forwarding` | IP forwarding off. It asks first whether the box routes traffic or runs Docker. With no one to ask, only with `--no-forwarding` | Routers, firewalls and Docker need forwarding |
 | `coredumps` | No core dumps from setuid programs; core size limit 0 for every account | A core dump of a login program can hold password hashes |
@@ -930,6 +931,9 @@ Without a protected list it asks whether to go on (`--no-protected` answers yes)
 | `logging` | Starts and enables rsyslog, syslog-ng and auditd if they are installed but stopped | Logging is never scored against you |
 | `preload` | If `/etc/ld.so.preload` loads a library no package owns, the file is moved to quarantine. `LD_PRELOAD` and `LD_LIBRARY_PATH` lines in `/etc/environment` are commented out | That file is the classic user-mode rootkit hook. A library owned by a package (a logger such as snoopy) is reported and left alone |
 | `trust` | `.rhosts`, `.shosts`, `/etc/hosts.equiv`, `/etc/shosts.equiv` moved to quarantine | They let other machines log in with no password |
+| `uid0` | Accounts other than root with UID 0 are locked (`!` before the password) and expired, so no password or SSH key logs in | A second UID 0 account is a backdoor. The password itself is never logged; undo removes the `!` and puts the old expiry back |
+| `emptypw` | Accounts with an empty password are locked | Anyone could log in as them. Scoring never uses an account with no password |
+| `suid` | Removes the SUID bit from programs that should never have it (copies of bash, find, vim, python ... from GTFOBins) and from any SUID file in `/tmp`, `/var/tmp`, `/dev/shm`, `/home`, `/root` | The normal SUID programs (passwd, sudo, su, mount, ping, pkexec ...) are not on the list and are never touched |
 | `hosts` | Reports `/etc/hosts` lines that pin a name to an address. Never changes the file | Scoring can depend on `/etc/hosts`; a red team uses it to redirect updates and logins |
 
 IP forwarding left on is reported under "check by hand" even without `--no-forwarding`.

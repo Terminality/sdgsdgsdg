@@ -44,14 +44,20 @@ mode() { ls -ld "$1" | awk '{ p = $1; s = 0; u = 0; g = 0; o = 0
     if (substr(p,2,1) == "r") u += 4; if (substr(p,3,1) == "w") u += 2; if (substr(p,4,1) ~ /[xs]/) u += 1
     if (substr(p,5,1) == "r") g += 4; if (substr(p,6,1) == "w") g += 2; if (substr(p,7,1) ~ /[xs]/) g += 1
     if (substr(p,8,1) == "r") o += 4; if (substr(p,9,1) == "w") o += 2; if (substr(p,10,1) ~ /[xt]/) o += 1
+    if (substr(p,4,1) ~ /[sS]/) s += 4; if (substr(p,7,1) ~ /[sS]/) s += 2
     if (substr(p,10,1) ~ /[tT]/) s += 1; printf "%d%d%d%d\n", s, u, g, o }'; }
 
 # plant -> (re)build the fake root with every problem the fixes look for.
 plant() {
     rm -rf "$R"; mkdir -p "$R/etc/sudoers.d" "$R/etc/ssh" "$R/etc/cron.d" "$R/etc/profile.d" "$R/etc/security/limits.d" \
         "$R/etc/sysctl.d" "$R/root" "$R/tmp" "$R/home/bob" "$R/usr/bin"
-    printf 'root:x:0:0:root:/root:/bin/bash\nbob:x:1000:1000::/home/bob:/bin/bash\n' >"$R/etc/passwd"; chmod 644 "$R/etc/passwd"
-    printf 'root:*:1::::::\n' >"$R/etc/shadow"; chmod 644 "$R/etc/shadow"
+    printf 'root:x:0:0:root:/root:/bin/bash\nbob:x:1000:1000::/home/bob:/bin/bash\ntoor:x:0:0::/root:/bin/bash\nevil:x:0:0::/root:/bin/bash\nguest:x:1001:1001::/home/guest:/bin/bash\n' >"$R/etc/passwd"; chmod 644 "$R/etc/passwd"
+    printf 'root:*:1::::::\nbob:$6$abc$hash:19000:0:99999:7:::\ntoor:$6$xyz$hash:19000:0:99999:7:::\nevil:$6$q$hash:19000:0:99999:7:::\nguest::19000:0:99999:7:::\n' >"$R/etc/shadow"; chmod 644 "$R/etc/shadow"
+    mkdir -p "$R/usr/bin"
+    for _fb in /usr/bin/find /bin/find; do [ -f "$_fb" ] && break; done
+    cp "$_fb" "$R/usr/bin/find"; chmod 4755 "$R/usr/bin/find"
+    printf 'x\n' >"$R/usr/bin/passwd"; chmod 4755 "$R/usr/bin/passwd"
+    printf 'x\n' >"$R/tmp/.helper"; chmod 4755 "$R/tmp/.helper"
     printf 'root ALL=(ALL) ALL\n' >"$R/etc/sudoers"; chmod 644 "$R/etc/sudoers"  # sudoers text, not an array: posix-ok
     printf 'bob ALL=(ALL) ALL\n' >"$R/etc/sudoers.d/bob"; chmod 666 "$R/etc/sudoers.d/bob"  # posix-ok
     printf 'KEY\n' >"$R/etc/ssh/ssh_host_rsa_key"; chmod 644 "$R/etc/ssh/ssh_host_rsa_key"
@@ -115,6 +121,13 @@ t_eq "$(tail -n 1 "$R/etc/sysctl.d/99-zz-ccdc-safe.conf")" "net.ipv6.conf.lo.dis
 t_eq "$(sysctl -n fs.suid_dumpable)" 0 "setuid core dumps off"
 t_eq "$(sysctl -n net.ipv4.ip_forward)" 1 "forwarding left on without --no-forwarding"
 t_has "$(cat "$R/etc/hosts")" "10.6.6.6" "/etc/hosts never changed"
+t_has "$(grep '^toor:' "$R/etc/shadow")" 'toor:!$6$xyz$hash:19000:0:99999:7::1:' "extra UID 0 account locked and expired"
+t_has "$(grep '^guest:' "$R/etc/shadow")" 'guest:!:' "empty-password account locked"
+t_has "$(grep '^bob:' "$R/etc/shadow")" 'bob:$6$abc$hash:19000' "a normal account is left alone"
+t_eq "$(mode "$R/usr/bin/find")" 0755 "SUID removed from a copy of find"
+t_eq "$(mode "$R/tmp/.helper")" 0755 "SUID removed from a file in /tmp"
+t_eq "$(mode "$R/usr/bin/passwd")" 4755 "the usual SUID programs (passwd) are left alone"
+t_hasnt "$(cat "$O"/LX-39_*.log)" '$6$xyz$hash' "a password hash never reaches the log"
 
 t_start "a second run finds nothing to do"
 out=$(run --out "$O" --root "$R" --apply --batch --no-protected 2>&1)
@@ -131,6 +144,9 @@ t_file "$R/etc/ld.so.preload" "preload file put back"
 t_file "$R/home/bob/.rhosts" ".rhosts put back"
 t_hasnt "$(cat "$R/etc/environment")" "disabled by LX-39" "/etc/environment restored"
 t_eq "$(sysctl -n net.ipv4.tcp_syncookies)" 0 "kernel setting restored"
+t_has "$(grep '^toor:' "$R/etc/shadow")" 'toor:$6$xyz$hash:19000:0:99999:7:::' "UID 0 account unlocked, expiry put back exactly"
+t_has "$(grep '^guest:' "$R/etc/shadow")" 'guest::19000' "empty-password account put back"
+t_eq "$(mode "$R/usr/bin/find")" 4755 "SUID put back"
 t_fail "boot file removed" test -e "$R/etc/sysctl.d/99-zz-ccdc-safe.conf"
 rm -f "$U"
 
@@ -147,6 +163,19 @@ run --out "$O" --root "$R" --apply --batch --no-protected --only sysctl >/dev/nu
 t_eq "$(sysctl -n net.ipv4.ip_forward)" 1 "forwarding is opt-in"
 run --out "$O" --root "$R" --apply --batch --no-protected --no-forwarding >/dev/null 2>&1
 t_eq "$(sysctl -n net.ipv4.ip_forward)" 0 "--no-forwarding turns forwarding off"
+t_start "--exclude leaves named items alone"
+plant
+out=$(run --out "$O" --root "$R" --apply --batch --no-protected --exclude evil,/etc/crontab,net.ipv4.tcp_syncookies,/tmp/.helper 2>&1)
+t_has "$(grep '^evil:' "$R/etc/shadow")" 'evil:$6$q$hash:19000:0:99999:7:::' "excluded account not locked"
+t_has "$(grep '^toor:' "$R/etc/shadow")" 'toor:!' "the other UID 0 account still locked"
+t_eq "$(mode "$R/etc/crontab")" 0666 "excluded path left alone"
+t_eq "$(mode "$R/etc/cron.d/job")" 0644 "other paths still fixed"
+t_eq "$(sysctl -n net.ipv4.tcp_syncookies)" 0 "excluded kernel setting left alone"
+t_eq "$(sysctl -n kernel.randomize_va_space)" 2 "other kernel settings still fixed"
+t_eq "$(mode "$R/tmp/.helper")" 4755 "excluded SUID file left alone"
+t_has "$out" "[-] left alone (you excluded it): evil" "excluded items are shown"
+U=$(ls "$O"/undo-*.log); rm -f "$U"
+
 t_start "output: numbered folders, readable files, colour-free when piped"
 plant
 out=$(run --out "$T_TMP/o2" --root "$R" 2>&1)
@@ -162,7 +191,7 @@ t_file "$T_TMP/o2/safe-fixes-2/output.txt" "next run is safe-fixes-2"
 
 t_start "revert timer: no answer -> everything put back"
 plant
-out=$(run --out "$T_TMP/o3" --root "$R" --apply --no-protected --timer 10 2>&1)
+out=$(run --out "$T_TMP/o3" --root "$R" --apply --no-protected --only perms,preload --timer 10 2>&1)
 D="$T_TMP/o3/safe-fixes-1"
 t_has "$out" "Revert timer started" "timer announced"
 t_has "$out" "touch $D/KEEP" "says how to keep the changes from another session"
@@ -172,12 +201,11 @@ sleep 12
 t_file "$D/REVERTED" "the timer ran the revert"
 t_eq "$(mode "$R/etc/shadow")" 0644 "shadow mode put back"
 t_file "$R/etc/ld.so.preload" "quarantined file put back"
-t_eq "$(sysctl -n net.ipv4.tcp_syncookies)" 0 "kernel setting put back"
 t_has "$(cat "$D/revert.log")" "undone: restore mode of /etc/shadow" "revert.log lists what was undone"
 
 t_start "revert timer: KEEP from another session stops it"
 plant
-out=$(run --out "$T_TMP/o4" --root "$R" --apply --no-protected --timer 10 2>&1)
+out=$(run --out "$T_TMP/o4" --root "$R" --apply --no-protected --only perms --timer 10 2>&1)
 D="$T_TMP/o4/safe-fixes-1"
 : >"$D/KEEP"
 sleep 12
@@ -194,7 +222,7 @@ t_eq "$(mode "$R/etc/shadow")" 0644 "a change after the deadline is refused or r
 
 t_start "--batch keeps, --no-timer has no timer"
 plant
-out=$(run --out "$T_TMP/o5" --root "$R" --apply --batch --no-protected --timer 10 2>&1)
+out=$(run --out "$T_TMP/o5" --root "$R" --apply --batch --no-protected --only perms --timer 10 2>&1)
 t_has "$out" "Changes kept (--batch)" "--batch keeps the changes"
 sleep 12
 t_eq "$(mode "$R/etc/shadow")" 0640 "still changed after the timer would have fired"
@@ -209,9 +237,10 @@ t_start "questions answered at a terminal (needs 'script')"
 if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&1; then
     plant
     # Answers: box splunk; sysctl n; ipv6 n; routes? n; forwarding off? y;
-    # coredumps n; perms y; tmp n; logging n; preload n; trust n; hosts n;
-    # apply y; keep y.
-    printf 'splunk\nn\nn\nn\ny\nn\ny\nn\nn\nn\nn\nn\ny\ny\n' >"$T_TMP/answers"
+    # coredumps n; perms y; perms leave alone (Enter); tmp n; logging n;
+    # preload n; trust n; uid0 y; uid0 leave alone "evil"; emptypw n;
+    # suid n; hosts n; apply y; keep y.
+    printf 'splunk\nn\nn\nn\ny\nn\ny\n\nn\nn\nn\nn\ny\nevil\nn\nn\nn\ny\ny\n' >"$T_TMP/answers"
     CCDC_NO_TTY=0 script -qc "$SH $C --out $T_TMP/o7 --root $R --no-protected --no-color --timer 60" /dev/null <"$T_TMP/answers" >"$T_TMP/tty.out" 2>&1
     out=$(cat "$T_TMP/o7/safe-fixes-1/output.txt" 2>/dev/null)
     t_has "$out" "Scored here: chrony" "the box answer shows that box's scored services"
@@ -220,6 +249,10 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     t_eq "$(sysctl -n net.ipv4.ip_forward)" 0 "forwarding (answered y) turned off"
     t_file "$R/etc/ld.so.preload" "preload (answered n) left alone"
     t_file "$T_TMP/o7/safe-fixes-1/KEEP" "keep answered y"
+    t_has "$out" "uid0 found: toor evil" "the uid0 question shows what it found"
+    t_has "$(grep '^toor:' "$R/etc/shadow")" 'toor:!' "uid0 (answered y) locked toor"
+    t_has "$(grep '^evil:' "$R/etc/shadow")" 'evil:$6$q$hash' "evil, typed into the leave-alone question, is not locked"
+    t_has "$(grep '^guest:' "$R/etc/shadow")" 'guest::' "emptypw (answered n) not applied"
 else
     t_start "(skipped: no 'script' command)"
 fi

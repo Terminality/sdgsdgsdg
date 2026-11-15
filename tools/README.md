@@ -5,4 +5,4 @@ Repo maintenance. These are not competition scripts and are never copied to a ta
 | Tool | What it does |
 | --- | --- |
 | `update-docs.sh` | Regenerates `roles/*/README.md` and `docs/STATUS.md` from `docs/catalog.csv` |
-| `build.sh` (LB-03, not built yet) | Will inline the library into each script and write `dist/` plus `MANIFEST.sha256` |
+| `build.sh` (LB-03) | Pastes the library into each script and writes single-file scripts to `dist/` plus `MANIFEST.sha256`. Run it after changing anything in `roles/` or `lib/`; `--check` tells you if `dist/` is out of date |
