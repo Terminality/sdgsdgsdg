@@ -884,21 +884,38 @@ Run the backup (LX-31) first.
 
 ### How to run it
 
+Just run it. It asks questions like sqlmap: Enter takes the default (the capital letter).
+
 ```sh
-sudo sh LX-39-safe-fixes.sh --out /root/ccdc-out                    # dry run: shows every change
-sudo sh LX-39-safe-fixes.sh --out /root/ccdc-out --apply            # make them
-sudo sh LX-39-safe-fixes.sh --out /root/ccdc-out --apply --keep-ipv6
-sudo sh LX-39-safe-fixes.sh --out /root/ccdc-out --apply --no-forwarding   # NOT on routers, firewalls or Docker hosts
+sudo sh LX-39-safe-fixes.sh                        # asks everything, then asks before applying
+sudo sh LX-39-safe-fixes.sh --apply --batch        # no questions: defaults, apply, keep
+sudo sh LX-39-safe-fixes.sh --batch                # no questions, dry run only
+sudo sh LX-39-safe-fixes.sh --apply --skip ipv6    # flags answer questions in advance
 ```
+
+What a run looks like:
+
+1. **Revert timer starts: 2 minutes.** If you don't keep the changes before it runs out (for example because you got kicked off), everything this run changed is put back. It runs outside the script (a systemd timer, or a detached job), so a dead SSH session doesn't stop it.
+2. **Questions:** which box this is (splunk / webmail / ecomm / other), then one per fix. The time left is shown.
+3. **Plan:** a dry run shows every change (yellow `[~]`), then asks `Apply these N change(s)?`
+4. **Applying:** each change shown as it's made (green `[+]`, red `[x]` if it failed).
+5. **Keep or revert:** open a **new** SSH or console session and log in. Then `y` keeps the changes; `n`, or no answer before the timer, undoes them.
+
+With no terminal (run remotely) and no `--batch`, it says how to keep the changes from another session: `touch <run folder>/KEEP`.
 
 | Option | What it does |
 | --- | --- |
+| `--box NAME` | splunk, webmail, ecomm or other: answers the box question |
+| `--timer SECONDS` | Revert timer length (default 120) |
+| `--no-timer` | No revert timer (you accept the risk) |
+| `--batch` | Never ask: take every default. With `--apply`, the changes are kept |
+| `--no-color` | No colours |
 | `--only` / `--skip` | Run or leave out fixes by name (see `--list`) |
 | `--keep-ipv6` | Leave IPv6 on |
 | `--no-forwarding` | Also turn IP forwarding off. Routers, firewalls and Docker hosts need it on |
 | `--root DIR` | Treat DIR as `/` for the file fixes, for fixing a mounted disk image. Kernel settings and services still act on the running system |
 
-`--apply` needs a protected list (`--protected FILE`) or `--no-protected`, like every script that changes things. A path on the protected list is skipped.
+Without a protected list it asks whether to go on (`--no-protected` answers yes). A path on the protected list is skipped.
 
 ### The fixes
 
@@ -906,7 +923,7 @@ sudo sh LX-39-safe-fixes.sh --out /root/ccdc-out --apply --no-forwarding   # NOT
 | --- | --- | --- |
 | `sysctl` | SYN cookies on; full address-space randomization; source-routed packets and ICMP redirects refused and not sent; odd-source packets logged; symlink and hardlink protection; kernel pointers and kernel log hidden from normal accounts | None of these change what a service listens on or answers |
 | `ipv6` | IPv6 off on every interface except loopback (`lo` is switched back on after `all` is switched off, so `::1` stays), with the kernel setting `disable_ipv6`, written for boot too. Only tried against a stand-in so far: after the first real run check `ip -6 addr show lo` | Services listening on `[::]` keep working for IPv4. NOT the `ipv6.disable=1` boot option, which stops such services from starting at all. Services bound to one specific IPv6 address are listed first under "check by hand" |
-| `forwarding` | IP forwarding off. Only with `--no-forwarding` | Opt-in because routers, firewalls and Docker need forwarding |
+| `forwarding` | IP forwarding off. It asks first whether the box routes traffic or runs Docker. With no one to ask, only with `--no-forwarding` | Routers, firewalls and Docker need forwarding |
 | `coredumps` | No core dumps from setuid programs; core size limit 0 for every account | A core dump of a login program can hold password hashes |
 | `perms` | Removes group and other write (and other read on secrets) from `/etc/passwd`, `/etc/group`, `/etc/shadow`, `/etc/gshadow`, sudo files, SSH host keys and `sshd_config`, `/root`, cron files, shell startup files, `ld.so` config, PAM and systemd unit folders; removes world-write from anything in `/etc`, program folders and home folders | Only bits are removed. Owners and groups stay, so `shadow` stays readable by the `shadow` group on Debian and by `ssh_keys` on Red Hat |
 | `tmp` | Sticky bit on `/tmp`, `/var/tmp`, `/dev/shm` | Normal on every distribution |
@@ -919,12 +936,17 @@ IP forwarding left on is reported under "check by hand" even without `--no-forwa
 
 ### What it produces
 
-In `<out>/LX-39_<host>_<UTC time>/`:
+In a numbered folder: `<out>/safe-fixes-1`, `safe-fixes-2`, ...
 
 | File | Contents |
 | --- | --- |
+| `output.txt` | Everything shown on screen, without colours |
 | `summary.txt` | Counts per fix, every change (or would-be change), and the items to check by hand |
-| `fixes.csv` | `fix,item,before,after,status` for every item looked at |
+| `plan.txt` | What it would change |
+| `fixes.txt` | What it did: fix, item, before, after, status |
+| `revert.sh` | Undoes this run: `sh revert.sh --force` |
+| `revert.log`, `KEEP`, `REVERTED` | The revert timer's record |
+| `csv/` | `plan.csv`, `fixes.csv` |
 
 Every change adds an undo command to `<out>/undo-<host>.log`. Changed files are copied to `<out>/backup/<host>/` first; quarantined files go to `<out>/quarantine/<host>/`.
 
@@ -932,7 +954,13 @@ Kernel settings are written to `/etc/sysctl.d/99-zz-ccdc-safe.conf`, a name read
 
 ### Undo
 
-Run the undo log's commands from the bottom up:
+This run only, at any time (even after keeping it):
+
+```sh
+sudo sh /root/ccdc-out/safe-fixes-3/revert.sh --force
+```
+
+Everything every script changed on the host: run the undo log's commands from the bottom up:
 
 ```sh
 awk -F'\t' '{ l[NR] = $4 } END { for (i = NR; i >= 1; i--) print l[i] }' /root/ccdc-out/undo-web01.log > /tmp/undo.sh
@@ -953,7 +981,10 @@ To undo only this script, keep the lines whose second field is `LX-39`.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `no protected list ... refusing` (exit 3) | `--apply` without a protected list | Build one, pass `--protected FILE`, or pass `--no-protected` |
+| `Staying in dry run ... no protected list` | You answered no to going on without a protected list | Build one, pass `--protected FILE`, or answer yes / pass `--no-protected` |
+| `the revert timer ran out while waiting for an answer` (exit 3) | The questions took longer than the timer. Nothing was changed | Run again faster, use flags or `--batch`, or `--timer 300` |
+| The changes were undone a couple of minutes later | Nobody answered "keep", or you were kicked off | That's the timer working. Check `revert.log`, fix whatever locked you out, run again |
+| `Dry run only (not root)` | Not run with sudo | `sudo` |
 | `this script must be run as root` (exit 3) | `--apply` as a normal user | `sudo` |
 | Kernel settings `failed` | Read-only `/proc/sys` (containers) | Nothing to do on that box; the host kernel decides |
 | `skipped (not on this kernel)` | Old or trimmed kernel without that setting | Harmless |

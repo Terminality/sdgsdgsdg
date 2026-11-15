@@ -35,6 +35,8 @@ SYSCTL_STATE="$T_TMP/sysctl.state"; export SYSCTL_STATE
 # Full path: busybox sh would otherwise run its own built-in sysctl, which
 # changes the REAL kernel.  The script and this test both use the stand-in.
 CCDC_SYSCTL="$B/sysctl"; export CCDC_SYSCTL
+# The revert timer as a background job, never a real systemd unit.
+CCDC_TIMER_METHOD=background; export CCDC_TIMER_METHOD
 sysctl() { "$B/sysctl" "$@"; }
 
 # mode PATH -> octal mode (portable, like the script itself).
@@ -87,7 +89,7 @@ t_has "$out" "/etc/hosts: 10.6.6.6 security.ubuntu.com" "reports the pinned upda
 t_has "$out" "net.ipv4.ip_forward: IP forwarding is on" "reports forwarding without changing it"
 
 t_start "--apply fixes every planted problem"
-out=$(run --out "$O" --root "$R" --apply --no-protected 2>&1); rc=$?
+out=$(run --out "$O" --root "$R" --apply --batch --no-protected 2>&1); rc=$?
 t_eq "$rc" 0 "exit 0"
 t_eq "$(mode "$R/etc/shadow")" 0640 "shadow loses other read"
 t_eq "$(mode "$R/etc/sudoers.d/bob")" 0640 "sudoers.d file loses group write and other access"
@@ -115,7 +117,7 @@ t_eq "$(sysctl -n net.ipv4.ip_forward)" 1 "forwarding left on without --no-forwa
 t_has "$(cat "$R/etc/hosts")" "10.6.6.6" "/etc/hosts never changed"
 
 t_start "a second run finds nothing to do"
-out=$(run --out "$O" --root "$R" --apply --no-protected 2>&1)
+out=$(run --out "$O" --root "$R" --apply --batch --no-protected 2>&1)
 t_has "$out" "Nothing to change" "idempotent"
 
 t_start "the undo log puts everything back"
@@ -136,13 +138,89 @@ t_start "protected list and options"
 plant
 printf 'type,value,note\npath,%s,scored\n' "$R/etc/shadow" >"$T_TMP/protected.csv"
 printf 'path,/etc/shadow,scored\n' >>"$T_TMP/protected.csv"
-out=$(run --out "$O" --root "$R" --apply --protected "$T_TMP/protected.csv" --only perms 2>&1)
+out=$(run --out "$O" --root "$R" --apply --batch --protected "$T_TMP/protected.csv" --only perms 2>&1)
 t_eq "$(mode "$R/etc/shadow")" 0644 "protected file left alone"
 t_eq "$(mode "$R/etc/sudoers")" 0640 "other files still fixed"
-run --out "$O" --root "$R" --apply --no-protected --keep-ipv6 --only ipv6,sysctl >/dev/null 2>&1
+run --out "$O" --root "$R" --apply --batch --no-protected --keep-ipv6 --only ipv6,sysctl >/dev/null 2>&1
 t_eq "$(sysctl -n net.ipv6.conf.all.disable_ipv6)" 0 "--keep-ipv6 leaves IPv6 on"
-run --out "$O" --root "$R" --apply --no-protected --only sysctl >/dev/null 2>&1
+run --out "$O" --root "$R" --apply --batch --no-protected --only sysctl >/dev/null 2>&1
 t_eq "$(sysctl -n net.ipv4.ip_forward)" 1 "forwarding is opt-in"
-run --out "$O" --root "$R" --apply --no-protected --no-forwarding >/dev/null 2>&1
+run --out "$O" --root "$R" --apply --batch --no-protected --no-forwarding >/dev/null 2>&1
 t_eq "$(sysctl -n net.ipv4.ip_forward)" 0 "--no-forwarding turns forwarding off"
+t_start "output: numbered folders, readable files, colour-free when piped"
+plant
+out=$(run --out "$T_TMP/o2" --root "$R" 2>&1)
+t_file "$T_TMP/o2/safe-fixes-1/output.txt" "first run is safe-fixes-1"
+t_file "$T_TMP/o2/safe-fixes-1/plan.txt" "plan.txt written"
+t_has "$out" "==========[ PLAN (dry run: nothing is changed yet) ]==========" "plan section"
+t_has "$out" "[~] /etc/shadow  0644 -> 0640" "planned change shown live"
+t_has "$out" "[?] Which box is this? splunk / webmail / ecomm / other other (default)" "box question takes its default with no terminal"
+t_hasnt "$out" "$(printf '\033')" "no colour codes when piped"
+t_has "$(cat "$T_TMP/o2/safe-fixes-1/output.txt")" "==========[ SUMMARY ]==========" "output.txt has everything"
+run --out "$T_TMP/o2" --root "$R" >/dev/null 2>&1
+t_file "$T_TMP/o2/safe-fixes-2/output.txt" "next run is safe-fixes-2"
+
+t_start "revert timer: no answer -> everything put back"
+plant
+out=$(run --out "$T_TMP/o3" --root "$R" --apply --no-protected --timer 10 2>&1)
+D="$T_TMP/o3/safe-fixes-1"
+t_has "$out" "Revert timer started" "timer announced"
+t_has "$out" "touch $D/KEEP" "says how to keep the changes from another session"
+t_eq "$(mode "$R/etc/shadow")" 0640 "changed right after the run"
+t_hasnt "$out" "this was a dry run" "the end line does not call an applied run a dry run"
+sleep 12
+t_file "$D/REVERTED" "the timer ran the revert"
+t_eq "$(mode "$R/etc/shadow")" 0644 "shadow mode put back"
+t_file "$R/etc/ld.so.preload" "quarantined file put back"
+t_eq "$(sysctl -n net.ipv4.tcp_syncookies)" 0 "kernel setting put back"
+t_has "$(cat "$D/revert.log")" "undone: restore mode of /etc/shadow" "revert.log lists what was undone"
+
+t_start "revert timer: KEEP from another session stops it"
+plant
+out=$(run --out "$T_TMP/o4" --root "$R" --apply --no-protected --timer 10 2>&1)
+D="$T_TMP/o4/safe-fixes-1"
+: >"$D/KEEP"
+sleep 12
+t_fail "no revert after KEEP" test -e "$D/REVERTED"
+t_eq "$(mode "$R/etc/shadow")" 0640 "change kept"
+sh "$D/revert.sh" --force
+t_eq "$(mode "$R/etc/shadow")" 0644 "revert.sh --force still undoes it later"
+
+t_start "timer runs out before applying: nothing is changed"
+plant
+out=$(run --out "$T_TMP/o8" --root "$R" --apply --no-protected --timer 2 2>&1)
+sleep 3
+t_eq "$(mode "$R/etc/shadow")" 0644 "a change after the deadline is refused or reverted"
+
+t_start "--batch keeps, --no-timer has no timer"
+plant
+out=$(run --out "$T_TMP/o5" --root "$R" --apply --batch --no-protected --timer 10 2>&1)
+t_has "$out" "Changes kept (--batch)" "--batch keeps the changes"
+sleep 12
+t_eq "$(mode "$R/etc/shadow")" 0640 "still changed after the timer would have fired"
+plant
+out=$(run --out "$T_TMP/o6" --root "$R" --apply --no-protected --no-timer 2>&1)
+t_has "$out" "No revert timer (--no-timer)" "--no-timer warns"
+t_fail "--no-timer writes no revert.sh" test -e "$T_TMP/o6/safe-fixes-1/revert.sh"
+run --timer abc >/dev/null 2>&1; t_eq "$?" 2 "bad --timer exits 2"
+run --box mars >/dev/null 2>&1; t_eq "$?" 2 "bad --box exits 2"
+
+t_start "questions answered at a terminal (needs 'script')"
+if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&1; then
+    plant
+    # Answers: box splunk; sysctl n; ipv6 n; routes? n; forwarding off? y;
+    # coredumps n; perms y; tmp n; logging n; preload n; trust n; hosts n;
+    # apply y; keep y.
+    printf 'splunk\nn\nn\nn\ny\nn\ny\nn\nn\nn\nn\nn\ny\ny\n' >"$T_TMP/answers"
+    CCDC_NO_TTY=0 script -qc "$SH $C --out $T_TMP/o7 --root $R --no-protected --no-color --timer 60" /dev/null <"$T_TMP/answers" >"$T_TMP/tty.out" 2>&1
+    out=$(cat "$T_TMP/o7/safe-fixes-1/output.txt" 2>/dev/null)
+    t_has "$out" "Scored here: chrony" "the box answer shows that box's scored services"
+    t_eq "$(mode "$R/etc/shadow")" 0640 "perms (answered y) applied"
+    t_eq "$(sysctl -n net.ipv4.tcp_syncookies)" 0 "sysctl (answered n) not applied"
+    t_eq "$(sysctl -n net.ipv4.ip_forward)" 0 "forwarding (answered y) turned off"
+    t_file "$R/etc/ld.so.preload" "preload (answered n) left alone"
+    t_file "$T_TMP/o7/safe-fixes-1/KEEP" "keep answered y"
+else
+    t_start "(skipped: no 'script' command)"
+fi
 t_done

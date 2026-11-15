@@ -233,6 +233,37 @@ t_has "$r" "bob   has, comma" "commas inside a value kept"
 t_has "$r" "a     0123456..." "long values cut with ..."
 t_has "$r" "(nothing found)" "an empty CSV says so"
 
+t_start "questions and the revert timer"
+mk ask 'while [ $# -gt 0 ]; do cc_common_flag "$@" && { shift "$CC_SHIFT"; continue; }; shift; done
+cc_init T-14 "ask" changes
+cc_ask "yes question" Y && echo "q1=yes"
+cc_ask "no question" N || echo "q2=no"
+cc_ask_text "text question" other; echo "q3=$CC_ANSWER"
+echo "now=$(cc_now)"
+cc_use_numbered_dir timer
+cc_timer_start 2
+f="$CC_RUN_DIR/thing"; echo before >"$f"
+cc_undo_add "put thing back" "echo before >$(cc_shquote "$f")"
+echo after >"$f"
+echo "dir=$CC_RUN_DIR"
+cc_timer_finish
+cc_finish'
+r=$(CCDC_TIMER_METHOD=background; export CCDC_TIMER_METHOD; run "$S/ask.sh" --out "$T_TMP/ask" --batch --apply --no-protected 2>/dev/null)
+t_has "$r" "q1=yes" "--batch: a Y question takes yes"
+t_has "$r" "q2=no" "--batch: an N question takes no"
+t_has "$r" "q3=other" "--batch: a text question takes its default"
+t_has "$r" "[?] yes question [Y/n] Y (default)" "the default taken is shown"
+t_ok "cc_now is a number" sh -c "printf '%s' '$(printf '%s\n' "$r" | sed -n 's/^now=//p')' | grep -Eq '^[0-9]{9,}$'"
+D=$(printf '%s\n' "$r" | sed -n 's/^dir=//p')
+t_has "$r" "Changes kept (--batch)" "--batch keeps at the end"
+t_file "$D/KEEP" "KEEP written"
+r=$(CCDC_TIMER_METHOD=background; export CCDC_TIMER_METHOD; run "$S/ask.sh" --out "$T_TMP/ask2" --apply --no-protected </dev/null 2>/dev/null)
+D=$(printf '%s\n' "$r" | sed -n 's/^dir=//p')
+t_has "$r" "touch $D/KEEP" "no terminal: says how to keep"
+sleep 4
+t_eq "$(cat "$D/thing")" "before" "no answer: the timer put the change back"
+t_has "$(cat "$D/revert.log")" "undone: put thing back" "revert.log says what was undone"
+
 t_start "kit integrity check"
 unset CCDC_SKIP_VERIFY
 mkdir -p "$T_TMP/dist"; cp "$S/init.sh" "$T_TMP/dist/v.sh"
