@@ -171,7 +171,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     t_start "picking hosts for the full scan in a terminal"
     : >"$STUBLOG"
     printf '10.9.9.6\n' >"$T_TMP/answers2"
-    CCDC_NO_TTY=0 PATH="$T_TMP/bin:$PATH" script -qc "$SH $C --out $T_TMP/q --no-color --target 10.9.9.0/24 --speed 4 --top-ports 10 --no-extra-ports --full --no-services --no-scripts --no-vuln --no-os --no-udp" /dev/null <"$T_TMP/answers2" >"$T_TMP/tty2.out" 2>&1
+    CCDC_NO_TTY=0 PATH="$T_TMP/bin:$PATH" script -qc "$SH $C --out $T_TMP/q --no-color --target 10.9.9.0/24 --speed 4 --quick --top-ports 10 --no-extra-ports --full --no-services --no-scripts --no-vuln --no-os --no-udp" /dev/null <"$T_TMP/answers2" >"$T_TMP/tty2.out" 2>&1
     t_has "$(cat "$T_TMP/tty2.out")" "Full scan which hosts?" "asks which hosts get the full scan"
     t_has "$(cat "$T_TMP/tty2.out")" "up: 10.9.9.5 10.9.9.6" "after showing the hosts that are up"
     t_has "$(sed -n 2p "$STUBLOG")" "-p- --stats-every 60s 10.9.9.6" "full scan only on the typed host"
