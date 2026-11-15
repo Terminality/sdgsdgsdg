@@ -163,9 +163,14 @@ def serve(port, reply):
         c.close()
 for p, r in ((int(sys.argv[1]), b"HTTP/1.0 200 OK\r\nServer: TestServer\r\n\r\n"), (int(sys.argv[2]), b"")):
     threading.Thread(target=serve, args=(p, r), daemon=True).start()  # python, not shell: posix-ok
-time.sleep(300)' 18181 31337 >/dev/null 2>&1 &
+time.sleep(900)' 18181 31337 >/dev/null 2>&1 &
 LPID=$!
-sleep 1
+# Wait until both listeners answer (up to 10 seconds).
+_i=0
+until python3 -c 'import socket,sys
+for p in (18181, 31337): socket.create_connection(("127.0.0.1", p), 1).close()' 2>/dev/null || [ "$_i" -ge 20 ]; do
+    sleep 0.5 2>/dev/null || sleep 1; _i=$((_i + 1))
+done
 printf 'host,ip,os,role,connect,port,user,scored_services,notes\nself,127.0.0.1,linux,test,ssh,22,u,http:18181;smtp:2526,\nghost,127.0.0.9,linux,gone,ssh,22,u,,\n' >"$T_TMP/hosts.csv"
 
 for engine in python nmap; do
