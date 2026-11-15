@@ -637,7 +637,7 @@ lock_account() {
     # State without the secret: L = locked already, and the expiry field.
     _la_st=$(awk -F: -v u="$_la_u" '$1 == u { print (($2 ~ /^[!*]/) ? "L" : "U") "|" $8; exit }' "$_la_sf")
     [ -n "$_la_st" ] || { row "$_la_u" "" "" "skipped (not in /etc/shadow)"; return 0; }
-    _la_lk=${_la_st%%|*}; _la_old8=${_la_st#*|}
+    _la_lk=${_la_st%%"|"*}; _la_old8=${_la_st#*"|"}
     _la_bang=0; [ "$_la_lk" = U ] && _la_bang=1
     _la_exp=0; [ "$_la_e" = 1 ] && [ "$_la_old8" != 1 ] && _la_exp=1
     _la_before="unlocked"; [ "$_la_lk" = L ] && _la_before="locked"

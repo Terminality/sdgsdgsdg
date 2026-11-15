@@ -357,7 +357,7 @@ s_system() {
                "init|$CC_INIT" "package_manager|$CC_PKG" "boot_time|$_boot" "uptime|$_up" \
                "time_utc|$(date -u +%Y-%m-%dT%H:%M:%SZ)" "time_local|$(date)" "ipv6_enabled|$_ip6" \
                "inside_container|$_container" "collector_run_as_root|$IS_ROOT"; do
-        cc_csv_row "$F" "${_kv%%|*}" "${_kv#*|}"
+        cc_csv_row "$F" "${_kv%%"|"*}" "${_kv#*"|"}"
     done
 
     # Addresses.  'ip -o' gives one line per address; ifconfig is the fallback

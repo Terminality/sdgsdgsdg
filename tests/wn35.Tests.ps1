@@ -45,7 +45,9 @@ if ([Environment]::OSVersion.Platform -eq 'Win32NT') {
     # ---- stand-in programs ------------------------------------------------
     $bin = Join-Path $tmp 'bin'; New-Item -ItemType Directory -Path $bin -Force | Out-Null
     $log = Join-Path $tmp 'calls.log'
-    function Stub($name, $body) { $p = Join-Path $bin $name; [IO.File]::WriteAllText($p, "#!/bin/sh`necho `"$name `$*`" >>'$log'`n" + $body + "`n"); & chmod +x $p }
+    # The test file is checked out with CRLF (.gitattributes), and a CR at the
+    # end of a line breaks /bin/sh, so it is stripped from the stub body.
+    function Stub($name, $body) { $p = Join-Path $bin $name; [IO.File]::WriteAllText($p, "#!/bin/sh`necho `"$name `$*`" >>'$log'`n" + ($body -replace "`r", '') + "`n"); & chmod +x $p }
     Stub 'reg.exe' @'
 case "$2" in *WOW6432Node*) echo "ERROR: The system was unable to find the specified registry key or value."; exit 1 ;; esac
 printf 'Windows Registry Editor Version 5.00\r\n[%s]\r\n' "$2" >"$3"

@@ -2,6 +2,12 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-14: dist/ committed; shell and line-ending fixes
+
+- `dist/` was left out by an old `.gitignore` line; it is committed now, with a test that fails if it is ignored again.
+- LX-39 `uid0`/`emptypw` and SH-05's facts table: `${x%%|*}` is a pattern operator in ksh and mksh, so accounts were expired but not locked, and facts.csv lost its keys under those shells. The `|` is quoted now; SH-05's test checks the facts keys.
+- WN-35's test built its stand-in programs from CRLF text after a fresh checkout and failed on Linux; carriage returns are stripped.
+
 ## 2026-11-14: Single-file scripts (build step)
 
 - `tools/build.sh` (LB-03): copies every script into `dist/<role>/` with the library pasted in, so you copy one file and run it. Writes `dist/MANIFEST.sha256`; a built script checks itself against it when the manifest is next to it. `--check` reports whether `dist/` is out of date.
