@@ -564,12 +564,17 @@ It asks like sqlmap (Enter takes the default, a flag answers in advance):
 
 | Question | Default | Flag |
 | --- | --- | --- |
-| What to scan (IP, range, subnet; several with spaces) | your own network | `--target` |
-| Quick scan, top 1000 ports | yes | `--quick` / `--no-quick` |
-| Full scan, all 65535 ports, on the hosts that are up | yes | `--full` / `--no-full` |
+| What to scan: one host, a range or a subnet; several with spaces | your own network | `--target` |
+| How aggressive: 1-2 slow and quiet, 3 normal, 4 fast, 5 fastest (can miss ports) | 4 | `--speed N` |
+| Quick scan of the top ports | yes | `--quick` / `--no-quick` |
+| How many top ports | 1000 | `--top-ports N` |
+| Other ports to always scan, e.g. `8080,9000-9100` | none | `--extra-ports` / `--no-extra-ports` |
+| Full scan, all 65535 ports | yes | `--full` / `--no-full` |
+| Which hosts get the full scan (asked after the quick scan, when more than one is up) | all up | `--full-hosts "10.0.2.5 10.0.2.7"` |
 | Service and version on each open port | yes | `--services` / `--no-services` |
 | nmap default scripts (anonymous FTP, SMB signing, ...) | yes | `--scripts` / `--no-scripts` |
-| nmap vuln scripts (only ones nmap marks safe) | no | `--vuln` / `--no-vuln` |
+| nmap vuln scripts | no | `--vuln` / `--no-vuln` |
+| Only the safe vuln scripts (no = all of them; some can crash a service) | yes | `--vuln-all` for all |
 | OS guess (root) | yes | `--os` / `--no-os` |
 | Top 25 UDP ports (root) | no | `--udp` / `--no-udp` |
 
@@ -614,7 +619,8 @@ In `<out>/netscan-N/` (next free number):
 ### What to watch for
 
 - **The full scan is slow**: minutes per host. nmap prints progress every minute. Say no to it for a first look, then run it.
-- **Vuln scripts only point.** Nothing found does not mean safe; a hit means check that service now. Only "safe" ones run, so they will not knock a scored service over.
+- **Vuln scripts only point.** Nothing found does not mean safe; a hit means check that service now. By default only "safe" ones run, so they will not knock a scored service over. `--vuln-all` can.
+- **Speed 5 can miss ports** on a slow or busy network. Use 3 if results look thin.
 - **"Not reachable" means not reachable from where you ran it.** A firewall may block your workstation but allow the scoring engine. Check from the scoring side before changing anything.
 - **Run it again later and compare** with the scan diff (SH-04). New ports and new vulns are flagged.
 - **Scans are visible** in IDS and firewall logs. Fine on your own network.

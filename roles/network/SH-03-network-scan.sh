@@ -10,8 +10,10 @@
 #   Finds every live host and open port on the team's networks.  Asks what
 #   to scan and which extras to run (like sqlmap: Enter takes the default),
 #   then runs nmap in stages and shows nmap's own output as it goes:
-#     1. quick scan    top 1000 TCP ports on every target
-#     2. full scan     all 65535 TCP ports on the hosts that are up
+#     1. quick scan    the top N TCP ports (asks how many) plus any extra
+#                      ports you name, on every target
+#     2. full scan     all 65535 TCP ports on the hosts that are up, or
+#                      the ones you pick
 #     3. details       on the open ports only: service versions, OS guess,
 #                      nmap's default scripts, vuln scripts (safe ones)
 #     4. UDP           top 25 UDP ports (root)
@@ -42,6 +44,12 @@
 #   --services / --no-services  service and version detection (default yes)
 #   --scripts / --no-scripts    nmap default scripts (-sC)    (default yes)
 #   --vuln / --no-vuln          nmap vuln scripts, safe ones  (default no)
+#   --vuln-all                  every vuln script (some can crash a service)
+#   --speed N                   1-5: nmap timing -T1..-T5     (default 4)
+#   --top-ports N               ports in the quick scan       (default 1000)
+#   --extra-ports LIST          also scan these ports on every target
+#                               (--no-extra-ports: none, no question)
+#   --full-hosts LIST           full scan only these hosts    (default all up)
 #   --os / --no-os              OS guess, root only           (default yes)
 #   --udp / --no-udp            top 25 UDP ports, root only   (default no)
 #   --profile NAME     preset answers, no questions:
@@ -79,8 +87,8 @@
 #
 # WHAT IT CHANGES
 #   Nothing on any host.  It connects to ports and reads what they say.
-#   Only vuln scripts in nmap's "safe" category are run, so nothing that is
-#   meant to crash or change a service.  Scans are visible in logs, which is
+#   By default only vuln scripts in nmap's "safe" category are run, so
+#   nothing meant to crash or change a service (--vuln-all runs them all).  Scans are visible in logs, which is
 #   expected and fine on your own network.
 #
 # DEPENDS ON
@@ -141,6 +149,11 @@ SH-03 Network scan - live hosts, open ports, services, vulns
   --services / --no-services  service and version detection (default yes)
   --scripts / --no-scripts    nmap default scripts          (default yes)
   --vuln / --no-vuln          nmap vuln scripts (safe ones) (default no)
+  --vuln-all                  every vuln script (some can crash a service)
+  --speed N                   1 slow/quiet .. 5 fastest     (default 4)
+  --top-ports N               ports in the quick scan       (default 1000)
+  --extra-ports LIST          also scan these ports         (default none)
+  --full-hosts LIST           full scan only these hosts    (default all up)
   --os / --no-os              OS guess, needs root          (default yes)
   --udp / --no-udp            top 25 UDP ports, needs root  (default no)
   --profile NAME       fast | full | udp | outside  (preset answers, no questions)
@@ -169,7 +182,11 @@ MAXHOSTS=1024
 MAXFLAGS=30
 COLOR=1
 # Answers: Y, N, or empty (ask).
-A_QUICK=""; A_FULL=""; A_SVC=""; A_SCRIPTS=""; A_VULN=""; A_OS=""; A_UDP=""
+A_QUICK=""; A_FULL=""; A_SVC=""; A_SCRIPTS=""; A_VULN=""; A_OS=""; A_UDP=""; A_VSAFE=""
+SPEED=""          # nmap timing 1-5 (-T)
+TOP=""            # how many top ports in the quick scan
+EXTRA=""; EXTRA_SET=0   # extra ports to always scan
+FULLHOSTS=""      # which hosts get the full scan: "all" or addresses
 
 # add_target SPEC -> append to TARGETS after checking it looks like an
 #   address, network, range or host name.  Targets are handed to nmap as
@@ -201,6 +218,12 @@ while [ $# -gt 0 ]; do
         --vuln)         A_VULN=Y; shift ;;      --no-vuln)     A_VULN=N; shift ;;
         --os)           A_OS=Y; shift ;;        --no-os)       A_OS=N; shift ;;
         --udp)          A_UDP=Y; shift ;;       --no-udp)      A_UDP=N; shift ;;
+        --speed)        [ $# -ge 2 ] || cc_die 2 "--speed needs 1-5"; SPEED=$2; shift 2 ;;
+        --top-ports)    [ $# -ge 2 ] || cc_die 2 "--top-ports needs a number"; TOP=$2; shift 2 ;;
+        --extra-ports)  [ $# -ge 2 ] || cc_die 2 "--extra-ports needs a list"; EXTRA=$2; EXTRA_SET=1; shift 2 ;;
+        --no-extra-ports) EXTRA=""; EXTRA_SET=1; shift ;;
+        --full-hosts)   [ $# -ge 2 ] || cc_die 2 "--full-hosts needs addresses or all"; FULLHOSTS=$2; shift 2 ;;
+        --vuln-all)     A_VULN=Y; A_VSAFE=N; shift ;;
         --no-dns)       NODNS=1; shift ;;
         --pn)           PN=1; shift ;;
         --max-hosts)    [ $# -ge 2 ] || cc_die 2 "--max-hosts needs a number"; MAXHOSTS=$2; shift 2 ;;
@@ -216,6 +239,14 @@ case "$MAXHOSTS" in ''|*[!0-9]*) cc_die 2 "--max-hosts needs a whole number" ;; 
 case "$MAXFLAGS" in ''|*[!0-9]*) cc_die 2 "--max-flags needs a whole number" ;; esac
 case "$PORTS" in *[!0-9,-]*) cc_die 2 "--ports takes numbers, commas and ranges only (e.g. 22,80,8000-8100)" ;; esac
 [ -z "$HOSTLIST" ] || [ -r "$HOSTLIST" ] || cc_die 2 "cannot read host list: $HOSTLIST"
+# ok_speed / ok_top / ok_ports VALUE -> true when VALUE is usable.
+ok_speed() { case "$1" in [1-5]) return 0 ;; esac; return 1; }
+ok_top() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
+ok_ports() { case "$1" in *[!0-9,-]*) return 1 ;; esac; return 0; }
+[ -z "$SPEED" ] || ok_speed "$SPEED" || cc_die 2 "--speed takes 1 (slow, quiet) to 5 (fastest)"
+[ -z "$TOP" ] || ok_top "$TOP" || cc_die 2 "--top-ports takes a number from 1 to 65535"
+ok_ports "$EXTRA" || cc_die 2 "--extra-ports takes numbers, commas and ranges only (e.g. 8080,9000-9100)"
+case "$FULLHOSTS" in *[!A-Za-z0-9./:_,\ -]*) cc_die 2 "--full-hosts takes addresses or all" ;; esac
 [ "$PROFILE" = outside ] && PN=1
 
 # A profile is a set of answers.  Flags given on top still win.
@@ -227,6 +258,7 @@ case "$PROFILE" in
 esac
 if [ -n "$PROFILE" ]; then
     for _v in A_QUICK A_FULL A_SVC A_SCRIPTS A_VULN A_OS A_UDP; do preset "$_v" N; done
+    preset SPEED 4; preset TOP 1000; preset A_VSAFE Y; preset FULLHOSTS all; EXTRA_SET=1
 fi
 # --ports replaces the quick and full scans.
 [ -n "$PORTS" ] && { A_QUICK=N; A_FULL=N; }
@@ -299,7 +331,7 @@ cc_color_init
 if [ -z "$TARGETS" ]; then
     _can=0; _cc_can_ask && _can=1
     [ "$_can" = 1 ] || cc_die 2 "nothing to scan: give --target or --targets-file (try --help)"
-    cc_ask_text "What should I scan? (IP, range or subnet; several with spaces)" "$(guess_target)"
+    cc_ask_text "What should I scan? (one host 10.0.2.5, a range 10.0.2.1-50, a subnet 10.0.2.0/24; several with spaces)" "$(guess_target)"
     for _t in $(printf '%s' "$CC_ANSWER" | tr ',' ' '); do add_target "$_t"; done
     [ -n "$TARGETS" ] || cc_die 2 "nothing to scan"
 fi
@@ -310,12 +342,35 @@ ask() {
     [ -n "$_ak" ] && return 0
     if cc_ask "$2" "$3"; then eval "$1=Y"; else eval "$1=N"; fi
 }
+# ask_val VAR CHECK QUESTION DEFAULT -> fill VAR with a typed answer that
+#   passes CHECK (ok_speed, ok_top, ok_ports), unless a flag already did.
+#   Asks again on a bad answer, at most three times.
+ask_val() {
+    eval "_av=\$$1"
+    [ -n "$_av" ] && return 0
+    _av_n=0
+    while :; do
+        cc_ask_text "$3" "$4"
+        if "$2" "$CC_ANSWER"; then eval "$1=\$CC_ANSWER"; return 0; fi
+        _av_n=$((_av_n + 1))
+        [ "$_av_n" -lt 3 ] && _cc_can_ask || cc_die 2 "not a usable answer: '$CC_ANSWER'"
+        printf '    not a usable answer, try again\n' >/dev/tty
+    done
+}
 if [ "$ENGINE" = nmap ]; then
-    ask A_QUICK   "Quick scan of the top 1000 ports first?" Y
+    ask_val SPEED ok_speed "How aggressive? 1-2 slow and quiet, 3 normal, 4 fast (good on a LAN), 5 fastest (can miss ports)" 4
+    ask A_QUICK   "Quick scan of the top ports first?" Y
+    [ "$A_QUICK" = Y ] && ask_val TOP ok_top "How many top ports in the quick scan? (100 is very fast, 1000 is nmap's normal)" 1000
+    if [ "$EXTRA_SET" = 0 ] && [ -z "$PORTS" ]; then
+        cc_ask_text "Any other ports to always scan? (e.g. 8080,9000-9100)" ""
+        ok_ports "$CC_ANSWER" || cc_die 2 "not a port list: '$CC_ANSWER' (use numbers, commas and ranges)"
+        EXTRA=$CC_ANSWER
+    fi
     ask A_FULL    "Full scan of all 65535 ports on the hosts that are up? (slow: minutes per host)" Y
     ask A_SVC     "Find the service and version behind each open port?" Y
     ask A_SCRIPTS "Run nmap's default scripts on the open ports (anonymous FTP, SMB signing, ...)?" Y
-    ask A_VULN    "Run nmap's vuln scripts on the open ports? (safe ones only; adds a few minutes)" N
+    ask A_VULN    "Run nmap's vuln scripts on the open ports? (adds a few minutes)" N
+    [ "$A_VULN" = Y ] && ask A_VSAFE "Only the safe vuln scripts? (no = every vuln script; some can crash a service)" Y
     if [ "$IS_ROOT" = 1 ]; then
         ask A_OS  "Guess each host's operating system?" Y
         ask A_UDP "Scan the top 25 UDP ports too? (DNS, SNMP, TFTP, ...)" N
@@ -328,6 +383,14 @@ if [ "$ENGINE" = nmap ]; then
 else
     case "$A_SVC$A_SCRIPTS$A_VULN$A_OS$A_UDP" in *Y*) cc_warn "the $ENGINE engine has no services, scripts, vuln, OS or UDP scans (they need nmap): skipped" ;; esac
     A_SVC=N; A_SCRIPTS=N; A_VULN=N; A_OS=N; A_UDP=N
+fi
+
+[ -n "$SPEED" ] || SPEED=4
+[ -n "$TOP" ] || TOP=1000
+[ -n "$A_VSAFE" ] || A_VSAFE=Y
+# Extra ports join --ports, or the fallback engines' list.
+if [ -n "$EXTRA" ] && { [ -n "$PORTS" ] || [ "$ENGINE" != nmap ]; }; then
+    PORTS="${PORTS:-$FALLBACK_PORTS},$EXTRA"; EXTRA=""
 fi
 
 # ---- Start ------------------------------------------------------------------
@@ -353,13 +416,14 @@ show() {
     printf '%s\n' "$2" >>"$OUTF"
 }
 yn() { [ "$1" = Y ] && echo yes || echo no; }
-SCANS=""
-[ "$A_QUICK" = Y ] && SCANS="$SCANS, quick (top 1000)"
+SCANS="speed $SPEED"
+[ "$A_QUICK" = Y ] && SCANS="$SCANS, quick (top $TOP)"
+[ -n "$EXTRA" ] && SCANS="$SCANS, extra ports $EXTRA"
 [ "$A_FULL" = Y ] && SCANS="$SCANS, full (all 65535)"
 [ -n "$PORTS" ] && SCANS="$SCANS, ports $PORTS"
 [ "$A_SVC" = Y ] && SCANS="$SCANS, services"
 [ "$A_SCRIPTS" = Y ] && SCANS="$SCANS, scripts"
-[ "$A_VULN" = Y ] && SCANS="$SCANS, vuln"
+[ "$A_VULN" = Y ] && { [ "$A_VSAFE" = Y ] && SCANS="$SCANS, vuln (safe)" || SCANS="$SCANS, vuln (all)"; }
 [ "$A_OS" = Y ] && SCANS="$SCANS, OS"
 [ "$A_UDP" = Y ] && SCANS="$SCANS, UDP"
 [ "$ENGINE" = nmap ] || SCANS=", $ENGINE connect scan of ${PORTS:-common ports}"
@@ -445,7 +509,7 @@ stage() {
 #   all three nmap formats go to raw/NAME.*.
 nmap_run() {
     _nr=$1; shift
-    set -- -T4 --open -oA "$RAW/$_nr" "$@"
+    set -- "-T$SPEED" --open -oA "$RAW/$_nr" "$@"
     [ "$NODNS" = 1 ] && set -- -n "$@"
     cc_debug "running: nmap $*"
     show "$C_GRY" "\$ nmap $*"
@@ -496,6 +560,7 @@ run_nmap() {
     [ "$A_QUICK" = Y ] && STAGE_TOTAL=$((STAGE_TOTAL + 1))
     [ "$A_FULL" = Y ] && STAGE_TOTAL=$((STAGE_TOTAL + 1))
     [ -n "$PORTS" ] && STAGE_TOTAL=$((STAGE_TOTAL + 1))
+    [ -n "$EXTRA" ] && STAGE_TOTAL=$((STAGE_TOTAL + 1))
     [ "$_det" = 1 ] && STAGE_TOTAL=$((STAGE_TOTAL + 1))
     [ "$A_UDP" = Y ] && STAGE_TOTAL=$((STAGE_TOTAL + 1))
     _pn=""; [ "$PN" = 1 ] && _pn=-Pn
@@ -505,8 +570,8 @@ run_nmap() {
     : >"$W/up_targets"
     _have_up=0
     if [ "$A_QUICK" = Y ]; then
-        stage "quick scan: top 1000 TCP ports"
-        nmap_run 1-quick $_pn --top-ports 1000 "$@"
+        stage "quick scan: top $TOP TCP ports"
+        nmap_run 1-quick $_pn --top-ports "$TOP" "$@"
         up_hosts "$RAW/1-quick.gnmap" >"$W/up_targets"; _have_up=1
         show "$C_GRN" "  $(grep -c . "$W/up_targets") host(s) up"
     fi
@@ -515,11 +580,30 @@ run_nmap() {
         nmap_run 1-ports $_pn -p "$PORTS" "$@"
         up_hosts "$RAW/1-ports.gnmap" >"$W/up_targets"; _have_up=1
     fi
+    if [ -n "$EXTRA" ]; then
+        stage "extra ports: $EXTRA"
+        nmap_run 1-extra $_pn -p "$EXTRA" "$@"
+        { cat "$W/up_targets"; up_hosts "$RAW/1-extra.gnmap"; } | sort -u >"$W/up2"; mv "$W/up2" "$W/up_targets"; _have_up=1
+    fi
     if [ "$A_FULL" = Y ]; then
         stage "full scan: all 65535 TCP ports"
         if [ "$_have_up" = 1 ]; then
+            # Which hosts: all that answered, or the ones named.
+            if [ -z "$FULLHOSTS" ] && [ "$(grep -c . "$W/up_targets")" -gt 1 ]; then
+                show "$C_GRY" "  up: $(tr '\n' ' ' <"$W/up_targets")"
+                cc_ask_text "Full scan which hosts? (all, or addresses with spaces)" all
+                FULLHOSTS=$CC_ANSWER
+            fi
+            case "$FULLHOSTS" in
+                ''|all|ALL|All) ;;
+                *) : >"$W/up_targets"
+                   for _h in $(printf '%s' "$FULLHOSTS" | tr ',' ' '); do
+                       case "$_h" in -*|*[!A-Za-z0-9./:_-]*) cc_warn "not an address, skipped: $_h"; continue ;; esac
+                       printf '%s\n' "$_h" >>"$W/up_targets"
+                   done ;;
+            esac
             if [ -s "$W/up_targets" ]; then
-                show "$C_GRY" "  on the $(grep -c . "$W/up_targets") host(s) that answered; takes minutes per host, progress every minute"
+                show "$C_GRY" "  on $(grep -c . "$W/up_targets") host(s); takes minutes per host, progress every minute"
                 # shellcheck disable=SC2046
                 nmap_run 2-full -Pn -p- --stats-every 60s $(cat "$W/up_targets")
             else
@@ -541,11 +625,13 @@ run_nmap() {
             set -- -Pn -p "$_pl"
             [ "$A_SVC" = Y ] && set -- "$@" -sV
             [ "$A_OS" = Y ] && set -- "$@" -O --osscan-limit
-            # Only vuln scripts that nmap also marks "safe": nothing meant to
-            # crash or change a service.
-            if [ "$A_SCRIPTS" = Y ] && [ "$A_VULN" = Y ]; then set -- "$@" --script "default or (vuln and safe)"
+            # By default only vuln scripts nmap also marks "safe": nothing
+            # meant to crash or change a service.  --vuln-all (or "no" to the
+            # question) runs every vuln script.
+            _vs="vuln and safe"; [ "$A_VSAFE" = N ] && _vs=vuln
+            if [ "$A_SCRIPTS" = Y ] && [ "$A_VULN" = Y ]; then set -- "$@" --script "default or ($_vs)"
             elif [ "$A_SCRIPTS" = Y ]; then set -- "$@" -sC
-            elif [ "$A_VULN" = Y ]; then set -- "$@" --script "vuln and safe"
+            elif [ "$A_VULN" = Y ]; then set -- "$@" --script "$_vs"
             fi
             [ "$A_VULN" = Y ] && show "$C_GRY" "  vuln scripts can take a few minutes per host"
             # shellcheck disable=SC2046
