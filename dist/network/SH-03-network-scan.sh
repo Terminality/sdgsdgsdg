@@ -4,70 +4,84 @@
 # NAME:     Network scan
 # ROLE:     Network  (wave 1)
 # KIND:     readonly - sends probes, changes nothing on any host
-# VERSION:  1.0.0
+# VERSION:  2.0.0
 #
 # PURPOSE
-#   Finds every live host and open port on the team's networks, with the
-#   service and version behind each port.  The host collectors only see the
-#   boxes you already know about; this finds the ones you do not, and the
-#   ports that should not be open.
+#   Finds every live host and open port on the team's networks.  Asks what
+#   to scan and which extras to run (like sqlmap: Enter takes the default),
+#   then runs nmap in stages and shows nmap's own output as it goes:
+#     1. quick scan    top 1000 TCP ports on every target
+#     2. full scan     all 65535 TCP ports on the hosts that are up
+#     3. details       on the open ports only: service versions, OS guess,
+#                      nmap's default scripts, vuln scripts (safe ones)
+#     4. UDP           top 25 UDP ports (root)
+#   At the end it flags anything bad (backdoor ports, VULNERABLE script
+#   results, known-bad versions, risky services) and prints a summary of
+#   hosts, ports and vulns, colour-coded like the Linux enum (SH-05).
 #
-#   Given the host list (--hosts), it also answers the two questions that
-#   matter most in the first minutes:
+#   Given the host list (--hosts), it also checks:
 #     - Is every scored service reachable?   (HIGH flag if one is not)
 #     - Is anything up that is not on the list?
 #
-#   Output is layered like every inventory script:
-#     screen / summary.txt   hosts up, one line per host with its open ports,
-#                            and only the HIGH and MEDIUM flags
-#     hosts.csv, ports.csv   everything found
-#     flags.csv              every flag, including LOW
-#     raw/                   nmap's own output (.nmap, .gnmap, .xml)
-#
 # USAGE
-#   sh SH-03-network-scan.sh --target 10.0.2.0/24 [options]
+#   sh SH-03-network-scan.sh                     asks everything
+#   sh SH-03-network-scan.sh --target 10.0.2.0/24 --batch     all defaults
 #   Run it from the admin workstation.  Root is not required, but nmap is
-#   faster and can guess operating systems when run as root.
+#   faster as root, and OS detection and UDP need it.
 #
 # OPTIONS
 #   --target SPEC      what to scan; repeatable.  An address (10.0.2.5), a
 #                      network (10.0.2.0/24), a last-octet range
-#                      (10.0.2.1-50) or a host name
+#                      (10.0.2.1-50) or a host name.  Asked if not given
 #   --targets-file F   one target per line (# comments allowed)
 #   --hosts FILE       host list CSV (config/hosts.example.csv format).
 #                      Turns on the host-list and scored-service checks
-#   --profile NAME     fast | full | udp | outside   (default: fast)
-#                        fast     top 1000 TCP ports with service versions
-#                        full     all 65535 TCP ports (+ OS guess as root).
-#                                 Slow: minutes per host
-#                        udp      top 25 UDP ports (needs root)
+#   Answers in advance (each skips its question):
+#   --quick / --no-quick        top 1000 ports first          (default yes)
+#   --full / --no-full          all 65535 ports               (default yes)
+#   --services / --no-services  service and version detection (default yes)
+#   --scripts / --no-scripts    nmap default scripts (-sC)    (default yes)
+#   --vuln / --no-vuln          nmap vuln scripts, safe ones  (default no)
+#   --os / --no-os              OS guess, root only           (default yes)
+#   --udp / --no-udp            top 25 UDP ports, root only   (default no)
+#   --profile NAME     preset answers, no questions:
+#                        fast     quick scan + services
+#                        full     quick + full + services (+ OS as root)
+#                        udp      UDP only
 #                        outside  like fast, but does not trust ping (-Pn);
 #                                 run it from OUTSIDE the firewall to see
 #                                 what the red team sees
-#   --ports LIST       scan these ports instead (e.g. 22,80,443 or 1-1024)
+#   --ports LIST       scan only these ports (e.g. 22,80,443 or 1-1024)
+#                      instead of the quick and full scans
 #   --engine NAME      nmap | python | bash | nc   (default: first available,
 #                      in that order).  Without nmap there is no version
-#                      detection, only a banner, and only TCP
+#                      detection, no scripts, only a banner, and only TCP
 #   --no-dns           do not look up host names (faster when DNS is slow)
 #   --pn               treat every target as up (for hosts that drop ping)
 #   --max-hosts N      refuse to scan more than N addresses without nmap
 #                      (default 1024); nmap has no limit
-#   --max-flags N      HIGH/MED flags shown on screen (default 30)
+#   --max-flags N      HIGH/MED flags shown in the summary (default 30)
+#   --no-color         no colours
+#   --batch            no questions: take every default
 #   --help             this text plus the common options
 #
-# OUTPUTS  (under --out, in SH-03_<host>_<UTC time>/)
-#   summary.txt     the page printed on screen
-#   hosts.csv       ip,hostname,status,open_tcp,open_udp,os_guess,in_host_list,host_list_name
-#   ports.csv       ip,hostname,proto,port,state,service,version
-#   flags.csv       severity,section,item,detail,time
-#   scored.csv      host,ip,service,port,reachable      (only with --hosts)
-#   raw/            nmap output in all three formats, or the fallback's results
+# OUTPUTS  (under --out, in netscan-N/)
+#   output.txt      everything shown on screen, without colour
+#   summary.txt     the summary page
+#   hosts.txt       ip, name, status, open ports, OS guess
+#   ports.txt       one line per open port with service and version
+#   vulns.txt       what the vuln and default scripts found
+#   flags.txt       every flag, HIGH first
+#   scored.txt      scored services reachable or not   (only with --hosts)
+#   csv/            the same tables as CSV (SH-04 reads these)
+#   raw/            nmap's own output for each stage (.nmap, .gnmap, .xml)
+#   run.txt         ID, host and time
 #
 # WHAT IT CHANGES
 #   Nothing on any host.  It connects to ports and reads what they say.
-#   Version detection sends ordinary protocol requests; it does not exploit
-#   anything.  Scans are visible in logs, which is expected and fine on your
-#   own network.
+#   Only vuln scripts in nmap's "safe" category are run, so nothing that is
+#   meant to crash or change a service.  Scans are visible in logs, which is
+#   expected and fine on your own network.
 #
 # DEPENDS ON
 #   nmap (best).  Without it: python3, else bash with 'timeout', else nc -z.
@@ -81,17 +95,20 @@
 # KNOWN LIMITS / WHAT TO WATCH FOR
 #   - A closed port can mean "not listening" or "a firewall dropped it".  A
 #     scored service that shows as not reachable may be fine from the scoring
-#     engine's side; check it from there or with the service checker (SH-08).
+#     engine's side; check it from there.
 #   - From inside, you see more than the red team does.  Use --profile
 #     outside from outside the firewall for their view.
-#   - Hosts that drop ping and have no common port open are missed unless
+#   - Hosts that drop ping and have no top-1000 port open are missed unless
 #     you use --pn (slower, because every address is scanned in full).
+#   - The full scan takes minutes per host.  nmap prints progress every
+#     minute.  Ctrl-C stops it; nothing is changed either way.
+#   - A vuln script that says nothing does not mean "safe".  The vuln list
+#     is a pointer, not a verdict.
 #   - The fallback engines only check a fixed list of common TCP ports.
 #
 # DEBUGGING
-#   --debug          shows the exact nmap command and each parsing step
-#   raw/*.nmap       nmap's own human-readable report: compare it with
-#                    ports.csv if something looks missing
+#   --debug          shows the exact nmap commands
+#   raw/*.nmap       nmap's own report for each stage
 #   --engine python  forces the fallback, to compare with nmap's results
 # =============================================================================
 
@@ -1330,19 +1347,28 @@ FALLBACK_PORTS="21,22,23,25,53,80,88,110,111,135,139,143,389,443,445,464,465,514
 
 usage() {
     cat <<'USAGE'
-SH-03 Network scan - live hosts, open ports, services
-  sh SH-03-network-scan.sh --target 10.0.2.0/24 [options]
+SH-03 Network scan - live hosts, open ports, services, vulns
+  sh SH-03-network-scan.sh                          asks what to scan
+  sh SH-03-network-scan.sh --target 10.0.2.0/24 --batch
 
   --target SPEC        address, network/NN, a.b.c.N-M or name (repeatable)
   --targets-file FILE  one target per line
   --hosts FILE         host list CSV: check scored services and unknown hosts
-  --profile NAME       fast | full | udp | outside   (default fast)
-  --ports LIST         ports to scan instead of the profile's
+  --quick / --no-quick        top 1000 ports first          (default yes)
+  --full / --no-full          all 65535 ports               (default yes)
+  --services / --no-services  service and version detection (default yes)
+  --scripts / --no-scripts    nmap default scripts          (default yes)
+  --vuln / --no-vuln          nmap vuln scripts (safe ones) (default no)
+  --os / --no-os              OS guess, needs root          (default yes)
+  --udp / --no-udp            top 25 UDP ports, needs root  (default no)
+  --profile NAME       fast | full | udp | outside  (preset answers, no questions)
+  --ports LIST         scan only these ports instead of the quick and full scans
   --engine NAME        nmap | python | bash | nc     (default: best available)
   --no-dns             skip host name lookups
   --pn                 treat every target as up
   --max-hosts N        address limit for the fallback engines (default 1024)
-  --max-flags N        HIGH/MED flags shown on screen (default 30)
+  --max-flags N        HIGH/MED flags shown in the summary (default 30)
+  --no-color           no colours
   --help               show this text
 
 USAGE
@@ -1352,13 +1378,16 @@ USAGE
 # ---- Options ----------------------------------------------------------------
 TARGETS=""
 HOSTLIST=""
-PROFILE=fast
+PROFILE=""
 PORTS=""
 ENGINE=""
 NODNS=0
 PN=0
 MAXHOSTS=1024
 MAXFLAGS=30
+COLOR=1
+# Answers: Y, N, or empty (ask).
+A_QUICK=""; A_FULL=""; A_SVC=""; A_SCRIPTS=""; A_VULN=""; A_OS=""; A_UDP=""
 
 # add_target SPEC -> append to TARGETS after checking it looks like an
 #   address, network, range or host name.  Targets are handed to nmap as
@@ -1383,22 +1412,42 @@ while [ $# -gt 0 ]; do
         --profile)      [ $# -ge 2 ] || cc_die 2 "--profile needs a name"; PROFILE=$2; shift 2 ;;
         --ports)        [ $# -ge 2 ] || cc_die 2 "--ports needs a list"; PORTS=$2; shift 2 ;;
         --engine)       [ $# -ge 2 ] || cc_die 2 "--engine needs a name"; ENGINE=$2; shift 2 ;;
+        --quick)        A_QUICK=Y; shift ;;     --no-quick)    A_QUICK=N; shift ;;
+        --full)         A_FULL=Y; shift ;;      --no-full)     A_FULL=N; shift ;;
+        --services)     A_SVC=Y; shift ;;       --no-services) A_SVC=N; shift ;;
+        --scripts)      A_SCRIPTS=Y; shift ;;   --no-scripts)  A_SCRIPTS=N; shift ;;
+        --vuln)         A_VULN=Y; shift ;;      --no-vuln)     A_VULN=N; shift ;;
+        --os)           A_OS=Y; shift ;;        --no-os)       A_OS=N; shift ;;
+        --udp)          A_UDP=Y; shift ;;       --no-udp)      A_UDP=N; shift ;;
         --no-dns)       NODNS=1; shift ;;
         --pn)           PN=1; shift ;;
         --max-hosts)    [ $# -ge 2 ] || cc_die 2 "--max-hosts needs a number"; MAXHOSTS=$2; shift 2 ;;
         --max-flags)    [ $# -ge 2 ] || cc_die 2 "--max-flags needs a number"; MAXFLAGS=$2; shift 2 ;;
+        --no-color|--no-colour) COLOR=0; shift ;;
         --help|-h)      usage; exit 0 ;;
         *)              cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
 
-[ -n "$TARGETS" ] || cc_die 2 "nothing to scan: give --target or --targets-file (try --help)"
-case "$PROFILE" in fast|full|udp|outside) ;; *) cc_die 2 "unknown profile '$PROFILE' (fast, full, udp or outside)" ;; esac
+case "$PROFILE" in ''|fast|full|udp|outside) ;; *) cc_die 2 "unknown profile '$PROFILE' (fast, full, udp or outside)" ;; esac
 case "$MAXHOSTS" in ''|*[!0-9]*) cc_die 2 "--max-hosts needs a whole number" ;; esac
 case "$MAXFLAGS" in ''|*[!0-9]*) cc_die 2 "--max-flags needs a whole number" ;; esac
 case "$PORTS" in *[!0-9,-]*) cc_die 2 "--ports takes numbers, commas and ranges only (e.g. 22,80,8000-8100)" ;; esac
 [ -z "$HOSTLIST" ] || [ -r "$HOSTLIST" ] || cc_die 2 "cannot read host list: $HOSTLIST"
 [ "$PROFILE" = outside ] && PN=1
+
+# A profile is a set of answers.  Flags given on top still win.
+preset() { eval "[ -n \"\$$1\" ] || $1=$2"; }
+case "$PROFILE" in
+    fast|outside) preset A_QUICK Y; preset A_FULL N; preset A_SVC Y ;;
+    full)         preset A_QUICK Y; preset A_FULL Y; preset A_SVC Y; preset A_OS Y ;;
+    udp)          preset A_QUICK N; preset A_FULL N; preset A_UDP Y ;;
+esac
+if [ -n "$PROFILE" ]; then
+    for _v in A_QUICK A_FULL A_SVC A_SCRIPTS A_VULN A_OS A_UDP; do preset "$_v" N; done
+fi
+# --ports replaces the quick and full scans.
+[ -n "$PORTS" ] && { A_QUICK=N; A_FULL=N; }
 
 # Pick the engine: the requested one, or the best available.
 if [ -z "$ENGINE" ]; then
@@ -1417,17 +1466,9 @@ case "$ENGINE" in
     *)      cc_die 2 "unknown engine '$ENGINE' (nmap, python, bash or nc)" ;;
 esac
 if [ "$PROFILE" = udp ] && [ "$ENGINE" != nmap ]; then cc_die 3 "the udp profile needs nmap"; fi
-
-# ---- Start ------------------------------------------------------------------
-cc_init "SH-03" "Network scan" readonly
-cc_use_run_dir
-W="$CC_RUN_DIR/.work"
-mkdir -p "$W" || cc_die 3 "cannot create $W"
-RAW="$CC_RUN_DIR/raw"
 IS_ROOT=0
 cc_is_root && IS_ROOT=1
 if [ "$PROFILE" = udp ] && [ "$IS_ROOT" != 1 ]; then cc_die 3 "UDP scanning needs root (sudo)"; fi
-cc_info "targets:$TARGETS | profile $PROFILE | engine $ENGINE"
 
 # Shared awk helpers:
 #   ip2n("10.0.2.5")      -> 167772677
@@ -1456,6 +1497,96 @@ function intarget(ip, specs,   n, i, s, t, base, bits, size, lo, hi, m, x) {    
     }
     return 0
 }'
+
+# guess_target -> this machine's own network, e.g. 10.0.2.0/24, as the
+#   default answer.  Networks bigger than a /22 are cut to the /24 around
+#   this machine, so Enter never starts a scan of a /8.
+guess_target() {
+    _gt=$( (ip -o -4 addr show scope global 2>/dev/null || ip -o -4 addr show 2>/dev/null) | awk '$4 !~ /^127\./ { print $4; exit }')
+    [ -n "$_gt" ] || return 0
+    awk -v t="$_gt" "$AWK_IP"'BEGIN {
+        split(t, m, "/"); bits = m[2] + 0; x = ip2n(m[1]); if (x < 0) exit
+        if (bits < 22) bits = 24
+        size = pow2(32 - bits); print n2ip(x - x % size) "/" bits }'
+}
+
+# ---- Questions (sqlmap style) -------------------------------------------------
+# Before the run folder exists, so a question answered wrong costs nothing.
+cc_color_init
+[ "$COLOR" = 1 ] || { C_RED=""; C_YEL=""; C_GRN=""; C_CYN=""; C_GRY=""; C_OFF=""; }
+if [ -z "$TARGETS" ]; then
+    _can=0; _cc_can_ask && _can=1
+    [ "$_can" = 1 ] || cc_die 2 "nothing to scan: give --target or --targets-file (try --help)"
+    cc_ask_text "What should I scan? (IP, range or subnet; several with spaces)" "$(guess_target)"
+    for _t in $(printf '%s' "$CC_ANSWER" | tr ',' ' '); do add_target "$_t"; done
+    [ -n "$TARGETS" ] || cc_die 2 "nothing to scan"
+fi
+
+# ask VAR QUESTION DEFAULT -> fill VAR with Y or N unless a flag already did.
+ask() {
+    eval "_ak=\$$1"
+    [ -n "$_ak" ] && return 0
+    if cc_ask "$2" "$3"; then eval "$1=Y"; else eval "$1=N"; fi
+}
+if [ "$ENGINE" = nmap ]; then
+    ask A_QUICK   "Quick scan of the top 1000 ports first?" Y
+    ask A_FULL    "Full scan of all 65535 ports on the hosts that are up? (slow: minutes per host)" Y
+    ask A_SVC     "Find the service and version behind each open port?" Y
+    ask A_SCRIPTS "Run nmap's default scripts on the open ports (anonymous FTP, SMB signing, ...)?" Y
+    ask A_VULN    "Run nmap's vuln scripts on the open ports? (safe ones only; adds a few minutes)" N
+    if [ "$IS_ROOT" = 1 ]; then
+        ask A_OS  "Guess each host's operating system?" Y
+        ask A_UDP "Scan the top 25 UDP ports too? (DNS, SNMP, TFTP, ...)" N
+    else
+        [ "$A_OS" = Y ] && cc_warn "OS detection needs root: skipped"
+        [ "$A_UDP" = Y ] && cc_warn "UDP scanning needs root: skipped"
+        A_OS=N; A_UDP=N
+    fi
+    [ "$A_QUICK" = N ] && [ "$A_FULL" = N ] && [ "$A_UDP" = N ] && [ -z "$PORTS" ] && { cc_warn "no port scan picked: doing the quick scan"; A_QUICK=Y; }
+else
+    case "$A_SVC$A_SCRIPTS$A_VULN$A_OS$A_UDP" in *Y*) cc_warn "the $ENGINE engine has no services, scripts, vuln, OS or UDP scans (they need nmap): skipped" ;; esac
+    A_SVC=N; A_SCRIPTS=N; A_VULN=N; A_OS=N; A_UDP=N
+fi
+
+# ---- Start ------------------------------------------------------------------
+cc_init "SH-03" "Network scan" readonly
+cc_use_numbered_dir netscan
+# CSV files (for SH-04) go in csv/; the run folder gets readable .txt tables.
+CC_CSV_DIR="$CC_RUN_DIR/csv"
+mkdir -p "$CC_CSV_DIR" || cc_die 3 "cannot create $CC_CSV_DIR"
+W="$CC_RUN_DIR/.work"
+mkdir -p "$W" || cc_die 3 "cannot create $W"
+RAW="$CC_RUN_DIR/raw"
+
+# Live output goes to fd 3 (a copy of stdout taken here); output.txt gets
+# the same lines without colour.
+exec 3>&1
+OUTF="$CC_RUN_DIR/output.txt"
+grep -v '\[NOTE\]\|\[DEBUG\]' "$CC_LOG" >"$OUTF" 2>/dev/null || : >"$OUTF"
+# Read by the library's log functions.
+# shellcheck disable=SC2034
+CC_TEE=$OUTF
+show() {
+    printf '%s%s%s\n' "$1" "$2" "$C_OFF" >&3
+    printf '%s\n' "$2" >>"$OUTF"
+}
+yn() { [ "$1" = Y ] && echo yes || echo no; }
+SCANS=""
+[ "$A_QUICK" = Y ] && SCANS="$SCANS, quick (top 1000)"
+[ "$A_FULL" = Y ] && SCANS="$SCANS, full (all 65535)"
+[ -n "$PORTS" ] && SCANS="$SCANS, ports $PORTS"
+[ "$A_SVC" = Y ] && SCANS="$SCANS, services"
+[ "$A_SCRIPTS" = Y ] && SCANS="$SCANS, scripts"
+[ "$A_VULN" = Y ] && SCANS="$SCANS, vuln"
+[ "$A_OS" = Y ] && SCANS="$SCANS, OS"
+[ "$A_UDP" = Y ] && SCANS="$SCANS, UDP"
+[ "$ENGINE" = nmap ] || SCANS=", $ENGINE connect scan of ${PORTS:-common ports}"
+SCANS=${SCANS#, }
+show "$C_CYN" "SH-03 Network scan | from $CC_HOST | engine $ENGINE | results in $CC_RUN_DIR"
+show "$C_CYN" "Targets:$TARGETS"
+show "$C_CYN" "Scans: $SCANS"
+show "" "Legend: ${C_RED}[!] FIX${C_OFF} look now (HIGH)   ${C_YEL}[*] LOOK${C_OFF} look soon (MED)   ${C_GRN}green${C_OFF} open port"
+cc_note "targets:$TARGETS | engine $ENGINE | scans: $SCANS"
 
 # Well-known names for ports, used by the fallback engines (nmap names its
 # own) and in flags.
@@ -1518,57 +1649,172 @@ expand_targets() {
 #   $W/up     ip|hostname|os_guess          one line per live host
 #   $W/open   ip|proto|port|service|version one line per open port
 
-run_nmap() {
-    _base="$RAW/nmap_$PROFILE"
-    # Timing T4 is nmap's "aggressive but reliable on a LAN" setting.
-    set -- -T4 --open -oA "$_base" --stats-every 60s
-    [ "$NODNS" = 1 ] && set -- "$@" -n
-    [ "$PN" = 1 ] && set -- "$@" -Pn
-    case "$PROFILE" in
-        fast|outside) set -- "$@" -sV --version-light ;;
-        full)         set -- "$@" -sV; [ "$IS_ROOT" = 1 ] && set -- "$@" -O --osscan-limit ;;
-        udp)          set -- "$@" -sU -sV --version-light ;;
-    esac
-    if [ -n "$PORTS" ]; then set -- "$@" -p "$PORTS"
-    else
-        case "$PROFILE" in
-            fast|outside) set -- "$@" --top-ports 1000 ;;
-            full)         set -- "$@" -p- ;;
-            udp)          set -- "$@" --top-ports 25 ;;
-        esac
-    fi
-    # shellcheck disable=SC2086
-    set -- "$@" $TARGETS
-    cc_info "running: nmap $*"
-    [ "$PROFILE" = full ] && cc_info "full scans take minutes per host; progress is printed every 60 seconds"
-    # nmap's own screen output goes to a file; only its progress lines are
-    # shown, so the screen stays readable.
-    nmap "$@" 2>&1 | tee "$RAW/nmap_screen.txt" | awk '/^Stats:|Timing:|^NSE: Script/ { print "   nmap: " $0; fflush() }' >&2
-    [ -s "$_base.gnmap" ] || cc_die 1 "nmap produced no results (see $RAW/nmap_screen.txt); common causes: bad target, no permission for this scan type"
-    nmap --version 2>/dev/null | head -n 1 >"$W/engine_version"
+STAGE_N=0
+STAGE_TOTAL=0
+# stage TITLE -> print a linpeas-style heading for the next scan stage.
+stage() {
+    STAGE_N=$((STAGE_N + 1))
+    show "" ""
+    show "$C_CYN" "==========[ $STAGE_N/$STAGE_TOTAL  $1 ]=========="
+}
 
-    # Grepable format, one host per line, tab-separated fields:
-    #   Host: 10.0.2.5 (web01)<TAB>Ports: 22/open/tcp//ssh//OpenSSH 8.9p1/, 80/open/...<TAB>OS: Linux
-    # Each port entry is exactly seven '/'-separated fields.  Versions can
-    # contain commas, so entries are cut by matching that shape, not by
-    # splitting on ", ".
-    awk -F'\t' -v upf="$W/up" -v openf="$W/open" '
+# nmap_run NAME ARG... -> run nmap with its normal output shown live (open
+#   ports green, VULNERABLE red, host headers cyan) and saved in output.txt;
+#   all three nmap formats go to raw/NAME.*.
+nmap_run() {
+    _nr=$1; shift
+    set -- -T4 --open -oA "$RAW/$_nr" "$@"
+    [ "$NODNS" = 1 ] && set -- -n "$@"
+    cc_debug "running: nmap $*"
+    show "$C_GRY" "\$ nmap $*"
+    # Service fingerprints (SF: lines) are long hex dumps; they stay in
+    # raw/NAME.nmap but are cut from the screen and output.txt.
+    nmap "$@" 2>&1 | awk '
+        /^SF[-:]|^=+NEXT SERVICE FINGERPRINT|^[0-9]+ services? unrecognized|^If you know the service/ { if (!cut++) print "(service fingerprints cut here; they are in the raw/*.nmap files)"; fflush(); next }
+        { print; fflush() }' | tee -a "$OUTF" | awk -v R="$C_RED" -v G="$C_GRN" -v C="$C_CYN" -v D="$C_GRY" -v O="$C_OFF" '
+        /NOT VULNERABLE/                { print; fflush(); next }
+        /VULNERABLE/                    { print R $0 O; fflush(); next }
+        /^[0-9]+\/(tcp|udp) +open/      { print G $0 O; fflush(); next }
+        /^Nmap scan report for/         { print C $0 O; fflush(); next }
+        /^Stats:|Timing:|^Nmap done/    { print D $0 O; fflush(); next }
+                                        { print; fflush() }' >&3
+    [ -s "$RAW/$_nr.gnmap" ] || cc_die 1 "nmap produced no results (see $OUTF); common causes: bad target, no permission for this scan type"
+}
+
+# up_hosts GNMAP -> addresses nmap saw as up, one per line.
+up_hosts() { awk '/^Host: .*Status: Up/ { print $2 }' "$@" | sort -u; }
+# open_list GNMAP PROTO -> host addresses with an open PROTO port, and the
+#   port list "22,80,443" across them (written to $W/hosts_open, $W/ports_open).
+open_list() {
+    awk -F'\t' -v pr="$2" -v hf="$W/hosts_open" -v pf="$W/ports_open" '
         /^Host: / {
-            split($1, h, " "); ip = h[2]; name = $1; sub(/^Host: [^ ]* \(/, "", name); sub(/\)$/, "", name)
-            os = ""
-            for (i = 2; i <= NF; i++) if ($i ~ /^OS: /) { os = $i; sub(/^OS: /, "", os) }
-            if (!(ip in seen) || os != "") { seen[ip] = 1; info[ip] = name "|" os }
+            split($1, h, " ")
             for (i = 2; i <= NF; i++) {
                 if ($i !~ /^Ports: /) continue
                 s = $i; sub(/^Ports: /, "", s)
                 while (match(s, /^[0-9]+\/[^\/]*\/[^\/]*\/[^\/]*\/[^\/]*\/[^\/]*\/[^\/]*\//)) {
                     e = substr(s, 1, RLENGTH); s = substr(s, RLENGTH + 1); sub(/^, /, "", s)
                     split(e, f, "/")
-                    if (f[2] ~ /^open/) { v = f[7]; gsub(/\|/, "/", v); print ip "|" f[3] "|" f[1] "|" f[5] "|" v > openf }
+                    if (f[2] ~ /^open/ && f[3] == pr) { hs[h[2]] = 1; ps[f[1] + 0] = 1 }
                 }
             }
         }
-        END { for (ip in info) print ip "|" info[ip] > upf }' "$_base.gnmap"
+        END {
+            for (x in hs) print x > hf
+            s = ""; for (p in ps) s = s (s == "" ? "" : ",") p
+            print s > pf
+        }' "$1"
+    touch "$W/hosts_open"
+}
+
+run_nmap() {
+    _det=0
+    { [ "$A_SVC" = Y ] || [ "$A_SCRIPTS" = Y ] || [ "$A_VULN" = Y ] || [ "$A_OS" = Y ]; } && _det=1
+    STAGE_TOTAL=0
+    [ "$A_QUICK" = Y ] && STAGE_TOTAL=$((STAGE_TOTAL + 1))
+    [ "$A_FULL" = Y ] && STAGE_TOTAL=$((STAGE_TOTAL + 1))
+    [ -n "$PORTS" ] && STAGE_TOTAL=$((STAGE_TOTAL + 1))
+    [ "$_det" = 1 ] && STAGE_TOTAL=$((STAGE_TOTAL + 1))
+    [ "$A_UDP" = Y ] && STAGE_TOTAL=$((STAGE_TOTAL + 1))
+    _pn=""; [ "$PN" = 1 ] && _pn=-Pn
+    # TARGETS is split into separate arguments on purpose.
+    # shellcheck disable=SC2086
+    set -- $TARGETS
+    : >"$W/up_targets"
+    _have_up=0
+    if [ "$A_QUICK" = Y ]; then
+        stage "quick scan: top 1000 TCP ports"
+        nmap_run 1-quick $_pn --top-ports 1000 "$@"
+        up_hosts "$RAW/1-quick.gnmap" >"$W/up_targets"; _have_up=1
+        show "$C_GRN" "  $(grep -c . "$W/up_targets") host(s) up"
+    fi
+    if [ -n "$PORTS" ]; then
+        stage "port scan: $PORTS"
+        nmap_run 1-ports $_pn -p "$PORTS" "$@"
+        up_hosts "$RAW/1-ports.gnmap" >"$W/up_targets"; _have_up=1
+    fi
+    if [ "$A_FULL" = Y ]; then
+        stage "full scan: all 65535 TCP ports"
+        if [ "$_have_up" = 1 ]; then
+            if [ -s "$W/up_targets" ]; then
+                show "$C_GRY" "  on the $(grep -c . "$W/up_targets") host(s) that answered; takes minutes per host, progress every minute"
+                # shellcheck disable=SC2046
+                nmap_run 2-full -Pn -p- --stats-every 60s $(cat "$W/up_targets")
+            else
+                show "$C_YEL" "  no hosts up: skipped (try --pn if the hosts drop ping)"
+            fi
+        else
+            show "$C_GRY" "  takes minutes per host, progress every minute"
+            nmap_run 2-full $_pn -p- --stats-every 60s "$@"
+            up_hosts "$RAW/2-full.gnmap" >"$W/up_targets"; _have_up=1
+        fi
+    fi
+    # Details only on the open ports found so far: much faster than -sV -p-.
+    if [ "$_det" = 1 ]; then
+        stage "details on the open ports: $(echo "$SCANS" | tr ',' '\n' | grep -E 'services|scripts|vuln|OS' | tr -d ' ' | tr '\n' ' ')"
+        cat "$RAW"/1-*.gnmap "$RAW"/2-*.gnmap 2>/dev/null >"$W/all.gnmap"
+        open_list "$W/all.gnmap" tcp
+        _pl=$(cat "$W/ports_open")
+        if [ -s "$W/hosts_open" ] && [ -n "$_pl" ]; then
+            set -- -Pn -p "$_pl"
+            [ "$A_SVC" = Y ] && set -- "$@" -sV
+            [ "$A_OS" = Y ] && set -- "$@" -O --osscan-limit
+            # Only vuln scripts that nmap also marks "safe": nothing meant to
+            # crash or change a service.
+            if [ "$A_SCRIPTS" = Y ] && [ "$A_VULN" = Y ]; then set -- "$@" --script "default or (vuln and safe)"
+            elif [ "$A_SCRIPTS" = Y ]; then set -- "$@" -sC
+            elif [ "$A_VULN" = Y ]; then set -- "$@" --script "vuln and safe"
+            fi
+            [ "$A_VULN" = Y ] && show "$C_GRY" "  vuln scripts can take a few minutes per host"
+            # shellcheck disable=SC2046
+            nmap_run 3-details "$@" $(sort "$W/hosts_open")
+        else
+            show "$C_YEL" "  no open TCP ports found: skipped"
+        fi
+    fi
+    # shellcheck disable=SC2086
+    set -- $TARGETS
+    if [ "$A_UDP" = Y ]; then
+        stage "UDP scan: top 25 ports"
+        if [ "$_have_up" = 1 ]; then
+            # shellcheck disable=SC2046
+            [ -s "$W/up_targets" ] && nmap_run 4-udp -Pn -sU -sV --version-light --top-ports 25 $(cat "$W/up_targets")
+            [ -s "$W/up_targets" ] || show "$C_YEL" "  no hosts up: skipped"
+        else
+            nmap_run 4-udp $_pn -sU -sV --version-light --top-ports 25 "$@"
+        fi
+    fi
+    nmap --version 2>/dev/null | head -n 1 >"$W/engine_version"
+
+    # Merge every stage.  Grepable format, one host per line, tab-separated:
+    #   Host: 10.0.2.5 (web01)<TAB>Ports: 22/open/tcp//ssh//OpenSSH 8.9p1/, ...<TAB>OS: Linux
+    # Each port entry is exactly seven '/'-separated fields.  Versions can
+    # contain commas, so entries are cut by matching that shape.  Later
+    # stages (details) replace the service name and version of earlier ones.
+    awk -F'\t' -v upf="$W/up" -v openf="$W/open" '
+        /^Host: / {
+            split($1, h, " "); ip = h[2]; name = $1; sub(/^Host: [^ ]* \(/, "", name); sub(/\)$/, "", name)
+            if (!(ip in nm) || name != "") nm[ip] = name
+            for (i = 2; i <= NF; i++) if ($i ~ /^OS: /) { o = $i; sub(/^OS: /, "", o); os[ip] = o }
+            if (!(ip in seen)) { seen[ip] = 1; order[++n] = ip }
+            for (i = 2; i <= NF; i++) {
+                if ($i !~ /^Ports: /) continue
+                s = $i; sub(/^Ports: /, "", s)
+                while (match(s, /^[0-9]+\/[^\/]*\/[^\/]*\/[^\/]*\/[^\/]*\/[^\/]*\/[^\/]*\//)) {
+                    e = substr(s, 1, RLENGTH); s = substr(s, RLENGTH + 1); sub(/^, /, "", s)
+                    split(e, f, "/")
+                    if (f[2] !~ /^open/) continue
+                    k = ip "|" f[3] "|" f[1]
+                    if (!(k in svc)) { korder[++m] = k; svc[k] = ""; ver[k] = "" }
+                    if (f[5] != "") svc[k] = f[5]
+                    v = f[7]; gsub(/\|/, "/", v); if (v != "") ver[k] = v
+                }
+            }
+        }
+        END {
+            for (i = 1; i <= n; i++) print order[i] "|" nm[order[i]] "|" os[order[i]] > upf
+            for (i = 1; i <= m; i++) print korder[i] "|" svc[korder[i]] "|" ver[korder[i]] > openf
+        }' "$RAW"/*.gnmap
     touch "$W/up" "$W/open"
 }
 
@@ -1674,11 +1920,13 @@ expand_ports() {
         END { print "" }'
 }
 
-# finish_fallback -> turn $W/hits (ip|port|banner) into $W/up and $W/open.
-#   A host counts as up when any port answered; there is no ping, because
-#   ping is often missing or blocked.
+# finish_fallback -> turn $W/hits (ip|port|banner) into $W/up and $W/open,
+#   and show the open ports the way nmap would.  A host counts as up when
+#   any port answered; there is no ping, because ping is often missing or
+#   blocked.
 finish_fallback() {
     : >"$W/open"
+    sort -t'|' -k1,1 -k2,2n "$W/hits" -o "$W/hits"
     while IFS='|' read -r _ip _p _ban; do
         printf '%s|tcp|%s|%s|%s\n' "$_ip" "$_p" "$(port_name "$_p")" "$_ban" >>"$W/open"
     done <"$W/hits"
@@ -1687,16 +1935,73 @@ finish_fallback() {
         _name=""
         [ "$NODNS" = 1 ] || _name=$(getent hosts "$_ip" 2>/dev/null | awk '{ print $2; exit }')
         printf '%s|%s|\n' "$_ip" "$_name" >>"$W/up"
+        show "$C_CYN" "Scan report for $_ip${_name:+ ($_name)}"
+        while IFS='|' read -r _i _pr _p _svc _ver; do
+            [ "$_i" = "$_ip" ] && show "$C_GRN" "$(printf '%-10s open  %-14s %s' "$_p/$_pr" "$_svc" "$_ver")"
+        done <"$W/open"
     done
+    cp "$W/hits" "$RAW/$ENGINE-hits.txt"
 }
 
 case "$ENGINE" in
     nmap)    run_nmap ;;
-    python)  run_python ;;
-    bash|nc) run_shell_engine ;;
+    python)  STAGE_TOTAL=1; stage "connect scan ($ENGINE)"; run_python ;;
+    bash|nc) STAGE_TOTAL=1; stage "connect scan ($ENGINE)"; run_shell_engine ;;
 esac
 sort -t'|' -k1,1 -u "$W/up" -o "$W/up"
 sort -t'|' -k1,1 -k2,2 -k3,3n "$W/open" -o "$W/open"
+
+# ---- Script results (vulns and other findings) -----------------------------
+# Read from nmap's XML, where each script's output is one attribute on one
+# line.  Writes $W/vulns as ip|proto|port|script|state|title|ids:
+#   - any script that reports "State: VULNERABLE" or "LIKELY VULNERABLE"
+#   - vulners: the known CVEs for the detected version, with the worst score
+#   - a few default-script results that matter for defence (anonymous FTP,
+#     empty database passwords, SMB signing off)
+: >"$W/vulns"
+for _x in "$RAW"/3-details.xml "$RAW"/4-udp.xml; do
+    [ -f "$_x" ] || continue
+    awk -v outf="$W/vulns" '
+        function dec(s) { gsub(/&#xa;/, "\n", s); gsub(/&#x9;/, " ", s); gsub(/&quot;/, "\"", s); gsub(/&apos;/, "\047", s); gsub(/&lt;/, "<", s); gsub(/&gt;/, ">", s); gsub(/&amp;/, "\\&", s); return s }    # awk: posix-ok
+        function attr(tag, name) { if (match(tag, " " name "=\"[^\"]*\"")) return substr(tag, RSTART + length(name) + 3, RLENGTH - length(name) - 4); return "" }    # awk: posix-ok
+        function clean(s) { gsub(/[|\r]/, "/", s); gsub(/\n/, " ", s); gsub(/  +/, " ", s); sub(/^ /, "", s); sub(/ $/, "", s); return s }    # awk: posix-ok
+        function rec(st, title, ids) { print ip "|" (port == "" ? "host" : proto) "|" (port == "" ? "-" : port) "|" id "|" st "|" clean(title) "|" ids > outf }    # awk: posix-ok
+        # One tag at a time: nmap puts several tags on one line.  Attribute
+        # values never hold a raw ">" (nmap writes &gt;).
+        {
+            s = $0
+            while (match(s, /<[^>]*>/)) {
+                tag = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+                if (tag ~ /^<host[ >]/)          { ip = ""; port = ""; proto = "" }
+                else if (tag ~ /^<address /)     { if (tag ~ /addrtype="ipv4"/ || (ip == "" && tag ~ /addrtype="ipv6"/)) ip = attr(tag, "addr") }
+                else if (tag ~ /^<port /)        { proto = attr(tag, "protocol"); port = attr(tag, "portid") }
+                else if (tag ~ /^<\/port>/)      { port = "" }
+                else if (tag ~ /^<hostscript>/)  { port = "" }
+                else if (tag ~ /^<script /)      script(attr(tag, "id"), dec(attr(tag, "output")))
+            }
+        }
+        function script(sid, out,   ids, s2, c, tmp, n, L, i, w, worst, cnt, st, title) {    # awk: posix-ok
+            id = sid; ids = ""; s2 = out
+            while (match(s2, /CVE-[0-9]+-[0-9]+/)) { c = substr(s2, RSTART, RLENGTH); if (index(" " ids " ", " " c " ") == 0 && split(ids, tmp, " ") < 5) ids = ids (ids == "" ? "" : " ") c; s2 = substr(s2, RSTART + RLENGTH) }
+            if (id == "vulners") {
+                n = split(out, L, "\n"); worst = 0; cnt = 0
+                for (i = 1; i <= n; i++) if (split(L[i], w, " ") >= 2 && w[2] ~ /^[0-9]+(\.[0-9]+)?$/) { cnt++; if (w[2] + 0 > worst) worst = w[2] + 0 }
+                if (cnt > 0) rec("known CVEs", cnt " known vulnerabilities for this version, worst score " worst, ids)
+                return
+            }
+            if (out ~ /State: (LIKELY )?VULNERABLE/) {
+                st = (out ~ /State: LIKELY VULNERABLE/) ? "LIKELY VULNERABLE" : "VULNERABLE"
+                n = split(out, L, "\n"); title = id
+                for (i = 1; i < n; i++) if (L[i] ~ /VULNERABLE:[ ]*$/) { title = L[i + 1]; break }
+                rec(st, title, ids); return
+            }
+            if (id == "ftp-anon" && out ~ /Anonymous FTP login allowed/) rec("finding", "anonymous FTP login allowed", "")
+            else if (id ~ /empty-password/ && out ~ /[Ee]mpty password|has empty password/) rec("finding", "account with an empty password: " out, "")
+            else if (id == "smb2-security-mode" && out ~ /not required/) rec("finding", "SMB signing not required", "")
+            else if (id == "smb-security-mode" && out ~ /message_signing: disabled/) rec("finding", "SMB signing disabled", "")
+            else if (id == "http-methods" && out ~ /[Rr]isky methods:.*(PUT|DELETE)/) rec("finding", "web server allows PUT or DELETE", "")
+        }' "$_x"
+done
 
 # ---- Host list --------------------------------------------------------------
 # Read config/hosts.csv into $W/hl as "ip|name|scored_services".  Lines that
@@ -1712,6 +2017,7 @@ fi
 # ---- Write CSV files --------------------------------------------------------
 HC=$(cc_csv_new hosts "ip,hostname,status,open_tcp,open_udp,os_guess,in_host_list,host_list_name")
 PC=$(cc_csv_new ports "ip,hostname,proto,port,state,service,version")
+VC=$(cc_csv_new vulns "ip,hostname,proto,port,script,state,title,ids")
 awk -F'|' -v upf="$W/up" -v hlf="$W/hl" -v hc="$HC" -v pc="$PC" -v hashl="$( [ -s "$W/hl" ] && echo 1 || echo 0 )" '
     function q(s) { gsub(/"/, "\"\"", s); return "\"" s "\"" }    # awk: posix-ok
     BEGIN {
@@ -1727,55 +2033,96 @@ awk -F'|' -v upf="$W/up" -v hlf="$W/hl" -v hc="$HC" -v pc="$PC" -v hashl="$( [ -
             print q(ip) "," q(name[ip]) ",\"up\"," q(t[ip]) "," q(ud[ip]) "," q(os[ip]) "," q(inl) "," q(hl[ip]) >> hc
         }
     }' "$W/open"
+awk -F'|' -v upf="$W/up" -v vc="$VC" '
+    function q(s) { gsub(/"/, "\"\"", s); return "\"" s "\"" }    # awk: posix-ok
+    BEGIN { while ((getline l < upf) > 0) { split(l, u, "|"); name[u[1]] = u[2] } }
+    { print q($1) "," q(name[$1]) "," q($2) "," q($3) "," q($4) "," q($5) "," q($6) "," q($7) >> vc }' "$W/vulns"
 
 # ---- Flags ------------------------------------------------------------------
+show "" ""
+show "$C_CYN" "==========[ checks: what looks bad ]=========="
+# flag SEVERITY SECTION ITEM DETAIL -> cc_flag, and shown live.
+flag() {
+    cc_flag "$1" "$2" "$3" "$4"
+    case "$1" in
+        HIGH) show "$C_RED" "  [!] FIX   $3: $4" ;;
+        MED)  show "$C_YEL" "  [*] LOOK  $3: $4" ;;
+    esac
+    return 0
+}
 # Checks by port and by version banner.  Flags are pointers: a database port
 # open on the database server may be exactly what the scoring engine needs.
 while IFS='|' read -r _ip _pr _p _svc _ver; do
     _it="$_ip $_pr/$_p"
     [ -n "$_svc" ] || _svc="unknown service"
     case "$_pr/$_p" in
-        tcp/2375) cc_flag HIGH ports "$_it" "Docker API without TLS: anyone who reaches it is root on that host" ;;
-        tcp/23) cc_flag MED ports "$_it" "Telnet: cleartext logins" ;;
-        tcp/512|tcp/513|tcp/514) cc_flag MED ports "$_it" "rsh/rlogin/rexec-style cleartext service" ;;
-        udp/69) cc_flag MED ports "$_it" "TFTP: no authentication; files can be read by guessing names" ;;
-        udp/161) cc_flag MED ports "$_it" "SNMP: check the community strings are not public/private" ;;
-        tcp/590[0-9]) cc_flag MED ports "$_it" "VNC remote desktop; check it requires a password" ;;
-        tcp/6379) cc_flag MED ports "$_it" "Redis: often has no password" ;;
-        tcp/27017) cc_flag MED ports "$_it" "MongoDB: often has no password" ;;
-        tcp/9200) cc_flag MED ports "$_it" "Elasticsearch: often has no authentication" ;;
-        tcp/11211) cc_flag MED ports "$_it" "memcached: no authentication" ;;
-        tcp/1337|tcp/4444|tcp/4445|tcp/5555|tcp/6666|tcp/12345|tcp/31337|tcp/54321) cc_flag MED ports "$_it" "port commonly used by backdoors and reverse shells ($_svc)" ;;
-        tcp/3306|tcp/1433|tcp/5432|tcp/1521) cc_flag LOW ports "$_it" "database reachable over the network ($_svc); fine if the scoring engine or a web server needs it" ;;
-        tcp/21) cc_flag LOW ports "$_it" "FTP: cleartext logins" ;;
+        tcp/2375) flag HIGH ports "$_it" "Docker API without TLS: anyone who reaches it is root on that host" ;;
+        tcp/23) flag MED ports "$_it" "Telnet: cleartext logins" ;;
+        tcp/512|tcp/513|tcp/514) flag MED ports "$_it" "rsh/rlogin/rexec-style cleartext service" ;;
+        udp/69) flag MED ports "$_it" "TFTP: no authentication; files can be read by guessing names" ;;
+        udp/161) flag MED ports "$_it" "SNMP: check the community strings are not public/private" ;;
+        tcp/590[0-9]) flag MED ports "$_it" "VNC remote desktop; check it requires a password" ;;
+        tcp/6379) flag MED ports "$_it" "Redis: often has no password" ;;
+        tcp/27017) flag MED ports "$_it" "MongoDB: often has no password" ;;
+        tcp/9200) flag MED ports "$_it" "Elasticsearch: often has no authentication" ;;
+        tcp/11211) flag MED ports "$_it" "memcached: no authentication" ;;
+        tcp/1337|tcp/4444|tcp/4445|tcp/5555|tcp/6666|tcp/12345|tcp/31337|tcp/54321) flag MED ports "$_it" "port commonly used by backdoors and reverse shells ($_svc)" ;;
+        tcp/3306|tcp/1433|tcp/5432|tcp/1521) flag LOW ports "$_it" "database reachable over the network ($_svc); fine if the scoring engine or a web server needs it" ;;
+        tcp/21) flag LOW ports "$_it" "FTP: cleartext logins" ;;
     esac
     # Versions with known backdoors or trivial remote root, common in CCDC
-    # images.  The weakness checker (SH-14) will cover many more.
+    # images.
     case "$_ver" in
-        *"vsftpd 2.3.4"*) cc_flag HIGH ports "$_it" "vsftpd 2.3.4 has a built-in backdoor (smiley-face login)" ;;
-        *"ProFTPD 1.3.3c"*) cc_flag HIGH ports "$_it" "ProFTPD 1.3.3c release was backdoored" ;;
-        *"ProFTPD 1.3.5"*) cc_flag HIGH ports "$_it" "ProFTPD 1.3.5 mod_copy lets anyone copy files" ;;
-        *UnrealIRCd*) cc_flag HIGH ports "$_it" "UnrealIRCd: the 3.2.8.1 release was backdoored" ;;
-        *"Samba smbd 3.0.2"*) cc_flag HIGH ports "$_it" "Samba 3.0.20-3.0.25 allows remote root (usermap_script)" ;;
-        *distccd*) cc_flag HIGH ports "$_it" "distccd runs commands for anyone who connects" ;;
-        *"Microsoft Windows XP"*|*"Windows Server 2003"*) cc_flag HIGH ports "$_it" "end-of-life Windows ($_ver)" ;;
+        *"vsftpd 2.3.4"*) flag HIGH ports "$_it" "vsftpd 2.3.4 has a known backdoor: replace it" ;;
+        *"ProFTPD 1.3.3c"*) flag HIGH ports "$_it" "ProFTPD 1.3.3c release was backdoored" ;;
+        *"ProFTPD 1.3.5"*) flag HIGH ports "$_it" "ProFTPD 1.3.5 mod_copy lets anyone copy files" ;;
+        *UnrealIRCd*) flag HIGH ports "$_it" "UnrealIRCd: the 3.2.8.1 release was backdoored" ;;
+        *"Samba smbd 3.0.2"*) flag HIGH ports "$_it" "Samba 3.0.20-3.0.25 allows remote root" ;;
+        *distccd*) flag HIGH ports "$_it" "distccd runs commands for anyone who connects" ;;
+        *"Microsoft Windows XP"*|*"Windows Server 2003"*) flag HIGH ports "$_it" "end-of-life Windows ($_ver)" ;;
+    esac
+    # A shell prompt or a shell's error text where a service should be.
+    case "$_ver" in
+        *"sh-"[0-9]*"$"*|*"bash: "*|*"/bin/sh: "*|*"command not found"*) flag HIGH ports "$_it" "answers like a shell, not a service: likely a bind shell" ;;
     esac
     if [ "$PROFILE" = outside ]; then
-        case "$_pr/$_p" in tcp/445|tcp/139|tcp/3389|tcp/5985|tcp/5986|tcp/135) cc_flag MED ports "$_it" "Windows admin service ($_svc) is reachable from outside the firewall" ;; esac
+        case "$_pr/$_p" in tcp/445|tcp/139|tcp/3389|tcp/5985|tcp/5986|tcp/135) flag MED ports "$_it" "Windows admin service ($_svc) is reachable from outside the firewall" ;; esac
     fi
 done <"$W/open"
+
+# Script results.
+while IFS='|' read -r _ip _pr _p _id _st _title _ids; do
+    _it="$_ip $_pr/$_p"; [ "$_pr" = host ] && _it=$_ip
+    case "$_st" in
+        VULNERABLE)          flag HIGH vulns "$_it" "$_id says VULNERABLE: $_title${_ids:+ ($_ids)}" ;;
+        "LIKELY VULNERABLE") flag MED vulns "$_it" "$_id says LIKELY VULNERABLE: $_title${_ids:+ ($_ids)}" ;;
+        "known CVEs")
+            _w=$(printf '%s' "$_title" | sed 's/.*worst score //')
+            _wi=${_w%%.*}; case "$_wi" in ''|*[!0-9]*) _wi=0 ;; esac
+            if [ "$_wi" -ge 9 ]; then flag HIGH vulns "$_it" "$_title: patch or update it${_ids:+ ($_ids)}"
+            elif [ "$_wi" -ge 7 ]; then flag MED vulns "$_it" "$_title${_ids:+ ($_ids)}"
+            else flag LOW vulns "$_it" "$_title"
+            fi ;;
+        finding)
+            case "$_title" in
+                *"empty password"*|"anonymous FTP"*) flag HIGH vulns "$_it" "$_title ($_id)" ;;
+                *"PUT or DELETE"*) flag MED vulns "$_it" "$_title ($_id)" ;;
+                *) flag LOW vulns "$_it" "$_title ($_id)" ;;
+            esac ;;
+    esac
+done <"$W/vulns"
 
 # Host list checks: unknown hosts, missing hosts, scored services.
 if [ -s "$W/hl" ]; then
     SC=$(cc_csv_new scored "host,ip,service,port,reachable")
     while IFS='|' read -r _ip _name _os; do
-        grep -q "^$_ip|" "$W/hl" || cc_flag MED hosts "$_ip ${_name:-}" "host is up but not on the host list: find out what it is"
+        grep -q "^$_ip|" "$W/hl" || flag MED hosts "$_ip ${_name:-}" "host is up but not on the host list: find out what it is"
     done <"$W/up"
     while IFS='|' read -r _ip _name _scored; do
         _inscope=$(awk -v ip="$_ip" -v specs="$TARGETS" "$AWK_IP"'BEGIN { print intarget(ip, specs) }')
         [ "$_inscope" = 1 ] || continue
         _isup=no; grep -q "^$_ip|" "$W/up" && _isup=yes
-        [ "$_isup" = yes ] || cc_flag MED hosts "$_ip $_name" "on the host list but did not answer the scan"
+        [ "$_isup" = yes ] || flag MED hosts "$_ip $_name" "on the host list but did not answer the scan"
         for _s in $(printf '%s' "$_scored" | tr ';' ' '); do
             _svc=${_s%%:*}; _p=${_s##*:}
             case "$_p" in ''|*[!0-9]*) continue ;; esac
@@ -1783,7 +2130,7 @@ if [ -s "$W/hl" ]; then
                 cc_csv_row "$SC" "$_name" "$_ip" "$_svc" "$_p" yes
             else
                 cc_csv_row "$SC" "$_name" "$_ip" "$_svc" "$_p" no
-                cc_flag HIGH scored "$_name $_ip $_svc:$_p" "scored service is not reachable from here; check it now (it may only be blocked from this machine)"
+                flag HIGH scored "$_name $_ip $_svc:$_p" "scored service is not reachable from here; check it now (it may only be blocked from this machine)"
             fi
         done
     done <"$W/hl"
@@ -1792,28 +2139,64 @@ if [ -s "$W/hl" ]; then
         # is attack surface the red team can see.
         while IFS='|' read -r _ip _pr _p _svc _ver; do
             _sc=$(awk -F'|' -v ip="$_ip" '$1 == ip { print $3 }' "$W/hl")
-            case ";$_sc;" in *":$_p;"*) ;; *) cc_flag MED outside "$_ip $_pr/$_p" "reachable from outside but not a scored service on this host ($_svc)" ;; esac
+            case ";$_sc;" in *":$_p;"*) ;; *) flag MED outside "$_ip $_pr/$_p" "reachable from outside but not a scored service on this host ($_svc)" ;; esac
         done <"$W/open"
     fi
 fi
+_fl="$CC_CSV_DIR/flags.csv"
+[ -f "$_fl" ] || printf 'severity,section,item,detail,time\n' >"$_fl"
+if ! grep -Eq '^"(HIGH|MED)"' "$_fl"; then show "$C_GRN" "  [ok] nothing high or medium"; fi
+
+# ---- Readable tables ----------------------------------------------------------
+# Read by cc_flag_report in the library.
+# shellcheck disable=SC2034
+CC_FLAGS=$_fl
+# shellcheck disable=SC2034
+CC_FLAGS_SHOW="$CC_RUN_DIR/flags.txt"
+for _c in "$CC_CSV_DIR"/*.csv; do
+    [ -f "$_c" ] || continue
+    _b=$(basename "$_c" .csv)
+    if [ "$_b" = flags ]; then
+        { head -n 1 "$_c"; for _sv in HIGH MED LOW; do grep "^\"$_sv\"" "$_c"; done; } >"$W/flags_sorted.csv"
+        cc_csv_pretty "$W/flags_sorted.csv" "$CC_RUN_DIR/flags.txt" 200
+    else
+        cc_csv_pretty "$_c" "$CC_RUN_DIR/$_b.txt" 80
+    fi
+done
 
 # ---- Summary ----------------------------------------------------------------
-_nup=$(wc -l <"$W/up" | tr -d ' ')
-_nopen=$(wc -l <"$W/open" | tr -d ' ')
+_nup=$(grep -c . "$W/up")
+_nopen=$(grep -c . "$W/open")
+_nvuln=$(awk -F'|' '$5 ~ /VULNERABLE/ { n++ } END { print n + 0 }' "$W/vulns")
 _unknown=""
 [ -s "$W/hl" ] && _unknown=" ($(awk -F'|' -v hlf="$W/hl" 'BEGIN { while ((getline l < hlf) > 0) { split(l, h, "|"); k[h[1]] = 1 } } !($1 in k) { n++ } END { print n + 0 }' "$W/up") not on the host list)"
 {
-    printf 'SH-03 Network scan | from %s | %s | profile %s | engine %s\n' "$CC_HOST" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PROFILE" "$(cat "$W/engine_version" 2>/dev/null)"
-    printf 'Targets:%s\n\n' "$TARGETS"
-    printf 'Hosts up: %s%s\nOpen ports: %s\n\n' "$_nup" "$_unknown" "$_nopen"
-    # One line per host: address, name, open ports with service names.
+    printf 'SH-03 Network scan | from %s | %s | engine %s\n' "$CC_HOST" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(cat "$W/engine_version" 2>/dev/null)"
+    printf 'Targets:%s | scans: %s\n\n' "$TARGETS" "$SCANS"
+    printf 'Hosts up: %s%s | open ports: %s | vulnerable: %s\n\n' "$_nup" "$_unknown" "$_nopen" "$_nvuln"
+    # One block per host: address, name, OS, then one line per open port.
+    printf 'Open ports\n'
     awk -F'|' -v upf="$W/up" '
-        BEGIN { while ((getline l < upf) > 0) { split(l, u, "|"); name[u[1]] = u[2]; order[++n] = u[1] } }
-        { p[$1] = p[$1] (p[$1] == "" ? "" : ", ") $3 ($2 == "udp" ? "/udp" : "") ($4 == "" ? "" : " " $4) }
+        BEGIN { while ((getline l < upf) > 0) { split(l, u, "|"); name[u[1]] = u[2]; os[u[1]] = u[3]; order[++n] = u[1] } }
+        { k = $1; c[k]++; p[k, c[k]] = sprintf("    %-10s %-16s %s", $3 "/" $2, substr($4, 1, 16), substr($5, 1, 70)) }
         END {
-            for (i = 1; i <= n && i <= 40; i++) { ip = order[i]; printf "  %-15s %-20s %s\n", ip, substr(name[ip], 1, 20), (p[ip] == "" ? "(no open ports in range)" : p[ip]) }
-            if (n > 40) printf "  ... %d more hosts in hosts.csv\n", n - 40
+            for (i = 1; i <= n && i <= 60; i++) {
+                ip = order[i]
+                printf "  %s%s%s  (%d open)\n", ip, (name[ip] == "" ? "" : " " name[ip]), (os[ip] == "" ? "" : " | " substr(os[ip], 1, 40)), c[ip]
+                for (j = 1; j <= c[ip]; j++) print p[ip, j]
+            }
+            if (n == 0) print "  (no hosts up)"
+            if (n > 60) printf "  ... %d more hosts in hosts.txt\n", n - 60
         }' "$W/open"
+    printf '\n'
+    if [ "$A_VULN" != Y ] && [ "$A_SCRIPTS" != Y ]; then
+        printf 'Vulns: not checked (run with --vuln or --scripts)\n'
+    elif [ ! -s "$W/vulns" ]; then
+        printf 'Vulns: none found by the scripts\n'
+    else
+        printf 'Vulns and script findings\n'
+        awk -F'|' '{ printf "  %-22s %-30s %-17s %s%s\n", $1 " " ($2 == "host" ? "" : $2 "/" $3), substr($4, 1, 30), $5, substr($6, 1, 80), ($7 == "" ? "" : " (" $7 ")") }' "$W/vulns"
+    fi
     if [ -n "$HOSTLIST" ] && [ -n "${SC:-}" ]; then
         _sok=$(grep -c '"yes"$' "$SC"); _sno=$(grep -c '"no"$' "$SC")
         printf '\nScored services: %s reachable, %s NOT reachable\n' "$_sok" "$_sno"
@@ -1822,6 +2205,28 @@ _unknown=""
     cc_flag_report "$MAXFLAGS"
     printf '\nAll results: %s\n' "$CC_RUN_DIR"
 } >"$CC_RUN_DIR/summary.txt"
-cat "$CC_RUN_DIR/summary.txt"
+show "" ""
+show "$C_CYN" "==========[ SUMMARY ]=========="
+# On screen the summary is colour-coded; summary.txt and output.txt stay plain.
+awk -v R="$C_RED" -v Y="$C_YEL" -v G="$C_GRN" -v C="$C_CYN" -v D="$C_GRY" -v O="$C_OFF" '
+    NR <= 2                          { print C $0 O; next }
+    /^Hosts up:/                     { print (($0 ~ /vulnerable: [1-9]/) ? R : G) $0 O; next }
+    /^Open ports$|^Vulns and/        { mode = substr($0, 1, 1); print C $0 O; next }
+    /^Vulns: /                       { print D $0 O; next }
+    /^$/                             { mode = ""; print; next }
+    mode == "O" && /^  [^ ]/         { print C $0 O; next }
+    mode == "O"                      { print G $0 O; next }
+    mode == "V" && /VULNERABLE/      { print R $0 O; next }
+    mode == "V"                      { print Y $0 O; next }
+    /^Scored services:/              { print (($0 ~ / [1-9][0-9]* NOT/) ? R : G) $0 O; next }
+    /^Flags:/                        { print C $0 O; next }
+    /^HIGH - /                       { fm = "H"; print R $0 O; next }
+    /^MED - /                        { fm = "M"; print Y $0 O; next }
+    /^  \[/ && fm == "H"             { print R "  [!] FIX " substr($0, 3) O; next }
+    /^  \[/ && fm == "M"             { print Y "  [*] LOOK" substr($0, 2) O; next }
+    /^All (flags|results)/           { print D $0 O; next }
+                                     { print }
+' "$CC_RUN_DIR/summary.txt" >&3
+cat "$CC_RUN_DIR/summary.txt" >>"$OUTF"
 rm -rf "$W"
 cc_finish

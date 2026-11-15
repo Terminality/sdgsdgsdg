@@ -549,80 +549,87 @@ Only HIGH and MED flags are printed. LOW flags are in `flags.csv`.
 
 ## 11. Network scan, `roles/network/SH-03-network-scan.sh` (SH-03)
 
-Finds live hosts and open ports, with the service and version behind each. Run it from the admin workstation. It sends probes and changes nothing on any host.
+Finds live hosts and open ports, what runs on them, and what looks vulnerable. Run it from the admin workstation. It sends probes and changes nothing on any host.
 
 ### How to run it
 
 ```sh
-sh SH-03-network-scan.sh --target 10.0.2.0/24 --hosts config/hosts.csv --out ~/ccdc-out
-sh SH-03-network-scan.sh --target 10.0.2.0/24 --profile full --out ~/ccdc-out           # every port, slow
-sh SH-03-network-scan.sh --targets-file subnets.txt --profile outside --hosts hosts.csv  # from outside the firewall
-sudo sh SH-03-network-scan.sh --target 10.0.2.0/24 --profile udp                         # top 25 UDP ports
+sh SH-03-network-scan.sh                                        # asks everything
+sh SH-03-network-scan.sh --target 10.0.2.0/24 --batch            # all defaults, no questions
+sudo sh SH-03-network-scan.sh --target 10.0.2.0/24 --vuln --udp --hosts config/hosts.csv
+sh SH-03-network-scan.sh --targets-file subnets.txt --profile outside --hosts hosts.csv   # from outside the firewall
 ```
+
+It asks like sqlmap (Enter takes the default, a flag answers in advance):
+
+| Question | Default | Flag |
+| --- | --- | --- |
+| What to scan (IP, range, subnet; several with spaces) | your own network | `--target` |
+| Quick scan, top 1000 ports | yes | `--quick` / `--no-quick` |
+| Full scan, all 65535 ports, on the hosts that are up | yes | `--full` / `--no-full` |
+| Service and version on each open port | yes | `--services` / `--no-services` |
+| nmap default scripts (anonymous FTP, SMB signing, ...) | yes | `--scripts` / `--no-scripts` |
+| nmap vuln scripts (only ones nmap marks safe) | no | `--vuln` / `--no-vuln` |
+| OS guess (root) | yes | `--os` / `--no-os` |
+| Top 25 UDP ports (root) | no | `--udp` / `--no-udp` |
+
+Then it runs nmap in stages and shows nmap's own output as it goes: quick scan, full scan, details (versions, scripts, OS) on just the open ports, then UDP. Open ports are green, `VULNERABLE` red.
 
 | Option | What it does |
 | --- | --- |
-| `--target` | An address, a network (`10.0.2.0/24`), a range (`10.0.2.1-50`) or a name. Repeat for more |
-| `--targets-file` | One target per line |
 | `--hosts` | The host list. Turns on the scored-service and unknown-host checks |
-| `--profile fast` (default) | Top 1000 TCP ports with service versions |
-| `--profile full` | All 65535 TCP ports, plus an OS guess as root. Minutes per host |
-| `--profile udp` | Top 25 UDP ports. Needs nmap and root |
-| `--profile outside` | Like fast, but also scans hosts that drop ping. Run it from outside to see what the red team sees; any open port that is not a scored service is flagged |
-| `--ports` | Your own port list, e.g. `22,80,8000-8100` |
+| `--profile fast` | Preset: quick scan + versions, no questions |
+| `--profile full` | Preset: quick + full + versions (+ OS as root) |
+| `--profile udp` | Preset: UDP only. Needs root |
+| `--profile outside` | Like fast, but also scans hosts that drop ping. Run it from outside to see what the red team sees |
+| `--ports` | Only these ports, e.g. `22,80,8000-8100` (replaces the quick and full scans) |
 | `--engine` | Force `nmap`, `python`, `bash` or `nc` |
-| `--no-dns` | Skip name lookups when DNS is slow or broken |
-| `--pn` | Treat every address as up |
+| `--no-dns` / `--pn` | Skip name lookups / treat every address as up |
 
-**Engines.** nmap is used when installed. Without it the scan falls back to python3, then bash with `timeout`, then `nc -z`. The fallbacks:
-
-- check a fixed list of 53 common TCP ports
-- read a short banner instead of a version
-- cannot scan UDP
-- stop at 1024 addresses (`--max-hosts` raises that)
+**Without nmap** it falls back to python3, then bash, then `nc -z`: 53 common TCP ports, a banner instead of a version, no scripts, no UDP, at most 1024 addresses.
 
 ### What it produces
 
-In `<out>/SH-03_<host>_<UTC time>/`:
+In `<out>/netscan-N/` (next free number):
 
 | File | Contents |
 | --- | --- |
-| `summary.txt` | Hosts up, one line per host with its open ports, the scored-service count, and the HIGH and MED flags |
-| `hosts.csv` | Each live host: address, name, open TCP and UDP ports, OS guess, whether it is on the host list |
-| `ports.csv` | Each open port: address, name, protocol, port, service, version |
-| `scored.csv` | With `--hosts`: each scored service and whether it answered |
-| `flags.csv` | Every flag |
-| `raw/` | nmap's own reports (`.nmap`, `.gnmap`, `.xml`) and screen output |
+| `output.txt` | Everything shown on screen, no colour |
+| `summary.txt` | Counts, open ports per host, vulns, scored services, HIGH and MED flags |
+| `hosts.txt`, `ports.txt` | Live hosts; every open port with service and version |
+| `vulns.txt` | What the scripts found: `VULNERABLE` results, known CVEs for a version (with the worst score), anonymous FTP, empty database passwords, SMB signing off, PUT/DELETE allowed |
+| `flags.txt` | Every flag, HIGH first |
+| `scored.txt` | With `--hosts`: each scored service and whether it answered |
+| `csv/` | The same tables as CSV (SH-04 reads these) |
+| `raw/` | nmap's own output per stage (`1-quick`, `2-full`, `3-details`, `4-udp`) |
 
 ### What it flags
 
 | Severity | When |
 | --- | --- |
-| HIGH | A scored service from the host list does not answer. Docker API on 2375. A version with a known backdoor or trivial remote root: vsftpd 2.3.4, ProFTPD 1.3.3c and 1.3.5, UnrealIRCd, Samba 3.0.20-3.0.25, distccd, Windows XP/2003 |
-| MED | A host is up but not on the host list, or on the list but silent. Telnet, rsh, TFTP, SNMP, VNC, Redis, MongoDB, Elasticsearch, memcached. Backdoor-style ports such as 4444 and 31337. With `outside`: Windows admin ports, and anything that is not a scored service |
-| LOW | Databases reachable over the network; FTP |
+| HIGH | A script says `VULNERABLE`. A version with a known CVE scored 9 or more. Anonymous FTP, an empty database password. A port that answers like a shell. A scored service that does not answer. Docker API on 2375. vsftpd 2.3.4, ProFTPD 1.3.3c/1.3.5, UnrealIRCd, Samba 3.0.20-3.0.25, distccd, Windows XP/2003 |
+| MED | `LIKELY VULNERABLE`, CVE score 7 or more, PUT/DELETE allowed. A host up but not on the host list, or on it but silent. Telnet, rsh, TFTP, SNMP, VNC, Redis, MongoDB, Elasticsearch, memcached. Backdoor-style ports such as 4444 and 31337. With `outside`: Windows admin ports, and anything that is not a scored service |
+| LOW | Databases reachable over the network, FTP, SMB signing off, lower CVE scores |
 
 ### What to watch for
 
-- **"Not reachable" means not reachable from where you ran it.** A firewall may block your workstation but allow the scoring engine. Check from the scoring side, or with the service checker (SH-08) once it exists, before changing anything.
-- **The host list is what makes this useful.** Without `--hosts` you get an inventory; with it you get answers about scored services and strangers on the network. Keep `config/hosts.csv` current.
-- **Run it again after changes and compare.** The scan diff (SH-04, section 12) does the comparison for you.
-- **A closed port can mean "nothing listening" or "dropped by a firewall".** nmap's report in `raw/` says which when it can tell.
-- **Inside versus outside.** From inside you see more than the red team does; `--profile outside` from beyond the firewall shows their view.
-- **Scans are visible.** They show up in IDS and firewall logs. That is fine on your own network; mention it if an inject asks about suspicious traffic.
+- **The full scan is slow**: minutes per host. nmap prints progress every minute. Say no to it for a first look, then run it.
+- **Vuln scripts only point.** Nothing found does not mean safe; a hit means check that service now. Only "safe" ones run, so they will not knock a scored service over.
+- **"Not reachable" means not reachable from where you ran it.** A firewall may block your workstation but allow the scoring engine. Check from the scoring side before changing anything.
+- **Run it again later and compare** with the scan diff (SH-04). New ports and new vulns are flagged.
+- **Scans are visible** in IDS and firewall logs. Fine on your own network.
 
 ### Problems and fixes
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `nothing to scan` (exit 2) | No `--target` or `--targets-file` | Add one |
+| `nothing to scan` (exit 2) | No target and no terminal to ask | Add `--target` |
 | `has N addresses; the python engine is limited to 1024` | Range too big without nmap | Install nmap, scan smaller pieces, or raise `--max-hosts` |
-| `UDP scanning needs root` / `the udp profile needs nmap` | UDP needs raw packets | `sudo`, with nmap installed |
-| `nmap produced no results` | A target nmap cannot parse, or no permission for the scan type | Read `raw/nmap_screen.txt` |
-| Hosts you know are up are missing | They drop ping and none of the scanned ports answered | `--pn`, or `--profile outside` |
-| The scan sits for minutes | `full` profile, a large range, or slow DNS | Watch the `nmap: Stats` lines; use `--no-dns`; run `fast` first |
-| Service shows as `unknown service` or ends in `?` | The fallback has no version detection, or nmap was unsure | Check the banner in `ports.csv`; rerun with nmap |
-| Every scored service fails | Wrong addresses in the host list, or your workstation is firewalled off | Check `config/hosts.csv`; try `--pn`; scan from another machine |
+| `UDP scanning needs root` / OS skipped | Raw packets need root | `sudo` |
+| `nmap produced no results` | A target nmap cannot parse, or no permission | Read `output.txt` |
+| Hosts you know are up are missing | They drop ping and no top-1000 port answered | `--pn`, or `--profile outside` |
+| Service ends in `?` or is `unknown` | nmap was unsure | Check `raw/3-details.nmap`; the fingerprint is there |
+| Every scored service fails | Wrong addresses in the host list, or your workstation is firewalled off | Check `config/hosts.csv`; scan from another machine |
 
 ---
 
@@ -638,7 +645,7 @@ The point: run SH-03 and SH-05 in the first minutes as a baseline, run them agai
 sh SH-04-scan-diff.sh --out ~/ccdc-out                        # the newest two network scans
 sh SH-04-scan-diff.sh --out /root/ccdc-out --type sh05        # the newest two enum runs of the newest run's host
 sh SH-04-scan-diff.sh --out /root/ccdc-out --type sh05 --host web01
-sh SH-04-scan-diff.sh --old ~/ccdc-out/SH-03_admin_20261111T140000Z --new ~/ccdc-out/SH-03_admin_20261111T150000Z
+sh SH-04-scan-diff.sh --old ~/ccdc-out/netscan-1 --new ~/ccdc-out/netscan-2
 ```
 
 | Option | What it does |
@@ -659,6 +666,7 @@ sh SH-04-scan-diff.sh --old ~/ccdc-out/SH-03_admin_20261111T140000Z --new ~/ccdc
 | SH-03 | hosts | address | name |
 | SH-03 | ports | address, protocol, port | service, version |
 | SH-03 | scored | host, address, service, port | reachable |
+| SH-03 | vulns | address, protocol, port, script | state, title |
 | SH-05 | users | user | UID, shell, can log in, password state, groups |
 | SH-05 | ports | protocol, address, port | process, program |
 | SH-05 | services | name | enabled, active |
@@ -687,7 +695,7 @@ In a numbered folder: `<out>/diff-1`, `diff-2`, ...
 
 | Severity | When |
 | --- | --- |
-| HIGH | SH-03: a scored service that answered before and does not now; a backdoor-style port (4444, 31337, 1337, 2375 and others) newly open. SH-05: a new account, cron or startup entry, SSH key, sudo rule, SUID program, file capability or PAM line; a backdoor-style port newly listening |
+| HIGH | SH-03: a scored service that answered before and does not now; a new vuln or script finding; a backdoor-style port (4444, 31337, 1337, 2375 and others) newly open. SH-05: a new account, cron or startup entry, SSH key, sudo rule, SUID program, file capability or PAM line; a backdoor-style port newly listening |
 | MED | SH-03: a host appeared or vanished; a port opened or closed. SH-05: an account changed or removed; a listening port added, removed or taken over by another program; a new service; a file newly locked with `chattr`; a PAM line removed; the firewall state changed |
 | LOW | SH-03: a service version changed; a scored-service check added. SH-05: a service started, stopped, enabled or disabled |
 

@@ -2,6 +2,15 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-14: Network scan asks questions, scans in stages, flags vulns
+
+- SH-03 asks like sqlmap: what to scan (defaults to your own network), quick top-1000 scan, full all-port scan, versions, default scripts, vuln scripts (safe ones only), OS and UDP (root). Each has a flag; `--batch` takes the defaults; `--profile` still works as a preset.
+- Runs nmap in stages (quick, full on the hosts that are up, details on just the open ports, UDP) and shows nmap's own output live, coloured. Service fingerprint dumps are cut from the screen.
+- New `vulns.txt`: VULNERABLE script results, known CVEs per version with the worst score, anonymous FTP, empty DB passwords, SMB signing off. These are flagged, plus a port that answers like a shell.
+- Looks like the enum: numbered `netscan-N` folders, `output.txt`, readable `.txt` tables, CSV in `csv/`, coloured summary of ports per host and vulns.
+- SH-04 finds `netscan-N` runs and flags new vulns between two scans.
+- Tested with a stand-in nmap (stages, merge, vuln parsing, questions in a terminal, SH-04) and real nmap and python on 127.0.0.1, under dash, bash, ksh, mksh, yash and busybox sh.
+
 ## 2026-11-14: Linux password rotation asks about every account
 
 - LX-20 shows every account in a table (UID, shell, password state, last login, default action) with hidden accounts in red: a second UID 0, an empty password, a hash in /etc/passwd, a system account that can log in, an account in only one of passwd/shadow; domain/LDAP accounts in a note.
