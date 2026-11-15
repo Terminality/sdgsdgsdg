@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-14: Linux safe fixes: leave-alone lists, account and SUID fixes
+
+- LX-39 asks "Leave any alone?" after each fix that acts on named items (accounts, paths, kernel settings, services), or takes `--exclude a,b`.
+- New LX-39 fixes: `uid0` (lock and expire extra UID 0 accounts), `emptypw` (lock empty-password accounts), `suid` (remove SUID from GTFOBins programs and from files in /tmp, /home ...). The account questions list what was found first. Passwords are never logged; undo only removes the `!`.
+- More kernel settings in `sysctl`: unprivileged BPF off, protected FIFOs and regular files, RFC 1337.
+- Fixed: shellcheck warning in the new library code; the timer tests failed under the slow yash shell; the LX-39 test's mode helper ignored the SUID bit.
+
 ## 2026-11-14: Linux safe fixes asks questions and reverts on its own
 
 - LX-39 asks like sqlmap: which box (splunk / webmail / ecomm / other), then one question per fix; Enter takes the default; flags answer in advance; `--batch` takes every default.

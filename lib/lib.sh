@@ -519,7 +519,10 @@ cc_timer_fired() { [ -n "$CC_TIMER_DIR" ] && { [ -f "$CC_TIMER_DIR/REVERTED" ] |
 _cc_read() {
     _cc_rd_left=$(cc_timer_left)
     if [ "$_cc_rd_left" -gt 0 ] && [ "${_CC_READ_T:-}" = "" ]; then
-        if ( read -r -t 1 _x </dev/null ) 2>/dev/null; [ $? -eq 1 ]; then _CC_READ_T=1; else _CC_READ_T=0; fi
+        # A shell without -t fails with status 2 ("illegal option"); one with
+        # it just hits the end of /dev/null (status 1).
+        # shellcheck disable=SC3045
+        if ( read -r -t 1 _x </dev/null ) 2>/dev/null; [ $? -eq 1 ]; then _CC_READ_T=1; else _CC_READ_T=0; fi  # posix-ok
     fi
     if [ "$_cc_rd_left" -gt 0 ] && [ "$_CC_READ_T" = 1 ]; then
         # shellcheck disable=SC3045
