@@ -20,8 +20,9 @@
 #                            Same text without colour in output.txt
 #     summary.txt            one page at the end: key facts, a count per
 #                            section, and the HIGH and MED flags, worst first
-#     <section>.csv          everything collected, one file per section
-#     flags.csv              every flag including LOW, with the reason
+#     <section>.txt          everything collected, one readable table per section
+#     flags.txt              every flag including LOW, with the reason
+#     csv/                   the same data as CSV, for SH-04 and other tools
 #     raw/*.txt              untouched tool output (iptables-save, sshd -T ...)
 #
 # USAGE
@@ -42,7 +43,7 @@
 #   --skip a,b,c     run the profile without these sections
 #   --fast           skip the slow whole-disk searches (files, creds)
 #   --max-flags N    how many HIGH/MED flags to print in the end summary (default 30)
-#   --low            also show LOW flags live (they are always in flags.csv)
+#   --low            also show LOW flags live (they are always in flags.txt)
 #   --no-color       no colours (also off when the output is not a terminal,
 #                    or when NO_COLOR is set)
 #   --list           list the sections and exit
@@ -55,8 +56,9 @@
 #   SH-05_<host>_<UTC time>.log      log of the run (in the --out folder)
 #   linux-enum-N/output.txt          everything shown live, without colour
 #   linux-enum-N/summary.txt         the one-page summary
-#   linux-enum-N/flags.csv           severity,section,item,detail,time
-#   linux-enum-N/<section>.csv       see the manual for columns
+#   linux-enum-N/flags.txt           every flag, as a readable table
+#   linux-enum-N/<section>.txt       each section as a readable table
+#   linux-enum-N/csv/*.csv           the same as CSV (used by SH-04)
 #   linux-enum-N/raw/*.txt           raw tool output
 #   linux-enum-N/logs/               copied logs (triage only)
 #   linux-enum-N/run.txt             id, host and start time (read by SH-04)
@@ -219,6 +221,10 @@ fi
 # ---- Start ------------------------------------------------------------------
 cc_init "SH-05" "Linux enum" readonly
 cc_use_numbered_dir linux-enum
+# CSV files (for SH-04 and other tools) go in csv/; the run folder itself
+# gets a readable .txt table per file at the end.
+CC_CSV_DIR="$CC_RUN_DIR/csv"
+mkdir -p "$CC_CSV_DIR" || cc_die 3 "cannot create $CC_CSV_DIR"
 cc_detect_os
 W="$CC_RUN_DIR/.work"          # scratch files; removed at the end
 mkdir -p "$W" || cc_die 3 "cannot create $W"
@@ -1495,7 +1501,7 @@ s_logs() {
 
 # nflags SEVERITY -> how many flags of that severity flags.csv holds so far.
 nflags() {
-    if [ -f "$CC_RUN_DIR/flags.csv" ]; then grep -c "^\"$1\"" "$CC_RUN_DIR/flags.csv"; else echo 0; fi
+    if [ -f "$CC_CSV_DIR/flags.csv" ]; then grep -c "^\"$1\"" "$CC_CSV_DIR/flags.csv"; else echo 0; fi
     return 0
 }
 
@@ -1519,7 +1525,7 @@ run_section() {
     [ "$_rs_hi" -eq 0 ] && [ "$_rs_me" -eq 0 ] && show "$C_GRN" "  [ok] nothing to fix here"
     _rs_files=""
     for _f in $SEC_FILES; do [ -f "$_f" ] && _rs_files="$_rs_files $(basename "$_f")"; done
-    show "$C_GRY" "  ($_rows rows${_rs_files:+ ->$_rs_files}${SEC_NOTE:+; $SEC_NOTE})"
+    show "$C_GRY" "  ($_rows rows${_rs_files:+ ->$(printf '%s' "$_rs_files" | sed 's/\.csv/.txt/g')}${SEC_NOTE:+; $SEC_NOTE})"
     printf '%s|%s|%s\n' "$SEC" "$_rows" "$SEC_NOTE" >>"$W/sections"
 }
 
@@ -1529,11 +1535,25 @@ _rs_n=0
 for _s in $SECTIONS; do run_section "$_s"; done
 
 # Section table: rows collected plus flags per severity, read from flags.csv.
-_flagsf="$CC_RUN_DIR/flags.csv"
+_flagsf="$CC_CSV_DIR/flags.csv"
 [ -f "$_flagsf" ] || printf 'severity,section,item,detail,time\n' >"$_flagsf"
 # Read by cc_flag_report in the library.
 # shellcheck disable=SC2034
 CC_FLAGS=$_flagsf
+# shellcheck disable=SC2034
+CC_FLAGS_SHOW="$CC_RUN_DIR/flags.txt"
+# A readable table for every CSV file: <run>/users.txt, ports.txt, ...
+# flags.txt lists HIGH first, then MED, then LOW, with the detail kept whole.
+for _c in "$CC_CSV_DIR"/*.csv; do
+    [ -f "$_c" ] || continue
+    _b=$(basename "$_c" .csv)
+    if [ "$_b" = flags ]; then
+        { head -n 1 "$_c"; for _sv in HIGH MED LOW; do grep "^\"$_sv\"" "$_c"; done; } >"$W/flags_sorted.csv"
+        cc_csv_pretty "$W/flags_sorted.csv" "$CC_RUN_DIR/flags.txt" 200
+    else
+        cc_csv_pretty "$_c" "$CC_RUN_DIR/$_b.txt"
+    fi
+done
 {
     printf 'SH-05 Linux enum | host %s | %s | profile %s | root: %s\n' "$CC_HOST" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PROFILE" "$([ "$IS_ROOT" = 1 ] && echo yes || echo NO - partial)"
     printf 'OS: %s | kernel %s | init %s\n\n' "$CC_OS_NAME" "$(uname -r 2>/dev/null)" "$CC_INIT"

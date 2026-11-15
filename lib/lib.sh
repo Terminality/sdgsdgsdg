@@ -761,6 +761,36 @@ cc_use_numbered_dir() {
     cc_debug "run folder: $CC_RUN_DIR"
 }
 
+# cc_csv_pretty CSV TXT [WIDTH]
+#   Write CSV as an aligned table people can read in a terminal (cat, less -S):
+#   header in capitals, a dashed line, then one row per line.  Columns wider
+#   than WIDTH (default 60) are cut with "...".  The CSV is not changed.
+cc_csv_pretty() {
+    [ -f "$1" ] || return 0
+    awk -v maxw="${3:-60}" "$CC_AWK_CSV"'
+        function cut(s) { if (length(s) > maxw) s = substr(s, 1, maxw - 3) "..."; return s }  # awk, not shell: posix-ok
+        NR == FNR {
+            n = csvsplit($0, f); if (n > nc) nc = n
+            for (i = 1; i <= n; i++) { v = cut(f[i]); if (length(v) > w[i]) w[i] = length(v) }
+            next
+        }
+        {
+            n = csvsplit($0, f); line = ""
+            for (i = 1; i <= nc; i++) {
+                v = (i <= n) ? cut(f[i]) : ""
+                if (FNR == 1) v = toupper(v)
+                line = line sprintf("%-" w[i] "s", v) (i < nc ? "  " : "")
+            }
+            sub(/ +$/, "", line); print line
+            if (FNR == 1) {
+                line = ""
+                for (i = 1; i <= nc; i++) { d = sprintf("%" w[i] "s", ""); gsub(/ /, "-", d); line = line d (i < nc ? "  " : "") }
+                print line
+            }
+        }
+        END { if (FNR <= 1) print "(nothing found)" }' "$1" "$1" >"$2"
+}
+
 # cc_save NAME COMMAND [ARG...]
 #   Run a READ-ONLY command and keep its untouched output in
 #   <run folder>/raw/NAME.txt (or <out>/<ID>_<host>_<time>_NAME.txt without a
@@ -844,7 +874,9 @@ cc_flag_report() {
         printf 'Flags: none\n'
         return 0
     fi
-    awk -v max="$_cc_fr_max" -v file="$CC_FLAGS" "$CC_AWK_CSV"'
+    # CC_FLAGS_SHOW: the path to name on screen, when a script writes a
+    # readable copy of flags.csv (SH-05 writes flags.txt).
+    awk -v max="$_cc_fr_max" -v file="${CC_FLAGS_SHOW:-$CC_FLAGS}" "$CC_AWK_CSV"'
         NR == 1 { next }
         {
             csvsplit($0, f)

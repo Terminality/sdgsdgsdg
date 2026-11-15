@@ -470,9 +470,16 @@ Each run gets a numbered folder: `<out>/linux-enum-1`, `linux-enum-2`, ... Highe
 | File | Contents |
 | --- | --- |
 | `output.txt` | Everything shown while it ran, without colours |
+| `<section>.txt` | Each section as a readable table (`users.txt`, `ports.txt`, ...) |
+| `flags.txt` | Every flag including LOW, HIGH first |
+| `csv/` | The same data as CSV, for SH-04 |
 | `summary.txt` | The end summary: key facts, a row per section, the HIGH and MED flags |
 | `run.txt` | Script ID, host and start time (SH-04 uses it) |
-| `flags.csv` | Every flag, including LOW: severity, section, item, detail, time |
+
+The tables below are named by their CSV file; each one is also a readable `.txt` in the run folder.
+
+| File | Contents |
+| --- | --- |
 | `facts.csv`, `addresses.csv` | Host name, OS, kernel, init system, uptime, IPv6 on or off, addresses, DNS |
 | `users.csv` | Every account: UID, shell, whether it can log in, password state (`set`, `EMPTY`, `locked`; never the hash), groups |
 | `ports.csv` | Listening ports: protocol, address, port, `any` or `local`, pid, process, user, program file |
@@ -666,13 +673,14 @@ Processes and connections are not compared: they change every second. Line numbe
 
 ### What it produces
 
-In `<out>/SH-04_<host>_<UTC time>/`:
+In a numbered folder: `<out>/diff-1`, `diff-2`, ...
 
 | File | Contents |
 | --- | --- |
 | `summary.txt` | Per-section counts of added, removed and changed; the changes (added first); the HIGH and MED flags |
-| `changes.csv` | `section,change,key,old,new` for every difference |
-| `flags.csv` | Every flag |
+| `changes.txt` | Every difference as a readable table, additions first |
+| `flags.txt` | Every flag, HIGH first |
+| `csv/` | The same as CSV (`changes.csv`, `flags.csv`) |
 
 ### What it flags
 

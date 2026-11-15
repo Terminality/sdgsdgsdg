@@ -222,6 +222,17 @@ t_eq "$(printf '%s\n' "$r" | sed -n 's/^b=//p')" "$T_TMP/num/thing-11" "a second
 t_has "$(cat "$T_TMP/num/thing-10/run.txt")" "id=T-13" "run.txt records the ID"
 t_ok "raw folder created" test -d "$T_TMP/num/thing-10/raw"
 
+t_start "readable tables"
+mk pretty 'printf "%s\n" "name,note" "\"bob\",\"has, comma\"" "\"a\",\"0123456789012345\"" >"$T/p.csv"
+cc_csv_pretty "$T/p.csv" "$T/p.txt" 10; cat "$T/p.txt"
+printf "name,note\n" >"$T/e.csv"; cc_csv_pretty "$T/e.csv" "$T/e.txt"; cat "$T/e.txt"'
+r=$(run "$S/pretty.sh" 2>/dev/null)
+t_has "$r" "NAME  NOTE" "header in capitals, columns aligned"
+t_has "$r" "----  ----------" "dashed line as wide as each column"
+t_has "$r" "bob   has, comma" "commas inside a value kept"
+t_has "$r" "a     0123456..." "long values cut with ..."
+t_has "$r" "(nothing found)" "an empty CSV says so"
+
 t_start "kit integrity check"
 unset CCDC_SKIP_VERIFY
 mkdir -p "$T_TMP/dist"; cp "$S/init.sh" "$T_TMP/dist/v.sh"

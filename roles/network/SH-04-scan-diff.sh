@@ -37,9 +37,12 @@
 #   --help          this text plus the common options
 #
 # OUTPUTS  (under --out, in SH-04_<host>_<UTC time>/)
+#   One numbered folder per run: diff-1, diff-2, ... (higher = newer)
 #   summary.txt   counts per section and the changes, newest-relevant first
-#   changes.csv   section,change,key,old,new  (change = added|removed|changed)
-#   flags.csv     severity,section,item,detail,time
+#   changes.txt   every change as a readable table (added first)
+#   flags.txt     every flag, HIGH first
+#   csv/          the same as CSV: changes.csv, flags.csv
+#   run.txt       ID, host and time
 #
 # WHAT IT CHANGES
 #   Nothing.  It only reads CSV files written by SH-03 or SH-05.
@@ -184,7 +187,12 @@ if [ "$TYPE" = sh05 ] && [ "$(run_host "$OLD")" != "$(run_host "$NEW")" ]; then
 fi
 cc_info "old: $OLD"
 cc_info "new: $NEW"
-cc_use_run_dir
+cc_use_numbered_dir diff
+CC_CSV_DIR="$CC_RUN_DIR/csv"
+mkdir -p "$CC_CSV_DIR" || cc_die 3 "cannot create $CC_CSV_DIR"
+# cfile DIR FILE -> where FILE is in a run folder: csv/FILE in runs that keep
+#   their CSV files in csv/, DIR/FILE in older runs.
+cfile() { if [ -f "$1/csv/$2" ]; then printf '%s\n' "$1/csv/$2"; else printf '%s\n' "$1/$2"; fi; }
 W="$CC_RUN_DIR/.work"; mkdir -p "$W" || cc_die 3 "cannot create $W"
 CH=$(cc_csv_new changes "section,change,key,old,new")
 # Fields inside the work files are separated by the ASCII "unit separator"
@@ -203,7 +211,8 @@ US=$(printf '\037')
 #   A file missing from either run is reported as skipped.
 diff_csv() {
     _sec=$1; _file=$2
-    if [ ! -f "$OLD/$_file" ] || [ ! -f "$NEW/$_file" ]; then
+    _of=$(cfile "$OLD" "$_file"); _nf=$(cfile "$NEW" "$_file")
+    if [ ! -f "$_of" ] || [ ! -f "$_nf" ]; then
         printf '%s|skipped (not in both runs)\n' "$_sec" >>"$W/skipped"
         return 0
     fi
@@ -235,7 +244,7 @@ diff_csv() {
         function out(c, k, o, n) {  # awk, not shell: posix-ok
             print q(sec) "," q(c) "," q(k) "," q(o) "," q(n) >> ch
             print sec "\037" c "\037" k "\037" o "\037" n
-        }' "$OLD/$_file" "$NEW/$_file" >"$W/d_$_sec"
+        }' "$_of" "$_nf" >"$W/d_$_sec"
     cat "$W/d_$_sec" >>"$W/all"
     cc_debug "$_sec: $(grep -c . "$W/d_$_sec") change(s)"
 }
@@ -330,8 +339,8 @@ else
     flag_rule pam removed MED "PAM line removed"
     flag_rule firewall changed MED "firewall state changed"
     # Same view in both runs?  A root run sees more than a non-root run.
-    _ro=$(awk -F'","' '$1 == "\"collector_run_as_root" { gsub(/"/, "", $2); print $2 }' "$OLD/facts.csv" 2>/dev/null)
-    _rn=$(awk -F'","' '$1 == "\"collector_run_as_root" { gsub(/"/, "", $2); print $2 }' "$NEW/facts.csv" 2>/dev/null)
+    _ro=$(awk -F'","' '$1 == "\"collector_run_as_root" { gsub(/"/, "", $2); print $2 }' "$(cfile "$OLD" facts.csv)" 2>/dev/null)
+    _rn=$(awk -F'","' '$1 == "\"collector_run_as_root" { gsub(/"/, "", $2); print $2 }' "$(cfile "$NEW" facts.csv)" 2>/dev/null)
     [ -n "$_ro" ] && [ "$_ro" != "$_rn" ] && cc_warn "one run was as root and the other was not; some 'added' or 'removed' items only reflect what each run could see"
 fi
 
@@ -357,12 +366,26 @@ _label=SH-03; [ "$TYPE" = sh05 ] && _label=SH-05
               if ($2 == "changed") line = line "  [" $4 " -> " $5 "]"
               if (length(line) > 200) line = substr(line, 1, 197) "..."
               print line }'
-        [ "$_tot" -gt "$MAXLINES" ] && printf '  ... %d more in changes.csv\n' "$((_tot - MAXLINES))"
+        [ "$_tot" -gt "$MAXLINES" ] && printf '  ... %d more in changes.txt\n' "$((_tot - MAXLINES))"
         printf '\n'
     fi
+    CC_FLAGS_SHOW="$CC_RUN_DIR/flags.txt"
     cc_flag_report "$MAXFLAGS"
     printf '\nAll results: %s\n' "$CC_RUN_DIR"
 } >"$CC_RUN_DIR/summary.txt"
+# Readable tables: changes.txt (added, changed, removed) and flags.txt (HIGH first).
+_ch=$(cfile "$CC_RUN_DIR" changes.csv)
+if [ -f "$_ch" ]; then
+    { head -n 1 "$_ch"; for _k in added changed removed; do awk -v k="$_k" -F'","' '$2 == k' "$_ch"; done; } >"$W/changes_sorted.csv"
+    cc_csv_pretty "$W/changes_sorted.csv" "$CC_RUN_DIR/changes.txt" 80
+fi
+_fl=$(cfile "$CC_RUN_DIR" flags.csv)
+if [ -f "$_fl" ]; then
+    { head -n 1 "$_fl"; for _sv in HIGH MED LOW; do grep "^\"$_sv\"" "$_fl"; done; } >"$W/flags_sorted.csv"
+    cc_csv_pretty "$W/flags_sorted.csv" "$CC_RUN_DIR/flags.txt" 200
+else
+    printf 'No flags.\n' >"$CC_RUN_DIR/flags.txt"
+fi
 cat "$CC_RUN_DIR/summary.txt"
 rm -rf "$W"
 cc_finish
