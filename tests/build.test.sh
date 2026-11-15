@@ -11,6 +11,10 @@ r=$(sh "$T_ROOT/tools/build.sh" --check 2>&1); rc=$?
 t_eq "$rc" 0 "tools/build.sh --check passes (if not: run sh tools/build.sh)"
 [ "$rc" -eq 0 ] || printf '%s\n' "$r" | head -n 10
 
+if command -v git >/dev/null 2>&1 && git -C "$T_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    t_ok "dist/ is not ignored by git (people download from it)" sh -c "! git -C '$T_ROOT' check-ignore -q dist/MANIFEST.sha256"
+fi
+
 t_start "a fresh build into another folder"
 r=$(sh "$T_ROOT/tools/build.sh" --out "$T_TMP/d" 2>&1); t_eq "$?" 0 "build exits 0"
 t_file "$T_TMP/d/MANIFEST.sha256" "manifest written"

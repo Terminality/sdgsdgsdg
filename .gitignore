@@ -1,5 +1,4 @@
-# Built standalone scripts: regenerate with tools/build.sh, never commit.
-dist/
+# dist/ (built single-file scripts) IS committed: people download from it.
 # Script output must never live in the repo (logs can hold host details).
 out/
 ccdc-out/
