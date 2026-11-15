@@ -2,6 +2,10 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-14: Linux enum privesc section
+
+- SH-05 `privesc` section (in the card profile): root cron jobs, start-up scripts and root services whose files others can change; writable key files and a readable shadow file; risky PATH folders and `.` on the PATH; sudo rules for GTFOBins programs and kept LD_PRELOAD; old sudo (Baron Samedit), pkexec (PwnKit) and kernels (Dirty COW, Dirty Pipe), checked against the package changelog or kernel build date to avoid false alarms.
+
 ## 2026-11-14: Linux enum output
 
 - SH-05 prints like linpeas: a header per section as it runs, red `[!] FIX` for HIGH, yellow `[*] LOOK` for MED, green key facts. `--low` shows LOW flags too, `--no-color` turns colours off. Same output saved to `output.txt`.

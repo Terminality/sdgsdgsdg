@@ -35,7 +35,7 @@
 # OPTIONS
 #   --profile NAME   card | full | triage   (default: full)
 #                      card    quick look, under a minute: system, users,
-#                              ports, services, autostart, ssh, sudo
+#                              ports, services, autostart, ssh, sudo, privesc
 #                      full    card plus processes, connections, sessions,
 #                              packages, files, firewall, pam, mac, trust,
 #                              creds, containers, modules
@@ -112,8 +112,8 @@ while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$
 . "$_cc_d/lib/lib.sh"
 # <<< CCDC-LIB
 
-ALL_SECTIONS="system users ports services autostart ssh sudo processes connections sessions packages files firewall pam mac trust creds containers modules logs"
-PROFILE_CARD="system users ports services autostart ssh sudo"
+ALL_SECTIONS="system users ports services autostart ssh sudo privesc processes connections sessions packages files firewall pam mac trust creds containers modules logs"
+PROFILE_CARD="system users ports services autostart ssh sudo privesc"
 PROFILE_FULL="$PROFILE_CARD processes connections sessions packages files firewall pam mac trust creds containers modules"
 PROFILE_TRIAGE="$PROFILE_FULL logs"
 
@@ -145,6 +145,8 @@ services     services, enabled/running state, suspicious unit files
 autostart    cron, at, timers, rc.local, shell startup files, motd, udev
 ssh          effective sshd settings and every authorized_keys entry
 sudo         sudoers, doas and polkit rules
+privesc      ways to become root: root-run files others can change, risky sudo
+             rules, writable key files, PATH, known root bugs (sudo, pkexec, kernel)
 processes    every process with its program file
 connections  live network connections with the process behind each
 sessions     who is logged in now, recent logins
@@ -913,6 +915,219 @@ s_sudo() {
     _ver=$(sudo -V 2>/dev/null | head -n 1)
     [ -n "$_ver" ] && cc_csv_row "$F" "sudo -V" "" "$_ver"
     say "sudo: $(grep -c . "$W/sudo") rule line(s); ${_ver:-sudo not installed}"
+}
+
+# ---- privesc ----------------------------------------------------------------
+# Ways a normal user (or a red team that lost root) can become root again,
+# like linpeas checks.  The folders, groups, capabilities and passwordless
+# sudo that other sections already flag are not repeated here.
+
+# who_can_write PATH -> prints why a non-root user can change PATH, or
+#   nothing.  Follows symlinks (/bin -> usr/bin).  World-writable alone is
+#   left to the files section; this adds owner and group write.
+who_can_write() {
+    ls -ldL "$1" 2>/dev/null | awk '
+        { m = $1; o = $3; g = $4
+          if (o != "root" && o != "0") { print "owned by " o; exit }
+          if (substr(m, 6, 1) == "w" && g != "root" && g != "0") { print "group " g " can write it"; exit }
+          if (substr(m, 9, 1) == "w" && substr(m, 10, 1) != "t") { print "anyone can write it"; exit } }'
+}
+
+# pe_check KIND PATH WHAT -> flag PATH (and its folder) if a non-root user can
+#   change it.  WHAT says who runs it, e.g. "root cron job".
+pe_check() {
+    [ -e "$2" ] || return 0
+    # Each file once, even when several units or cron lines run it.
+    grep -qxF "$2" "$W/pe_seen" 2>/dev/null && return 0
+    printf '%s\n' "$2" >>"$W/pe_seen"
+    _pw=$(who_can_write "$2")
+    if [ -n "$_pw" ]; then
+        cc_csv_row "$SEC_CSV" "$1" "$2" "$_pw"
+        flag HIGH "$2" "$3 runs this file, and $_pw: whoever changes it gets root"
+        return 0
+    fi
+    _pd=$(dirname "$2")
+    _pw=$(who_can_write "$_pd")
+    if [ -n "$_pw" ] && [ "$_pd" != /tmp ] && [ "$_pd" != /var/tmp ]; then
+        cc_csv_row "$SEC_CSV" "$1" "$2" "folder $_pd: $_pw"
+        flag HIGH "$2" "$3 runs this file, and its folder $_pd: $_pw, so the file can be replaced"
+    fi
+    return 0
+}
+
+# paths_in FILE -> every absolute path to an existing file mentioned in FILE
+#   (one per line, de-duplicated).  Used on root cron lines and unit commands.
+paths_in() {
+    tr ' \t;|&()<>"=' '\n\n\n\n\n\n\n\n\n\n' <"$1" | sed "s/^'//; s/'\$//" | grep '^/' | sort -u >"$W/pe_paths"
+    while IFS= read -r _pp; do [ -f "$_pp" ] && printf '%s\n' "$_pp"; done <"$W/pe_paths"
+}
+
+# ver_lt A B -> true if version A is lower than B.  Compares number by number,
+#   so 1.8.31 < 1.9.5 and 1.9.5.1 < 1.9.5.2.
+ver_lt() {
+    awk -v a="$1" -v b="$2" 'BEGIN {
+        na = split(a, x, /[^0-9]+/); nb = split(b, y, /[^0-9]+/)
+        n = (na > nb) ? na : nb
+        for (i = 1; i <= n; i++) { if (x[i] + 0 < y[i] + 0) exit 0; if (x[i] + 0 > y[i] + 0) exit 1 }
+        exit 1 }'
+}
+
+# patched PACKAGE CVE -> true if the package's changelog mentions the CVE,
+#   which is how Debian, Ubuntu and RHEL record a backported fix.
+patched() {
+    for _cl in /usr/share/doc/"$1"/changelog.Debian.gz /usr/share/doc/"$1"/changelog.gz; do
+        [ -f "$_cl" ] && gzip -dc "$_cl" 2>/dev/null | grep -q "$2" && return 0
+    done
+    cc_have rpm && rpm -q --changelog "$1" 2>/dev/null | grep -q "$2" && return 0
+    return 1
+}
+
+# built_before YYYYMM -> true if the running kernel was built before that
+#   month (from 'uname -v'), so a fix from that month cannot be in it.
+built_before() {
+    uname -v 2>/dev/null | awk -v lim="$1" '{
+        y = 0; m = 0
+        for (i = 1; i <= NF; i++) {
+            if ($i ~ /^(19|20)[0-9][0-9]$/) y = $i
+            k = index("JanFebMarAprMayJunJulAugSepOctNovDec", $i); if (length($i) == 3 && k) m = (k + 2) / 3
+        }
+        if (y == 0) exit 1
+        exit !((y * 100 + m) < lim + 0) }'
+}
+
+s_privesc() {
+    # PR: a fake system root for the tests (CCDC_TEST_ROOT); empty for real runs.
+    PR=${CCDC_TEST_ROOT:-}
+    sec_csv privesc "check,path,detail"
+    : >"$W/pe_seen"
+
+    # 1. Files root runs on a schedule or at boot that others can change.
+    #    Root's cron lines: /etc/crontab and /etc/cron.d (user field = root),
+    #    root's own crontab, and the run-parts folders.
+    : >"$W/pe_cron"
+    for _f in "$PR"/etc/crontab "$PR"/etc/cron.d/*; do
+        [ -f "$_f" ] && awk '!/^[ \t]*#/ && NF >= 7 && $6 == "root" { for (i = 7; i <= NF; i++) printf "%s ", $i; print "" }' "$_f" >>"$W/pe_cron" 2>/dev/null
+    done
+    for _f in "$PR"/var/spool/cron/crontabs/root "$PR"/var/spool/cron/root; do
+        [ -f "$_f" ] && awk '!/^[ \t]*#/ && NF >= 6 && $1 !~ /=/ { for (i = 6; i <= NF; i++) printf "%s ", $i; print "" }' "$_f" >>"$W/pe_cron" 2>/dev/null
+    done
+    paths_in "$W/pe_cron" >"$W/pe_list"
+    while IFS= read -r _p; do pe_check cron "$_p" "a root cron job"; done <"$W/pe_list"
+    for _f in "$PR"/etc/cron.hourly/* "$PR"/etc/cron.daily/* "$PR"/etc/cron.weekly/* "$PR"/etc/cron.monthly/* "$PR"/etc/rc.local "$PR"/etc/init.d/*; do
+        [ -f "$_f" ] && pe_check boot "$_f" "root (cron run-parts or start-up)"
+    done
+    for _d in "$PR"/etc/cron.d "$PR"/etc/cron.hourly "$PR"/etc/cron.daily "$PR"/etc/systemd/system "$PR"/etc/init.d; do
+        [ -d "$_d" ] || continue
+        _pw=$(who_can_write "$_d")
+        [ -n "$_pw" ] && { cc_csv_row "$SEC_CSV" folder "$_d" "$_pw"; flag HIGH "$_d" "root runs what is in this folder, and $_pw: a new file there runs as root"; }
+    done
+
+    # 2. systemd services that run as root: the unit file and the programs
+    #    in its Exec lines.
+    for _ud in "$PR"/etc/systemd/system "$PR"/run/systemd/system "$PR"/lib/systemd/system "$PR"/usr/lib/systemd/system; do
+        [ -d "$_ud" ] || continue
+        for _u in "$_ud"/*.service "$_ud"/*.timer; do
+            [ -f "$_u" ] || continue
+            # Skip services that run as another user (User=redis ...).
+            _uu=$(sed -n 's/^[[:space:]]*User=[[:space:]]*//p' "$_u" 2>/dev/null | tail -n 1 | tr -d '[:space:]')
+            case "$_uu" in ''|root|0) ;; *) continue ;; esac
+            _pw=$(who_can_write "$_u")
+            [ -n "$_pw" ] && { cc_csv_row "$SEC_CSV" unit "$_u" "$_pw"; flag HIGH "$_u" "systemd unit run as root, and $_pw: whoever changes it gets root"; }
+            grep -E '^[[:space:]]*Exec[A-Za-z]*=' "$_u" 2>/dev/null | sed 's/^[^=]*=[-@:+!]*//' >"$W/pe_exec"
+            paths_in "$W/pe_exec" >"$W/pe_list"
+            # Programs and scripts only: a config file named on the command
+            # line is the service's business, not a way to run code.
+            while IFS= read -r _p; do
+                case "$_p" in *.sh|*.py|*.pl|*.rb|*.php|*.bash) ;; *) [ -x "$_p" ] || continue ;; esac
+                pe_check service "$_p" "the root service $(basename "$_u")"
+            done <"$W/pe_list"
+        done
+    done
+
+    # 3. Key files a normal user must never be able to change (or read, for
+    #    shadow).  World-writable ones are also in the files section.
+    for _f in "$PR"/etc/passwd "$PR"/etc/group "$PR"/etc/shadow "$PR"/etc/gshadow "$PR"/etc/sudoers "$PR"/etc/sudoers.d "$PR"/etc/sudoers.d/* "$PR"/etc/ld.so.preload "$PR"/etc/ld.so.conf "$PR"/etc/ld.so.conf.d "$PR"/etc/profile "$PR"/etc/environment "$PR"/etc/pam.d "$PR"/root "$PR"/root/.bashrc "$PR"/root/.profile "$PR"/root/.ssh "$PR"/root/.ssh/authorized_keys; do
+        [ -e "$_f" ] || continue
+        _pw=$(who_can_write "$_f")
+        [ -n "$_pw" ] && { cc_csv_row "$SEC_CSV" keyfile "$_f" "$_pw"; flag HIGH "$_f" "$_pw: a normal user can use this to become root"; }
+    done
+    for _f in "$PR"/etc/shadow "$PR"/etc/gshadow; do
+        [ -e "$_f" ] || continue
+        case "$(ls -ld "$_f" 2>/dev/null | awk '{ print $1 }')" in
+            ???????r*) cc_csv_row "$SEC_CSV" keyfile "$_f" "anyone can read it"; flag HIGH "$_f" "anyone can read the password hashes" ;;
+        esac
+    done
+
+    # 4. Folders on root's PATH owned or writable by a non-root group, and
+    #    '.' or an empty entry (both mean "the current folder").
+    case ":$PATH:" in *::*|*:.:*) cc_csv_row "$SEC_CSV" path "$PATH" "current folder is on the PATH"; flag HIGH PATH "the PATH includes the current folder: a program planted in any folder root works in runs as root" ;; esac
+    for _d in $(printf '%s' "$PATH" | tr ':' ' '); do
+        [ -d "$_d" ] || continue
+        _pw=$(who_can_write "$_d")
+        case "$_pw" in ''|'anyone can write it') ;; *) cc_csv_row "$SEC_CSV" path "$_d" "$_pw"; flag HIGH "$_d" "folder on root's PATH, and $_pw: a planted program there runs as root" ;; esac
+    done
+
+    # 5. sudo rules that let a normal user run a program with a shell escape
+    #    (GTFOBins: vim, less, find, python ...) or keep LD_PRELOAD.
+    : >"$W/pe_sudo"
+    for _f in "$PR"/etc/sudoers "$PR"/etc/sudoers.d/*; do
+        [ -f "$_f" ] && [ -r "$_f" ] && grep -v '^[[:space:]]*#' "$_f" >>"$W/pe_sudo" 2>/dev/null
+    done
+    if grep -Eq 'env_keep.*LD_(PRELOAD|LIBRARY_PATH)' "$W/pe_sudo"; then
+        cc_csv_row "$SEC_CSV" sudo "$PR"/etc/sudoers "env_keep LD_PRELOAD"
+        flag HIGH "$PR"/etc/sudoers "sudo keeps LD_PRELOAD/LD_LIBRARY_PATH: any sudo rule can be turned into a root shell"
+    fi
+    awk -v gtfo="$GTFO" '
+        /^[ \t]*(Defaults|Cmnd_Alias|User_Alias|Host_Alias|Runas_Alias|root[ \t])/ { next }
+        /=/ {
+            who = $1; cmds = $0; sub(/^[^=]*=[ \t]*(\([^)]*\))?[ \t]*/, "", cmds)
+            gsub(/(NOPASSWD|PASSWD|SETENV|NOEXEC|EXEC):[ \t]*/, "", cmds)
+            n = split(cmds, c, /,[ \t]*/)
+            for (i = 1; i <= n; i++) {
+                split(c[i], w, /[ \t]+/); p = w[1]; b = p; sub(/.*\//, "", b); sub(/[0-9.]+$/, "", b)
+                if (b != "" && index(gtfo, " " b " ")) print who "|" p
+            }
+        }' "$W/pe_sudo" | sort -u >"$W/pe_gtfo"
+    while IFS='|' read -r _who _prog; do
+        cc_csv_row "$SEC_CSV" sudo "$_prog" "$_who may run it as root"
+        flag HIGH "$_who" "may run $_prog with sudo, which has a shell escape (GTFOBins): that is a root shell"
+    done <"$W/pe_gtfo"
+
+    # 6. Known local root bugs, checked by version, then by the package
+    #    changelog (distros backport fixes without changing the version).
+    if cc_have sudo; then
+        _sv=$(sudo -V 2>/dev/null | awk 'NR == 1 { print $NF }')
+        if [ -n "$_sv" ] && ver_lt "$(printf '%s' "$_sv" | tr 'p' '.')" 1.9.5.2 && ! patched sudo CVE-2021-3156; then
+            cc_csv_row "$SEC_CSV" cve "sudo $_sv" "CVE-2021-3156 Baron Samedit"
+            flag HIGH "sudo $_sv" "older than 1.9.5p2 and no fix for CVE-2021-3156 (Baron Samedit) in its changelog: any user can get root. Update sudo"
+        fi
+    fi
+    for _pk in /usr/bin/pkexec /bin/pkexec; do
+        [ -u "$_pk" ] || continue
+        _pv=""
+        for _pkg in policykit-1 polkitd polkit; do
+            _pv=$( (dpkg-query -W -f '${Version}' "$_pkg" || rpm -q --qf '%{VERSION}' "$_pkg") 2>/dev/null | grep -v 'not installed' | head -n 1)
+            [ -n "$_pv" ] && break
+        done
+        if [ -n "$_pv" ] && ver_lt "$_pv" 0.120 && ! patched "$_pkg" CVE-2021-4034; then
+            cc_csv_row "$SEC_CSV" cve "$_pk" "CVE-2021-4034 PwnKit (polkit $_pv)"
+            flag HIGH "$_pk" "SUID pkexec with polkit $_pv and no fix for CVE-2021-4034 (PwnKit) in its changelog: any user can get root. Update polkit or remove the SUID bit"
+        fi
+        break
+    done
+    _kv=$(uname -r 2>/dev/null | sed 's/[^0-9.].*//')
+    if [ -n "$_kv" ]; then
+        if ver_lt "$_kv" 4.8.3 && built_before 201611; then
+            cc_csv_row "$SEC_CSV" cve "kernel $(uname -r)" "CVE-2016-5195 Dirty COW"
+            flag HIGH "kernel $(uname -r)" "kernel from before the Dirty COW fix (CVE-2016-5195): any user can get root"
+        elif ! ver_lt "$_kv" 5.8 && ver_lt "$_kv" 5.16.11 && built_before 202203; then
+            cc_csv_row "$SEC_CSV" cve "kernel $(uname -r)" "CVE-2022-0847 Dirty Pipe"
+            flag HIGH "kernel $(uname -r)" "kernel 5.8 to 5.16 built before the Dirty Pipe fix (CVE-2022-0847): any user can get root"
+        fi
+    fi
+
+    _n=$(($(wc -l <"$SEC_CSV") - 1))
+    say "Privilege escalation paths: $_n found (root-run files others can change, risky sudo rules, known root bugs)"
 }
 
 s_processes() {
