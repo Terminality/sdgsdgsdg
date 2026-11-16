@@ -37,6 +37,7 @@ Contents:
 27. Windows password rotation, `roles/windows-ad/WN-20-password-rotation.ps1` (WN-20)
 28. Windows safe fixes, `roles/windows-ad/WN-43-safe-fixes.ps1` (WN-43)
 29. Windows firewall, `roles/windows-ad/WN-25-firewall.ps1` (WN-25)
+30. Linux session & command logging, `roles/linux/LX-41-session-log.sh` (LX-41)
 
 ---
 
@@ -2008,3 +2009,87 @@ Existing inbound allow rules that undo the firewall: one that allows every port,
 | "could not create the rollback task" | Task Scheduler service off or not elevated | Nothing changed; fix that, or use `-NoTimer` only at the console |
 | A rule comes back | Domain Group Policy firewall rules | Fix the GPO |
 | "run this with Windows PowerShell" | Started with `pwsh` | Use `powershell.exe` |
+
+---
+
+## 30. Linux session & command logging, `roles/linux/LX-41-session-log.sh` (LX-41)
+
+Watches who logs in and what they run, saves it to log files, and prints an alert for anything that looks like the red team. It pairs with LX-40: LX-40 watches config and persistence **state**, this one watches **events** — logins and commands. It reads logs the box already keeps, so it changes nothing (unless you pass `--setup-auditd`).
+
+### How to run it
+
+```sh
+sudo sh LX-41-session-log.sh                        # one pass, from now
+sudo sh LX-41-session-log.sh --loop 30              # keep watching (Ctrl-C stops)
+sudo sh LX-41-session-log.sh --admin "alice bob"    # your admin accounts stay quiet
+# keep it running, alerts copied to the admin box:
+nohup sudo sh LX-41-session-log.sh --loop 30 \
+  --alert-cmd "ssh log@10.0.0.5 'cat >>/srv/alerts/web01.log'" &
+sudo sh LX-41-session-log.sh --setup-auditd         # turn on full command logging (a change)
+```
+
+### What it logs
+
+| Section | From | What |
+| --- | --- | --- |
+| logins | the auth log (`auth.log`/`secure`, or journald) | every login with its source address and key-vs-password, failed logins, brute force, sessions |
+| priv | the auth log | every `sudo` and `su`, and the command each `sudo` ran, and failures |
+| commands | auditd (if recording execve) | every command with user, tty and folder |
+
+Privileged commands (`sudo`/`su`) are always captured from the auth log. **Every** command needs auditd. The script says whether auditd is on and, if not, prints the one rule to add — or adds it with `--setup-auditd`.
+
+### Catching a web shell
+
+A web server almost never runs shell commands, so LX-41 treats the web layer specially:
+
+- **A command run by the web-server account** (`www-data`, `apache`, `nginx`, `httpd`, ...) is always **HIGH** — that is the web shell executing. `--web-user NAME` adds accounts.
+- **Where a process runs from:** a program or working folder in `/tmp`, `/var/tmp`, `/dev/shm`, a web root, or a deleted binary is **HIGH**.
+- **The web access log** (apache/nginx, auto-found, or `--access-log FILE`) goes to `web.log`, and these requests alert: a known web-shell filename (`wso.php`, `c99.php`, ...), command-injection markers (`cmd=`, `shell_exec`, `base64_decode`, `;id`, `/bin/sh`, ...), and a request to a script that was **dropped into a web root after watching began** (`--webroot DIR` maps the URL to the file). So you see each command the attacker sends to the shell.
+
+### Your own commands don't flood the alerts
+
+An **admin allowlist** decides what reaches the console. It starts from the `sudo`/`wheel`/`adm` group members plus whoever is running the script, and you add to it with `--admin "alice bob"` or `--admin-file`. For those accounts, a normal login or command is **logged but not alerted**. It only alerts on them if the command itself is dangerous. Everyone else alerts.
+
+| Severity | When |
+| --- | --- |
+| HIGH | A dangerous command by anyone (reverse shell, `curl\|sh`, `base64 -d\|sh`, `nc -e`, wiping history). A login or command by an account not in `/etc/passwd`. Root logging in over the network with a password. A burst of failed logins from one address |
+| MED | A login or command by a non-admin account. A sudo auth failure |
+| LOW (file only, `--low` to show) | An admin doing something sensitive (`useradd`, editing sudoers, `wget`), kept for the record |
+
+`--all-commands` alerts on every command; `--alert-own` also alerts on admins' normal commands.
+
+### Options
+
+| Option | What it does |
+| --- | --- |
+| `--loop N` / `--count N` | re-check every N seconds (min 5); stop after N checks |
+| `--admin "U1 U2"` / `--admin-file F` | accounts to keep quiet, on top of the auto-detected ones |
+| `--alert-own` / `--all-commands` | make admin / all commands show |
+| `--low` | also show LOW alerts on the console |
+| `--from-start` | process existing log history on the first pass (default: from now) |
+| `--alert-cmd CMD` | run CMD with the new alert lines on its stdin (send them off-box) |
+| `--setup-auditd` | add the auditd execve rule so every command is logged (the one change; reversible) |
+| `--auth-log` / `--audit-log` | point at specific log files |
+| `--max-mb N` | roll a log over at N MB (default 50) |
+| `--state DIR` | where the logs and read-positions live (default `<out>/sesslog-<host>`) |
+
+### Outputs
+
+In the state folder (`<out>/sesslog-<host>/`): `alerts.log` (the flagged subset, same format as LX-40), `logins.log`, `priv.log`, `commands.log`. A restart keeps the same files and read-positions and carries on.
+
+### What to watch for
+
+- **Without auditd you still get logins and every `sudo` command** — the privileged ones that matter most. `--setup-auditd` adds the rest.
+- **The alert is a pointer, not a verdict.** A clean-looking command by an admin isn't alerted; read `commands.log` for the whole picture.
+- **The red team can stop auditd or delete logs.** LX-40 alerts if the audit service disappears; keep the off-box copy (`--alert-cmd`) as the real record.
+- **Keep it hard to kill, not hidden.** Run it under `nohup`/`tmux`/`screen`, or as a plain systemd service, so it restarts — that beats trying to hide it, which looks like malware to the graders.
+
+### Problems and fixes
+
+| What you see | Why | Fix |
+| --- | --- | --- |
+| `not running as root` warning, nothing logged | The auth and audit logs need root | `sudo` |
+| `auditd is not logging commands` | No execve rule loaded | `--setup-auditd`, or add the printed `auditctl` line |
+| Only `sudo` commands show up | Same as above | Turn on auditd |
+| Your own admin work fills the console | Those accounts aren't on the allowlist | `--admin "name"`, or check the auto-detected list in the start line |
+| The loop stopped when the session closed | Started without `nohup` | Use `nohup ... &`, `tmux` or `screen` |

@@ -2,6 +2,21 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-15: LX-41 web-shell and process-origin detection
+
+- A command run by a web-server account (`www-data`, `apache`, `nginx`, ...) is now always HIGH: that is the web shell executing. `--web-user` adds accounts.
+- A process whose folder or program is in `/tmp`, `/var/tmp`, `/dev/shm`, a web root, or is a deleted binary is flagged HIGH ("where it runs from").
+- New web section: reads apache/nginx access logs (auto-found, or `--access-log`) into `web.log` and alerts on requests to a known web-shell filename, requests with command-injection markers (`cmd=`, `shell_exec`, `base64_decode`, `;id`, `/bin/sh`, ...), and requests to a script that was dropped into a web root after watching began (`--webroot` maps the URL to the file). Still read-only.
+- Tested under six shells: web-user command, process origin, injection request, known shell name, dropped-shell request, and that plain requests are only logged.
+
+## 2026-11-15: Linux session & command logging (LX-41)
+
+- New read-only monitor: reads the auth log and, when auditd is recording execve, the audit log. Logs every login (with source address and key vs password), failed and brute-force attempts, sudo/su and the command each sudo ran, and every command, to `logins.log`, `priv.log` and `commands.log` in a stable `sesslog-<host>/` folder. Privileged commands are captured even without auditd.
+- Console alerts in LX-40's format, with `--loop`, `--count` and `--alert-cmd`. An **admin allowlist** (auto-detected sudo/wheel members plus whoever runs it, extendable with `--admin`) keeps your own team's logins and commands quiet unless the command itself is dangerous (reverse shell, `curl|sh`, `base64 -d|sh`, `nc -e`, wiping history, adding a user). Non-admin or unknown users alert; `--all-commands`/`--alert-own` make everything show.
+- Stays read-only by default. `--setup-auditd` opts in to adding the one execve audit rule (reversible, revert timer) so every command is captured; otherwise it prints the rule.
+- auditd execve records are reconstructed per event id, with hex-encoded arguments decoded. Incremental re-reads (a byte/line cursor per source, rotation-aware) so each pass reports only what is new.
+- Tested under dash, bash, ksh, mksh, yash and busybox sh on fixture auth and audit logs: login/sudo/command parsing, hex decoding, the allowlist, brute-force detection, incremental re-reads, and that no shadow hash is ever written.
+
 ## 2026-11-14: Network scan checks for nmap
 
 - SH-03 says up front whether nmap is installed. If not, it explains what you lose, prints the install command for this box and asks whether to keep going with the fallback. `--engine nmap` without nmap stops with the install command.

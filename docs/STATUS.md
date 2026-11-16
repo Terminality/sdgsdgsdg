@@ -1,6 +1,6 @@
 # Build status
 
-23 of 29 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+24 of 30 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -12,7 +12,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | Hardening: medium | 1 | 1 |
 | Hardening: hard | 2 | 6 |
 | Management | 3 | 3 |
-| Alerts | 2 | 3 |
+| Alerts | 3 | 4 |
 | Kit | 3 | 3 |
 
 ## Enum (look only)
@@ -73,6 +73,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | ID | Script | Risk | Status | File |
 | --- | --- | --- | --- | --- |
 | LX-40 | Linux alerts | none | built | `roles/linux/LX-40-change-watch.sh` |
+| LX-41 | Linux session & command logging | none | built | `roles/linux/LX-41-session-log.sh` |
 | WN-44 | Windows alerts | none | planned |  |
 | SV-26 | Brute-force and spam banning | service | built | `roles/linux/SV-26-banning.sh` |
 
