@@ -1,6 +1,6 @@
 # Build status
 
-24 of 30 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+25 of 31 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -8,7 +8,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | --- | --- | --- |
 | Enum (look only) | 6 | 7 |
 | Backup and prep | 4 | 4 |
-| Hardening: easy | 2 | 2 |
+| Hardening: easy | 3 | 3 |
 | Hardening: medium | 1 | 1 |
 | Hardening: hard | 2 | 6 |
 | Management | 3 | 3 |
@@ -40,6 +40,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 
 | ID | Script | Risk | Status | File |
 | --- | --- | --- | --- | --- |
+| SV-30 | Service hardening (FTP + legacy) | access | built | `roles/applications/SV-30-service-hardening.sh` |
 | LX-39 | Linux safe fixes | safe | built | `roles/linux/LX-39-safe-fixes.sh` |
 | WN-43 | Windows safe fixes | safe | built | `roles/windows-ad/WN-43-safe-fixes.ps1` |
 

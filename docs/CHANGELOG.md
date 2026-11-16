@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-15: Service hardening, graded by risk (SV-30)
+
+- New script: hardens FTP first (anonymous off, deny root/system accounts, lock the config perms, chroot users), then telnet, rsh/rlogin/rexec, TFTP, SNMP and the old inetd services.
+- Every action is tagged **safe / service / access**, and `--level` decides how far it goes: safe (no user-visible change), service (apply, then check the service still answers and auto-undo if it broke), access (disable a daemon, under the revert timer and skipped for a scored service).
+- Dry run by default, sqlmap-style questions per action with the risk shown, `--apply` to act, `--only`/`--skip`/`--exclude`, `--force-scored`. vsftpd config is edited in full; proftpd/pure-ftpd are detected and the change reported. Same look, undo and revert timer as LX-39.
+- Tested under six shells against a fake root with vsftpd/proftpd configs: detection, the safe FTP fixes, idempotence, the level gate (chroot only at service level), `--exclude`, an access action via `--only`, and the protected-list requirement.
+
 ## 2026-11-15: LX-41 web-shell and process-origin detection
 
 - A command run by a web-server account (`www-data`, `apache`, `nginx`, ...) is now always HIGH: that is the web shell executing. `--web-user` adds accounts.
