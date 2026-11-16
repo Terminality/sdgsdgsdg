@@ -38,6 +38,7 @@ Contents:
 28. Windows safe fixes, `roles/windows-ad/WN-43-safe-fixes.ps1` (WN-43)
 29. Windows firewall, `roles/windows-ad/WN-25-firewall.ps1` (WN-25)
 30. Linux session & command logging, `roles/linux/LX-41-session-log.sh` (LX-41)
+31. Service hardening (FTP + legacy), `roles/applications/SV-30-service-hardening.sh` (SV-30)
 
 ---
 
@@ -2093,3 +2094,55 @@ In the state folder (`<out>/sesslog-<host>/`): `alerts.log` (the flagged subset,
 | Only `sudo` commands show up | Same as above | Turn on auditd |
 | Your own admin work fills the console | Those accounts aren't on the allowlist | `--admin "name"`, or check the auto-detected list in the start line |
 | The loop stopped when the session closed | Started without `nohup` | Use `nohup ... &`, `tmux` or `screen` |
+
+
+---
+
+## 31. Service hardening (FTP + legacy), `roles/applications/SV-30-service-hardening.sh` (SV-30)
+
+Hardens the insecure services on a Linux box — FTP first, then telnet, rsh/rlogin/rexec, TFTP, SNMP and the old inetd services. Every action is graded by how risky it is, and the script only goes as far as the level you pick.
+
+### Levels
+
+| `--level` | Does | Behaviour |
+| --- | --- | --- |
+| **safe** (default) | only `safe` actions | just applies; can't break a service or lock anyone out |
+| **service** | adds `service` actions | applies, checks the service still answers, **undoes just that change if it broke** |
+| **access** | adds `access` actions | can disable a daemon; covered by the revert timer and **skipped for a scored service** |
+
+Each level includes the ones before it. It shows the plan first (dry run), asks about each action (Enter takes the default; `safe`/`service` default yes, `access` defaults no unless you name it in `--only`), then `--apply` makes the changes with the revert timer running.
+
+### How to run it
+
+```sh
+sh SV-30-service-hardening.sh                                    # dry run, safe, asks
+sudo sh SV-30-service-hardening.sh --apply --protected prot.csv  # apply the safe FTP fixes
+sudo sh SV-30-service-hardening.sh --apply --level service --protected prot.csv
+sudo sh SV-30-service-hardening.sh --apply --level access --only ftp-disable --protected prot.csv
+```
+
+`--apply` needs a protected list (`--protected FILE`, or `--no-protected` to accept the risk) — that's what stops it disabling a scored service by accident. `--exclude vsftpd` leaves a service alone; `--force-scored` allows disabling one the host list marks scored.
+
+### FTP, graded
+
+| Action | Risk | Effect |
+| --- | --- | --- |
+| `ftp-anon` | safe | turn off anonymous login |
+| `ftp-accounts` | safe | deny root/system accounts FTP (`/etc/ftpusers`) |
+| `ftp-perms` | safe | lock the config file to 600 |
+| `ftp-chroot` | service | jail users to their home (adds `allow_writeable_chroot` so it doesn't break) |
+| `ftp-tls` | service | reports the lines to require FTPS/TLS |
+| `ftp-disable` | access | stop and disable the FTP service |
+
+vsftpd config is edited in full; proftpd and pure-ftpd are detected and the change reported for you to make. The other services: `telnet-disable`, `rsh-disable`, `tftp-disable`, `snmp-default` (flags default community strings), `snmp-disable`, `legacy-disable` (finger/echo/chargen/daytime/discard).
+
+### Outputs
+
+In `service-hardening-N/`: `output.txt`, `plan.txt`, `changes.txt`, `summary.txt`, `csv/`, and `revert.sh` (when a live apply changed something). Same look and undo as LX-39.
+
+### What to watch for
+
+- **A `service`-level change is verified by whether the service still runs** after a reload; if it stopped, that one change is put back automatically.
+- **Don't disable a scored service.** Keep `--force-scored` off and pass your scored services in the protected list — `access` actions skip anything protected.
+- **ftp-tls and snmp-default are reported, not applied** — TLS needs a cert and a new SNMP community must be coordinated, so they're yours to set.
+
