@@ -2,6 +2,25 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-16: Review of the recent scripts: bugs fixed, gaps filled
+
+**LX-41 session & command logging**
+- Bug: with auditd on, the script logged its own helper commands, and each one it processed started more. It now runs from its state folder and skips audit events with that working folder, and each pass is a fixed handful of awk runs however many log lines arrived (a brute force or a scanner no longer makes it fall behind).
+- Bug: the user of a command was read from `auid=` instead of `uid=`. Both are read now: the login account is who did it, `bob as root` is bob after sudo/su, and root commands from a non-admin's session alert.
+- Bug: `--setup-auditd` armed a revert timer that nothing ever answered, so the rule was removed after two minutes, and no undo line was written. No timer now; undo lines are written; it offers to keep the rule after a reboot.
+- Bug: `sudo` lines with a pid (`sudo[123]:`, journald) were not read; a denied sudo was logged as a command that ran; failed logins were counted twice; alert counts in the pass line missed brute-force alerts.
+- New: repeats held back (`--repeat-after`), daemons logged but not alerted, a login that succeeds after many failures, slow brute force across checks, new accounts / added to sudo / password changes, su to root by a non-admin, refused web probes counted per address, URL-decoded request matching, log-wiped check. Logs keep each event's own time.
+
+**SV-30 service hardening**
+- Bug: FTP config changes never took effect on a live box (vsftpd reads its config at start). It now restarts the daemon after changes, checks it is running and listening, and puts the config back if not; a revert restarts it too.
+- Bug: with two files changed in one run, the second edit of a file overwrote its backup with the already-changed copy, so revert did not restore the original.
+- Bug: editing vsftpd.conf reset its mode to 644 (undoing `ftp-perms`); an existing `/etc/ftpusers` that was added to was reported as FAILED; `--force-scored` did nothing for services; `*.socket` units were never found.
+- New: asks the level when `--level` is not given; `ftp-logging`; pure-ftpd anonymous off; proftpd `<Anonymous>` block detection; `/etc/vsftpd/ftpusers` on RHEL.
+
+**SH-03 network scan**
+- Bug: UDP ports nmap marks `open|filtered` (no answer) were listed and flagged as open.
+- Test bug: under ksh the fake nmap stayed on PATH for the real-nmap test (the "flaky" ksh failure in the full run).
+
 ## 2026-11-15: Service hardening, graded by risk (SV-30)
 
 - New script: hardens FTP first (anonymous off, deny root/system accounts, lock the config perms, chroot users), then telnet, rsh/rlogin/rexec, TFTP, SNMP and the old inetd services.

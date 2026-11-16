@@ -28,10 +28,10 @@ for _f in /usr/local/bin/* /usr/bin/* /bin/*; do
     _b=$(basename "$_f"); [ -e "$T_TMP/nonmap/$_b" ] || ln -s "$_f" "$T_TMP/nonmap/$_b" 2>/dev/null
 done
 rm -f "$T_TMP/nonmap/nmap"
-r=$(PATH="$T_TMP/nonmap" run --target 127.0.0.1 --ports 1 --out "$T_TMP/nn" 2>&1); t_eq "$?" 0 "without nmap it keeps going (default yes)"
+r=$(env PATH="$T_TMP/nonmap" $SH "$C" --target 127.0.0.1 --ports 1 --out "$T_TMP/nn" 2>&1); t_eq "$?" 0 "without nmap it keeps going (default yes)"
 t_has "$r" "nmap is not installed on this box" "says nmap is missing"
 t_has "$r" "Install it:" "and how to install it"
-r=$(PATH="$T_TMP/nonmap" run --target 127.0.0.1 --engine nmap --out "$T_TMP/nn" 2>&1); t_eq "$?" 3 "--engine nmap without nmap exits 3"
+r=$(env PATH="$T_TMP/nonmap" $SH "$C" --target 127.0.0.1 --engine nmap --out "$T_TMP/nn" 2>&1); t_eq "$?" 3 "--engine nmap without nmap exits 3"
 t_has "$r" "Install it:" "   with the install command"
 if command -v nmap >/dev/null 2>&1; then
     r=$(run --target 127.0.0.1 --ports 1 --no-scripts --no-services --no-os --no-udp --out "$T_TMP/nn" 2>&1)
@@ -69,7 +69,7 @@ case "$(basename "$b")" in
 </host>
 XML
         ;;
-    4-udp) P="161/open/udp//snmp//net-snmp/" ;;
+    4-udp) P="69/open|filtered/udp//tftp///, 161/open/udp//snmp//net-snmp/" ;;
 esac
 b=${b%.noscripts}
 # The quick scan also sees 10.9.9.6 up, with no open ports.
@@ -84,7 +84,9 @@ echo "Nmap done: 1 IP address (1 host up)"
 STUB
 chmod +x "$T_TMP/bin/nmap"
 export STUBLOG="$T_TMP/stub.log"
-srun() { PATH="$T_TMP/bin:$PATH" run "$@"; }
+# In a subshell: ksh keeps a VAR=value set in front of a function call, which
+# would leave the fake nmap on PATH for the real-nmap tests below.
+srun() { ( PATH="$T_TMP/bin:$PATH"; export PATH; run "$@" ); }
 
 t_start "stages with a fake nmap (--batch: every default)"
 : >"$STUBLOG"
@@ -147,6 +149,7 @@ if [ "$(id -u)" = 0 ]; then
     t_has "$(tail -n 1 "$STUBLOG")" "-sU" "UDP scan as root"
     t_ok "UDP port listed" grep -q '"udp","161"' "$T_TMP/s/netscan-2/csv/ports.csv"
     t_ok "SNMP flagged" grep -q '"MED","ports","10.9.9.5 udp/161"' "$T_TMP/s/netscan-2/csv/flags.csv"
+    t_fail "a UDP port that is only open|filtered is not listed as open" grep -q '"udp","69"' "$T_TMP/s/netscan-2/csv/ports.csv"
 else
     t_eq "$(grep -c -- '-sU' "$STUBLOG")" 0 "no UDP scan without root"
 fi
