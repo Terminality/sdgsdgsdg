@@ -410,6 +410,7 @@ do_action() {
             if [ -z "$R" ] && [ "$CC_APPLY" = 1 ] && [ "$FTP_DAEMON" = vsftpd ]; then svc_recheck "$FTP_SVC" ftp-chroot; fi ;;
         ftp-accounts)
             _fu=$(P /etc/ftpusers)
+            _fu_existed=0; [ -f "$_fu" ] && _fu_existed=1
             _need=""
             for _n in root daemon bin sys sync games man lp mail news uucp proxy www-data backup list irc gnats nobody; do
                 cut -d: -f1 "$(P /etc/passwd)" 2>/dev/null | grep -qx "$_n" || [ "$_n" = root ] || continue
@@ -420,7 +421,9 @@ do_action() {
                 ensure_backup /etc/ftpusers || { row ftp-accounts ftpusers /etc/ftpusers "backup failed" failed; return 0; }
                 # shellcheck disable=SC2086
                 cc_run "ftp: deny accounts in /etc/ftpusers" _ftpusers_add "$_fu" $_need
-                [ "$CC_APPLY" = 1 ] && [ -z "$CC_LAST_BACKUP" ] && cc_undo_add "shrink /etc/ftpusers" "true"
+                # If the file did not exist, back it out by removing it (a
+                # backup only exists when the file was already there).
+                [ "$CC_APPLY" = 1 ] && [ "$_fu_existed" = 0 ] && cc_undo_add "remove /etc/ftpusers (created by SV-30)" "rm -f $(cc_shquote "$_fu")"
                 row ftp-accounts ftpusers /etc/ftpusers "deny:$_need" "$(result $?)"
             fi ;;
         ftp-perms)
@@ -500,7 +503,10 @@ svc_recheck() {
         row "$_ra" "$_rn" "recheck" "service still running after the change" "already ok"
     else
         cc_err "$_rn stopped after $_ra - putting the config back"
-        [ -n "$CC_LAST_BACKUP" ] && cp "$CC_LAST_BACKUP" "$(P "$FTP_CONF")" 2>>"$CC_LOG"
+        # Restore the FTP config from its own backup (CC_LAST_BACKUP may point
+        # at a different file backed up later in this run).
+        _rb="$CC_BACKUP_DIR$(cc_abspath "$(P "$FTP_CONF")")"
+        [ -f "$_rb" ] && cp "$_rb" "$(P "$FTP_CONF")" 2>>"$CC_LOG"
         _svc_reload "$_rn" >>"$CC_LOG" 2>&1
         row "$_ra" "$_rn" "recheck" "service broke; the change was undone" failed
     fi
