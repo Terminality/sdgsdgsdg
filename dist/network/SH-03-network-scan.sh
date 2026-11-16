@@ -4,7 +4,7 @@
 # NAME:     Network scan
 # ROLE:     Network  (wave 1)
 # KIND:     readonly - sends probes, changes nothing on any host
-# VERSION:  2.0.0
+# VERSION:  2.2.1
 #
 # PURPOSE
 #   Finds every live host and open port on the team's networks.  Asks what
@@ -1784,7 +1784,7 @@ open_list() {
                 while (match(s, /^[0-9]+\/[^\/]*\/[^\/]*\/[^\/]*\/[^\/]*\/[^\/]*\/[^\/]*\//)) {
                     e = substr(s, 1, RLENGTH); s = substr(s, RLENGTH + 1); sub(/^, /, "", s)
                     split(e, f, "/")
-                    if (f[2] ~ /^open/ && f[3] == pr) { hs[h[2]] = 1; ps[f[1] + 0] = 1 }
+                    if (f[2] == "open" && f[3] == pr) { hs[h[2]] = 1; ps[f[1] + 0] = 1 }
                 }
             }
         }
@@ -1914,7 +1914,8 @@ run_nmap() {
                 while (match(s, /^[0-9]+\/[^\/]*\/[^\/]*\/[^\/]*\/[^\/]*\/[^\/]*\/[^\/]*\//)) {
                     e = substr(s, 1, RLENGTH); s = substr(s, RLENGTH + 1); sub(/^, /, "", s)
                     split(e, f, "/")
-                    if (f[2] !~ /^open/) continue
+                    # "open|filtered" (UDP that did not answer) is not open.
+                    if (f[2] != "open") continue
                     k = ip "|" f[3] "|" f[1]
                     if (!(k in svc)) { korder[++m] = k; svc[k] = ""; ver[k] = "" }
                     if (f[5] != "") svc[k] = f[5]

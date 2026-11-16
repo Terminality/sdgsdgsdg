@@ -2045,6 +2045,7 @@ A web server almost never runs shell commands, so LX-41 treats the web layer spe
 
 - **A command run by the web-server account** (`www-data`, `apache`, `nginx`, `httpd`, ...) is always **HIGH** — that is the web shell executing. `--web-user NAME` adds accounts.
 - **Where a process runs from:** a program or working folder in `/tmp`, `/var/tmp`, `/dev/shm`, a web root, or a deleted binary is **HIGH**.
+- **Requests that were refused** (404/403) are a scanner guessing: they are counted per address and reported as one line, not one each.
 - **The web access log** (apache/nginx, auto-found, or `--access-log FILE`) goes to `web.log`, and these requests alert: a known web-shell filename (`wso.php`, `c99.php`, ...), command-injection markers (`cmd=`, `shell_exec`, `base64_decode`, `;id`, `/bin/sh`, ...), and a request to a script that was **dropped into a web root after watching began** (`--webroot DIR` maps the URL to the file). So you see each command the attacker sends to the shell.
 
 ### Your own commands don't flood the alerts
@@ -2059,6 +2060,14 @@ An **admin allowlist** decides what reaches the console. It starts from the `sud
 
 `--all-commands` alerts on every command; `--alert-own` also alerts on admins' normal commands.
 
+Three things keep the console readable when a box is busy:
+
+- **Repeats are held back.** The same alert is shown once, then kept quiet for `--repeat-after` seconds (default 600; `0` shows every repeat). A scoring engine that logs in every minute shows up once. The pass line says how many repeats were held back, and every event is still in its log file.
+- **Who ran it is the login account.** `bob as root` means bob after `sudo` or `su`. Root commands from a non-admin's session alert; your admins' do not.
+- **Daemons are logged, not alerted.** A service account with no terminal (postfix, a cron job) is doing its job. Web-server accounts are the exception: they always alert.
+
+It also flags from the auth log: a login that **succeeds after many failures** from the same address, a slow brute force that adds up across checks, `sudo` by an account that is not allowed, `su` to root by a non-admin, a **new account**, an account **added to sudo/wheel**, and password changes. And it says so if the auth or audit log is suddenly empty or gone.
+
 ### Options
 
 | Option | What it does |
@@ -2067,9 +2076,10 @@ An **admin allowlist** decides what reaches the console. It starts from the `sud
 | `--admin "U1 U2"` / `--admin-file F` | accounts to keep quiet, on top of the auto-detected ones |
 | `--alert-own` / `--all-commands` | make admin / all commands show |
 | `--low` | also show LOW alerts on the console |
+| `--repeat-after N` | show the same alert again only after N seconds (default 600; 0 = always) |
 | `--from-start` | process existing log history on the first pass (default: from now) |
 | `--alert-cmd CMD` | run CMD with the new alert lines on its stdin (send them off-box) |
-| `--setup-auditd` | add the auditd execve rule so every command is logged (the one change; reversible) |
+| `--setup-auditd` | add the auditd execve rule so every command is logged, and offer to keep it after a reboot (the one change; undo lines are written) |
 | `--auth-log` / `--audit-log` | point at specific log files |
 | `--max-mb N` | roll a log over at N MB (default 50) |
 | `--state DIR` | where the logs and read-positions live (default `<out>/sesslog-<host>`) |
@@ -2106,11 +2116,11 @@ Hardens the insecure services on a Linux box — FTP first, then telnet, rsh/rlo
 
 | `--level` | Does | Behaviour |
 | --- | --- | --- |
-| **safe** (default) | only `safe` actions | just applies; can't break a service or lock anyone out |
+| **safe** (Enter) | only `safe` actions | applies; can't lock anyone out. FTP config changes need a restart of the FTP daemon, which the script does and checks |
 | **service** | adds `service` actions | applies, checks the service still answers, **undoes just that change if it broke** |
 | **access** | adds `access` actions | can disable a daemon; covered by the revert timer and **skipped for a scored service** |
 
-Each level includes the ones before it. It shows the plan first (dry run), asks about each action (Enter takes the default; `safe`/`service` default yes, `access` defaults no unless you name it in `--only`), then `--apply` makes the changes with the revert timer running.
+Each level includes the ones before it. If you don't pass `--level`, it asks. It shows the plan first (dry run), asks about each action (Enter takes the default; `safe`/`service` default yes, `access` defaults no unless you name it in `--only`), then `--apply` makes the changes with the revert timer running.
 
 ### How to run it
 
@@ -2130,11 +2140,14 @@ sudo sh SV-30-service-hardening.sh --apply --level access --only ftp-disable --p
 | `ftp-anon` | safe | turn off anonymous login |
 | `ftp-accounts` | safe | deny root/system accounts FTP (`/etc/ftpusers`) |
 | `ftp-perms` | safe | lock the config file to 600 |
+| `ftp-logging` | safe | log transfers (`xferlog_enable`), hide the version banner |
 | `ftp-chroot` | service | jail users to their home (adds `allow_writeable_chroot` so it doesn't break) |
 | `ftp-tls` | service | reports the lines to require FTPS/TLS |
 | `ftp-disable` | access | stop and disable the FTP service |
 
-vsftpd config is edited in full; proftpd and pure-ftpd are detected and the change reported for you to make. The other services: `telnet-disable`, `rsh-disable`, `tftp-disable`, `snmp-default` (flags default community strings), `snmp-disable`, `legacy-disable` (finger/echo/chargen/daytime/discard).
+vsftpd config is edited in full. pure-ftpd: anonymous off is written (`conf/NoAnonymous`). proftpd: an `<Anonymous>` block is reported for you to remove.
+
+**After FTP config changes it restarts the FTP daemon** (it only reads its config at start), checks it is running and listening again, and puts the config back if it is not. Open FTP sessions drop for a moment. A daemon that was stopped is left stopped. The other services: `telnet-disable`, `rsh-disable`, `tftp-disable`, `snmp-default` (flags default community strings), `snmp-disable`, `legacy-disable` (finger/echo/chargen/daytime/discard).
 
 ### Outputs
 

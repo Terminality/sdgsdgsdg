@@ -4,7 +4,7 @@
 # NAME:     Service hardening (FTP and other cleartext/legacy services)
 # ROLE:     Applications
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Hardens the insecure services that show up on CCDC Linux boxes - FTP
@@ -35,8 +35,9 @@
 #
 # OPTIONS
 #   --apply            make the changes (without it, dry run only)
-#   --level L          how far to go: safe (default), service, or access.
-#                      Each level includes the ones before it
+#   --level L          how far to go: safe, service, or access.  Each level
+#                      includes the ones before it.  Asked if not given
+#                      (Enter = safe)
 #   --only a,b         only these actions (see the list below)
 #   --skip a,b         leave these actions out
 #   --exclude a,b      services to leave alone (names like vsftpd, snmpd):
@@ -56,6 +57,7 @@
 #   ftp-anon        [safe]     turn off anonymous FTP login
 #   ftp-accounts    [safe]     deny root and system accounts FTP (/etc/ftpusers)
 #   ftp-perms       [safe]     lock down the FTP config file (chmod 600)
+#   ftp-logging     [safe]     log FTP transfers; hide the version banner
 #   ftp-chroot      [service]  jail FTP users to their home folder
 #   ftp-tls         [service]  (reports the lines to require FTPS/TLS)
 #   ftp-disable     [access]   stop and disable the FTP service
@@ -98,8 +100,10 @@
 #     --force-scored off so a scored FTP/SNMP is never disabled by accident.
 #   - ftp-tls and snmp-default are reported, not applied: TLS needs a cert and
 #     a new SNMP community must be coordinated, so they are yours to set.
-#   - A service-level change is checked by whether the service still runs and
-#     listens; a service that was already stopped cannot be checked that way.
+#   - FTP config changes only take effect when the daemon restarts, so after
+#     changing them on a live box the script restarts it (open FTP sessions
+#     drop), checks it is running and listening again, and puts the config
+#     back if it is not.  A daemon that was stopped is left stopped.
 #
 # DEBUGGING
 #   --debug          show each command
@@ -113,7 +117,7 @@ while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$
 . "$_cc_d/lib/lib.sh"
 # <<< CCDC-LIB
 
-ALL_ACTIONS="ftp-anon ftp-accounts ftp-perms ftp-chroot ftp-tls ftp-disable telnet-disable rsh-disable tftp-disable snmp-default snmp-disable legacy-disable"
+ALL_ACTIONS="ftp-anon ftp-accounts ftp-perms ftp-logging ftp-chroot ftp-tls ftp-disable telnet-disable rsh-disable tftp-disable snmp-default snmp-disable legacy-disable"
 
 usage() {
     cat <<'USAGE'
@@ -135,7 +139,7 @@ SV-30 Service hardening - FTP and other cleartext/legacy services
   --batch            no questions: defaults for the chosen level
   --help             this text
 
-Actions (risk): ftp-anon[safe] ftp-accounts[safe] ftp-perms[safe]
+Actions (risk): ftp-anon[safe] ftp-accounts[safe] ftp-perms[safe] ftp-logging[safe]
   ftp-chroot[service] ftp-tls[service] ftp-disable[access] telnet-disable[access]
   rsh-disable[access] tftp-disable[access] snmp-default[safe] snmp-disable[access]
   legacy-disable[access]
@@ -144,7 +148,7 @@ USAGE
 }
 
 # ---- Options ----------------------------------------------------------------
-LEVEL=safe; ONLY=""; SKIP=""; EXCL=""; FORCE_SCORED=0; TIMER=120; NOTIMER=0; R=""; COLOR=1
+LEVEL=""; ONLY=""; SKIP=""; EXCL=""; FORCE_SCORED=0; TIMER=120; NOTIMER=0; R=""; COLOR=1
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
@@ -163,15 +167,22 @@ while [ $# -gt 0 ]; do
         *)               cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-case "$LEVEL" in safe|service|access) ;; *) cc_die 2 "--level must be safe, service or access" ;; esac
+case "$LEVEL" in ''|safe|service|access) ;; *) cc_die 2 "--level must be safe, service or access" ;; esac
 case "$TIMER" in ''|*[!0-9]*) cc_die 2 "--timer needs a whole number of seconds" ;; esac
 # Validate --only/--skip names.
 for _a in $(printf '%s' "$ONLY,$SKIP" | tr ',' ' '); do
     [ -z "$_a" ] && continue
     case " $ALL_ACTIONS " in *" $_a "*) ;; *) cc_die 2 "unknown action '$_a' (see --help for the list)" ;; esac
 done
-# shellcheck disable=SC2034  # CC_FORCE_SCORED is read by cc_guard in the library
-[ "$FORCE_SCORED" = 1 ] && CC_FORCE_SCORED=1
+
+# How far to go: asked when --level was not given (Enter = safe).
+if [ -z "$LEVEL" ]; then
+    LEVEL=safe
+    if _cc_can_ask; then
+        cc_ask_text "How far should I go? safe (cannot break anything) / service (checks, undoes if it breaks) / access (can disable services)" safe
+        case "$CC_ANSWER" in safe|service|access) LEVEL=$CC_ANSWER ;; *) cc_die 2 "not a level: '$CC_ANSWER' (safe, service or access)" ;; esac
+    fi
+fi
 
 cc_init "SV-30" "Service hardening" changes
 cc_detect_os
@@ -196,7 +207,7 @@ WANT_RANK=$(level_rank "$LEVEL")
 # ---- Per-action metadata ----------------------------------------------------
 act_risk() {
     case "$1" in
-        ftp-anon|ftp-accounts|ftp-perms|snmp-default) echo safe ;;
+        ftp-anon|ftp-accounts|ftp-perms|ftp-logging|snmp-default) echo safe ;;
         ftp-chroot|ftp-tls)                           echo service ;;
         *)                                            echo access ;;
     esac
@@ -206,6 +217,7 @@ act_desc() {
         ftp-anon)       echo "turn off anonymous FTP login" ;;
         ftp-accounts)   echo "deny root and system accounts FTP" ;;
         ftp-perms)      echo "lock down the FTP config file (chmod 600)" ;;
+        ftp-logging)    echo "log FTP transfers and hide the version banner" ;;
         ftp-chroot)     echo "jail FTP users to their home folder" ;;
         ftp-tls)        echo "require FTPS/TLS (reported, not applied)" ;;
         ftp-disable)    echo "stop and disable the FTP service" ;;
@@ -223,7 +235,8 @@ act_desc() {
 svc_state() {
     [ -z "$R" ] || { echo missing; return; }
     case "$CC_INIT" in
-        systemd) systemctl cat "$1.service" >/dev/null 2>&1 || { echo missing; return; }
+        systemd) _ss=$1; case "$_ss" in *.socket|*.service) ;; *) _ss="$1.service" ;; esac
+                 systemctl cat "$_ss" >/dev/null 2>&1 || { echo missing; return; }
                  systemctl is-active --quiet "$1" 2>/dev/null && echo running || echo stopped ;;
         openrc)  [ -e "/etc/init.d/$1" ] || { echo missing; return; }
                  rc-service "$1" status >/dev/null 2>&1 && echo running || echo stopped ;;
@@ -246,6 +259,13 @@ if [ -z "$FTP_DAEMON" ] && [ -z "$R" ]; then
     for _d in vsftpd proftpd pure-ftpd; do [ "$(svc_state "$_d")" != missing ] && { FTP_DAEMON=$_d; break; }; done
 fi
 FTP_SVC=$FTP_DAEMON
+# What FTP looked like before we touched anything (for the restart check).
+FTP_CHANGED=0; FTP_WAS=missing; FTP_LISTEN=0
+if [ -n "$FTP_SVC" ] && [ -z "$R" ]; then
+    FTP_WAS=$(svc_state "$FTP_SVC")
+    if cc_have ss; then ss -ltn 2>/dev/null | grep -Eq '[:.]21[[:space:]]' && FTP_LISTEN=1
+    elif cc_have netstat; then netstat -ltn 2>/dev/null | grep -Eq '[:.]21[[:space:]]' && FTP_LISTEN=1; fi
+fi
 
 # act_applies NAME -> 0 if the service the action targets is present.
 act_applies() {
@@ -351,7 +371,12 @@ result() { if [ "$CC_APPLY" != 1 ]; then echo "would change"; elif [ "$1" -eq 0 
 
 # ensure_backup FILE -> back up FILE once per run (records the restore undo).
 ensure_backup() {
-    case " $(cat "$W/backed" 2>/dev/null) " in *" $1 "*) return 0 ;; esac
+    grep -qxF "$1" "$W/backed" 2>/dev/null && return 0
+    # Undo lines are replayed newest first, so this restart is recorded before
+    # the file restore and runs after it: a revert also restarts the daemon.
+    if [ "$1" = "$FTP_CONF" ] && [ -z "$R" ] && [ "$CC_APPLY" = 1 ] && [ "$(svc_state "$FTP_SVC")" = running ]; then
+        cc_undo_add "restart $FTP_SVC after the config is put back" "$(_svc_reload_cmd "$FTP_SVC")"
+    fi
     cc_backup_file "$(P "$1")" || return 1
     printf '%s\n' "$1" >>"$W/backed"
     return 0
@@ -363,7 +388,9 @@ _kv_set() {
     awk -v k="$2" -v v="$3" '
         $0 ~ "^[ \t]*#?[ \t]*" k "=" { if (!done) { print k "=" v; done = 1 }; next }
         { print }
-        END { if (!done) print k "=" v }' "$1" >"$1.ccnew" && mv "$1.ccnew" "$1"
+        END { if (!done) print k "=" v }' "$1" >"$1.ccnew" || { rm -f "$1.ccnew"; return 1; }
+    # Write back into the same file so its owner and mode stay as they were.
+    cat "$1.ccnew" >"$1"; _ks=$?; rm -f "$1.ccnew"; return "$_ks"
 }
 _ftpusers_add() {
     # $1 = ftpusers path, rest = names to ensure present
@@ -392,48 +419,77 @@ do_ftp_kv() {   # ACTION KEY WANT  (one vsftpd key)
         row "$1" "$FTP_DAEMON" "set $2=$3 by hand" "$FTP_DAEMON config" "check by hand"; return 0
     fi
     _cur=$(cur_kv "$2" "$_conf")
-    if [ "$(printf '%s' "$_cur" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$3" | tr 'A-Z' 'a-z')" ]; then
+    if [ "$(printf '%s' "$_cur" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$3" | tr -d ' ' | tr 'A-Z' 'a-z')" ]; then
         row "$1" vsftpd "$2" "already $3" "already ok"; return 0
     fi
     ensure_backup "$FTP_CONF" || { row "$1" vsftpd "$2" "backup failed" failed; return 0; }
-    cc_run "ftp: set $2=$3" _kv_set "$_conf" "$2" "$3"
-    row "$1" vsftpd "$2" "${_cur:-unset} -> $3" "$(result $?)"
+    cc_run "ftp: set $2=$3" _kv_set "$_conf" "$2" "$3"; _kr=$?
+    [ "$CC_APPLY" = 1 ] && [ "$_kr" -eq 0 ] && FTP_CHANGED=1
+    row "$1" vsftpd "$2" "${_cur:-unset} -> $3" "$(result "$_kr")"
 }
+
+# ftp_anon -> anonymous login off, the way each daemon wants it.
+ftp_anon() {
+    case "$FTP_DAEMON" in
+        vsftpd) do_ftp_kv ftp-anon anonymous_enable NO ;;
+        proftpd)
+            if grep -Eiq '^[[:space:]]*<Anonymous' "$(P "$FTP_CONF")" 2>/dev/null; then
+                row ftp-anon proftpd "<Anonymous> block in $FTP_CONF" "remove or comment out the whole block, then restart proftpd" "check by hand"
+            else row ftp-anon proftpd "$FTP_CONF" "no <Anonymous> block" "already ok"; fi ;;
+        pure-ftpd)
+            # Debian layout: one file per setting.
+            _pd=$(P /etc/pure-ftpd/conf)
+            if [ ! -d "$_pd" ]; then row ftp-anon pure-ftpd "anonymous login" "set NoAnonymous yes in the pure-ftpd config" "check by hand"
+            elif [ "$(tr -d ' \r\n' <"$_pd/NoAnonymous" 2>/dev/null | tr 'A-Z' 'a-z')" = yes ]; then row ftp-anon pure-ftpd NoAnonymous "already yes" "already ok"
+            else
+                _pe=0; [ -f "$_pd/NoAnonymous" ] && _pe=1
+                ensure_backup /etc/pure-ftpd/conf/NoAnonymous || { row ftp-anon pure-ftpd NoAnonymous "backup failed" failed; return 0; }
+                cc_run "ftp: NoAnonymous yes" _write_line "$_pd/NoAnonymous" yes; _kr=$?
+                [ "$CC_APPLY" = 1 ] && [ "$_pe" = 0 ] && cc_undo_add "remove NoAnonymous (created by SV-30)" "rm -f $(cc_shquote "$_pd/NoAnonymous")"
+                [ "$CC_APPLY" = 1 ] && [ "$_kr" -eq 0 ] && FTP_CHANGED=1
+                row ftp-anon pure-ftpd NoAnonymous "-> yes" "$(result "$_kr")"
+            fi ;;
+    esac
+}
+_write_line() { printf '%s\n' "$2" >"$1"; }
 
 do_action() {
     case "$1" in
-        ftp-anon)   do_ftp_kv ftp-anon anonymous_enable NO ;;
+        ftp-anon)   ftp_anon ;;
+        ftp-logging)
+            do_ftp_kv ftp-logging xferlog_enable YES
+            do_ftp_kv ftp-logging ftpd_banner "FTP server" ;;
         ftp-chroot)
             do_ftp_kv ftp-chroot chroot_local_user YES
-            do_ftp_kv ftp-chroot allow_writeable_chroot YES
-            # Live: make sure FTP still answers; undo both keys if it broke.
-            if [ -z "$R" ] && [ "$CC_APPLY" = 1 ] && [ "$FTP_DAEMON" = vsftpd ]; then svc_recheck "$FTP_SVC" ftp-chroot; fi ;;
+            do_ftp_kv ftp-chroot allow_writeable_chroot YES ;;
         ftp-accounts)
-            _fu=$(P /etc/ftpusers)
+            # RHEL-family vsftpd reads /etc/vsftpd/ftpusers; everything else /etc/ftpusers.
+            _fun=/etc/ftpusers; [ -f "$(P /etc/vsftpd/ftpusers)" ] && _fun=/etc/vsftpd/ftpusers
+            _fu=$(P "$_fun")
             _fu_existed=0; [ -f "$_fu" ] && _fu_existed=1
             _need=""
             for _n in root daemon bin sys sync games man lp mail news uucp proxy www-data backup list irc gnats nobody; do
                 cut -d: -f1 "$(P /etc/passwd)" 2>/dev/null | grep -qx "$_n" || [ "$_n" = root ] || continue
                 grep -qx "$_n" "$_fu" 2>/dev/null || _need="$_need $_n"
             done
-            if [ -z "$_need" ]; then row ftp-accounts ftpusers /etc/ftpusers "root and system accounts already denied" "already ok"
+            if [ -z "$_need" ]; then row ftp-accounts ftpusers "$_fun" "root and system accounts already denied" "already ok"
             else
-                ensure_backup /etc/ftpusers || { row ftp-accounts ftpusers /etc/ftpusers "backup failed" failed; return 0; }
+                ensure_backup "$_fun" || { row ftp-accounts ftpusers "$_fun" "backup failed" failed; return 0; }
                 # shellcheck disable=SC2086
-                cc_run "ftp: deny accounts in /etc/ftpusers" _ftpusers_add "$_fu" $_need
+                cc_run "ftp: deny accounts in $_fun" _ftpusers_add "$_fu" $_need; _kr=$?
                 # If the file did not exist, back it out by removing it (a
                 # backup only exists when the file was already there).
-                [ "$CC_APPLY" = 1 ] && [ "$_fu_existed" = 0 ] && cc_undo_add "remove /etc/ftpusers (created by SV-30)" "rm -f $(cc_shquote "$_fu")"
-                row ftp-accounts ftpusers /etc/ftpusers "deny:$_need" "$(result $?)"
+                [ "$CC_APPLY" = 1 ] && [ "$_fu_existed" = 0 ] && cc_undo_add "remove $_fun (created by SV-30)" "rm -f $(cc_shquote "$_fu")"
+                row ftp-accounts ftpusers "$_fun" "deny:$_need" "$(result "$_kr")"
             fi ;;
         ftp-perms)
             _conf=$(P "$FTP_CONF"); [ -f "$_conf" ] || { row ftp-perms "$FTP_CONF" "" "no config file" "already ok"; return 0; }
             _m=$(mode_of "$_conf")
             if [ "$_m" = 0600 ] || [ "$_m" = 0640 ]; then row ftp-perms "$FTP_CONF" mode "$_m" "already ok"
             else
-                cc_run "ftp: chmod 600 $FTP_CONF" _chmod 600 "$_conf"
+                cc_run "ftp: chmod 600 $FTP_CONF" _chmod 600 "$_conf"; _kr=$?
                 [ "$CC_APPLY" = 1 ] && cc_undo_add "restore mode of $FTP_CONF" "chmod $_m $(cc_shquote "$_conf")"
-                row ftp-perms "$FTP_CONF" mode "$_m -> 0600" "$(result $?)"
+                row ftp-perms "$FTP_CONF" mode "$_m -> 0600" "$(result "$_kr")"
             fi ;;
         ftp-tls)
             row ftp-tls "$FTP_DAEMON" "require FTPS/TLS" "add ssl_enable=YES + force_local_*_ssl=YES and a cert" "check by hand" ;;
@@ -467,7 +523,9 @@ first_present() {
 svc_disable() {
     _sd=$1; _act=$2
     if [ -n "$R" ]; then row "$_act" "$_sd" "service" "only reported under --root" "skipped (--root)"; return 0; fi
-    if ! cc_guard service "$_sd"; then row "$_act" "$_sd" "service" "scored/excluded" refused; return 0; fi
+    if [ "$FORCE_SCORED" = 1 ]; then
+        cc_is_protected service "$_sd" && cc_warn "$_sd is on the protected list; disabling it anyway (--force-scored)"
+    elif ! cc_guard service "$_sd"; then row "$_act" "$_sd" "service" "on the protected list (scored)" refused; return 0; fi
     _st=$(svc_state "$_sd")
     if [ "$_st" = missing ]; then row "$_act" "$_sd" service "not installed" "already ok"; return 0; fi
     if [ "$_st" = stopped ] && ! _svc_enabled "$_sd"; then row "$_act" "$_sd" service "already stopped and disabled" "already ok"; return 0; fi
@@ -492,24 +550,42 @@ _svc_on_cmd() {
     esac
 }
 
-# svc_recheck NAME ACTION -> after a service-level change, confirm the service
-#   still runs/listens; if not, restore the config backup and report failed.
-svc_recheck() {
-    [ "$CC_APPLY" = 1 ] || return 0
-    _rn=$1; _ra=$2
-    [ "$(svc_state "$_rn")" = running ] || { row "$_ra" "$_rn" "recheck" "service was not running; not restarted" "check by hand"; return 0; }
-    cc_run_quiet "reload $_rn after $_ra" _svc_reload "$_rn"; sleep 1
-    if [ "$(svc_state "$_rn")" = running ]; then
-        row "$_ra" "$_rn" "recheck" "service still running after the change" "already ok"
-    else
-        cc_err "$_rn stopped after $_ra - putting the config back"
-        # Restore the FTP config from its own backup (CC_LAST_BACKUP may point
-        # at a different file backed up later in this run).
-        _rb="$CC_BACKUP_DIR$(cc_abspath "$(P "$FTP_CONF")")"
-        [ -f "$_rb" ] && cp "$_rb" "$(P "$FTP_CONF")" 2>>"$CC_LOG"
-        _svc_reload "$_rn" >>"$CC_LOG" 2>&1
-        row "$_ra" "$_rn" "recheck" "service broke; the change was undone" failed
+# ftp_restart_check -> the FTP daemon only reads its config when it starts.
+#   After config changes on a live box: restart it, make sure it is running
+#   (and listening again, if it was), and if not put the config back and
+#   restart once more.  Called once, after all FTP actions.
+ftp_restart_check() {
+    [ "$CC_APPLY" = 1 ] && [ -z "$R" ] && [ "$FTP_CHANGED" = 1 ] || return 0
+    header "FTP restart check"
+    if [ "$FTP_WAS" != running ]; then
+        row ftp-restart "$FTP_SVC" "restart" "$FTP_SVC was not running, so it was not started; the new config applies when it starts" "check by hand"; return 0
     fi
+    cc_run_quiet "restart $FTP_SVC" _svc_reload "$FTP_SVC"; sleep 1
+    _ok=1
+    [ "$(svc_state "$FTP_SVC")" = running ] || _ok=0
+    [ "$_ok" = 1 ] && [ "$FTP_LISTEN" = 1 ] && ! ftp_listening && { sleep 2; ftp_listening || _ok=0; }
+    if [ "$_ok" = 1 ]; then
+        cc_show "$C_GRN" "  [+] $FTP_SVC restarted and running: the changes are live"
+        cc_csv_row "$CSV" ftp-restart "$FTP_SVC" restart "running after the change" changed
+        return 0
+    fi
+    cc_err "$FTP_SVC did not come back after the change - putting the config back"
+    _rb="$CC_BACKUP_DIR$(cc_abspath "$(P "$FTP_CONF")")"
+    [ -f "$_rb" ] && cp -p "$_rb" "$(P "$FTP_CONF")" 2>>"$CC_LOG"
+    _svc_reload "$FTP_SVC" >>"$CC_LOG" 2>&1; sleep 1
+    row ftp-restart "$FTP_SVC" "restart" "service broke with the new config; the config was put back and it is $(svc_state "$FTP_SVC") again" failed
+}
+ftp_listening() {
+    if cc_have ss; then ss -ltn 2>/dev/null | grep -Eq '[:.]21[[:space:]]'
+    elif cc_have netstat; then netstat -ltn 2>/dev/null | grep -Eq '[:.]21[[:space:]]'
+    else return 0; fi
+}
+_svc_reload_cmd() {
+    case "$CC_INIT" in
+        systemd) printf 'systemctl restart %s' "$1" ;;
+        openrc)  printf 'rc-service %s restart' "$1" ;;
+        *)       printf 'service %s restart' "$1" ;;
+    esac
 }
 _svc_reload() {
     case "$CC_INIT" in
@@ -571,6 +647,7 @@ else
         CSV=$(cc_csv_new changes "action,service,item,detail,status")
         header "APPLYING"
         run_all
+        ftp_restart_check
         cc_csv_pretty "$CSV" "$CC_RUN_DIR/changes.txt" 90
     else
         cc_show "$C_GRY" "Not applied. The plan is in $CC_RUN_DIR/plan.txt"

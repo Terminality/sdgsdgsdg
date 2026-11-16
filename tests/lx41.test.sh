@@ -108,6 +108,112 @@ r=$(run --out "$O" --state "$T_TMP/state5" --root "$R" --from-start --no-color 2
 t_has "$r" "auditd is not logging commands" "says auditd is off"
 t_has "$r" "--setup-auditd" "and how to turn it on"
 
+# ---- review additions ---------------------------------------------------------
+t_start "who really ran it (auid), daemons, and this script's own helpers"
+SR="$T_TMP/statereal"; mkdir -p "$SR"
+NONE="(none)"   # what auditd writes for "no terminal"
+printf 'postfix:x:105:110::/var/spool/postfix:/usr/sbin/nologin\n' >>"$R/etc/passwd"
+cat >"$AUDIT" <<EOF2
+type=SYSCALL msg=audit(1731631200.1:500): arch=c000003e syscall=59 success=yes exit=0 ppid=10 pid=11 auid=1001 uid=0 gid=0 euid=0 tty=pts1 ses=3 comm="cat" exe="/usr/bin/cat" key="ccdc_cmd"
+type=EXECVE msg=audit(1731631200.1:500): argc=2 a0="cat" a1="notes.txt"
+type=CWD msg=audit(1731631200.1:500): cwd="/root"
+type=SYSCALL msg=audit(1731631200.2:501): arch=c000003e syscall=59 success=yes exit=0 ppid=1 pid=12 auid=4294967295 uid=105 gid=110 tty=${NONE} ses=4294967295 comm="pickup" exe="/usr/lib/postfix/pickup" key="ccdc_cmd"
+type=EXECVE msg=audit(1731631200.2:501): argc=1 a0="pickup"
+type=CWD msg=audit(1731631200.2:501): cwd="/var/spool/postfix"
+type=SYSCALL msg=audit(1731631200.3:502): arch=c000003e syscall=59 success=yes exit=0 ppid=20 pid=21 auid=1000 uid=0 gid=0 tty=pts0 ses=1 comm="awk" exe="/usr/bin/awk" key="ccdc_cmd"
+type=EXECVE msg=audit(1731631200.3:502): argc=2 a0="awk" a1="-f"
+type=CWD msg=audit(1731631200.3:502): cwd="$SR"
+EOF2
+r=$(run --out "$O" --state "$SR" --root "$R" --from-start --no-color 2>&1)
+t_ok "root command from a non-admin login is attributed to that login" grep -q 'MED  commands bob as root .* command by a non-admin account: cat notes.txt' "$SR/alerts.log"
+t_ok "commands.log shows the login and who it ran as" grep -q 'bob(as root) pts1 /root  cat notes.txt' "$SR/commands.log"
+t_ok "the event time comes from the audit record" grep -q '^2024-11-15T00:40:00Z bob' "$SR/commands.log"
+t_ok "a daemon account with no terminal is logged" grep -q 'postfix .* pickup' "$SR/commands.log"
+t_fail "but not alerted" grep -q 'postfix' "$SR/alerts.log"
+t_fail "commands run from the state folder (this script) are left out" grep -q 'awk -f' "$SR/commands.log"
+
+t_start "repeats are held back"
+cat >>"$AUDIT" <<'EOF2'
+type=SYSCALL msg=audit(1731631300.1:510): arch=c000003e syscall=59 success=yes exit=0 ppid=10 pid=31 auid=1001 uid=0 gid=0 tty=pts1 comm="cat" exe="/usr/bin/cat" key="ccdc_cmd"
+type=EXECVE msg=audit(1731631300.1:510): argc=2 a0="cat" a1="notes.txt"
+type=CWD msg=audit(1731631300.1:510): cwd="/root"
+EOF2
+r=$(run --out "$O" --state "$SR" --root "$R" --no-color 2>&1)
+t_has "$r" "1 repeat(s) not shown" "the same alert again is counted, not shown"
+t_eq "$(grep -c 'cat notes.txt' "$SR/alerts.log")" 1 "and not written to alerts.log twice"
+t_eq "$(grep -c 'cat notes.txt' "$SR/commands.log")" 2 "but the command is logged both times"
+cat >>"$AUDIT" <<'EOF2'
+type=SYSCALL msg=audit(1731631400.1:520): arch=c000003e syscall=59 success=yes exit=0 ppid=10 pid=41 auid=1001 uid=0 gid=0 tty=pts1 comm="cat" exe="/usr/bin/cat" key="ccdc_cmd"
+type=EXECVE msg=audit(1731631400.1:520): argc=2 a0="cat" a1="notes.txt"
+type=CWD msg=audit(1731631400.1:520): cwd="/root"
+EOF2
+run --out "$O" --state "$SR" --root "$R" --no-color --repeat-after 0 >/dev/null 2>&1
+t_eq "$(grep -c 'cat notes.txt' "$SR/alerts.log")" 2 "--repeat-after 0 shows every repeat"
+
+t_start "auth log: denied sudo, account changes, a guessed password"
+SA="$T_TMP/stateauth"
+cat >"$AUTH" <<'EOF2'
+Nov 15 01:00:01 web01 sudo:      bob : user NOT in sudoers ; TTY=pts/1 ; PWD=/home/bob ; USER=root ; COMMAND=/bin/ls /root
+Nov 15 01:00:02 web01 useradd[900]: new user: name=evil, UID=0, GID=0, home=/home/evil, shell=/bin/bash, from=/dev/pts/1
+Nov 15 01:00:03 web01 usermod[901]: add 'bob' to group 'sudo'
+Nov 15 01:00:04 web01 passwd[902]: pam_unix(passwd:chauthtok): password changed for alice
+Nov 15 01:00:05 web01 sudo[903]:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/id
+Nov 15 01:00:06 web01 su: (to root) bob on pts/1
+Nov 15 01:01:01 web01 sshd[911]: Failed password for alice from 10.7.7.7 port 1 ssh2
+Nov 15 01:01:02 web01 sshd[912]: Failed password for alice from 10.7.7.7 port 2 ssh2
+Nov 15 01:01:03 web01 sshd[913]: Failed password for alice from 10.7.7.7 port 3 ssh2
+Nov 15 01:01:04 web01 sshd[914]: Failed password for alice from 10.7.7.7 port 4 ssh2
+Nov 15 01:01:05 web01 sshd[915]: Failed password for alice from 10.7.7.7 port 5 ssh2
+Nov 15 01:01:06 web01 sshd[916]: Failed password for alice from 10.7.7.7 port 6 ssh2
+Nov 15 01:01:07 web01 sshd[917]: Accepted password for alice from 10.7.7.7 port 7 ssh2
+EOF2
+r=$(run --out "$O" --state "$SA" --root "$R" --from-start --no-color 2>&1)
+A3="$SA/alerts.log"
+t_ok "sudo by an account not in sudoers is HIGH, not logged as run" grep -q 'HIGH priv     bob .* tried sudo but is not allowed: /bin/ls /root' "$A3"
+t_ok "a new UID 0 account is HIGH" grep -q 'HIGH accounts evil .* new account created with UID 0' "$A3"
+t_ok "added to the sudo group is HIGH" grep -q 'HIGH accounts bob .* added to group sudo' "$A3"
+t_ok "a password change is flagged" grep -q 'MED  accounts alice .* password changed' "$A3"
+t_ok "sudo with a pid in the log line is read" grep -q 'SUDO alice: /usr/bin/id' "$SA/priv.log"
+t_ok "su to root by a non-admin is HIGH" grep -q 'HIGH priv     bob .* su to root by a non-admin account' "$A3"
+t_ok "a login that works after many failures is HIGH" grep -q 'HIGH logins   alice@10.7.7.7 .* login SUCCEEDED after 6 failed logins' "$A3"
+t_ok "the log keeps the event's own time" grep -q '^Nov 15 01:01:07 LOGIN alice from 10.7.7.7 (password)' "$SA/logins.log"
+t_has "$r" "HIGH" "the pass line counts the alerts" && t_hasnt "$r" "alerts: 0 HIGH" "including the brute force"
+
+t_start "slow brute force adds up across passes"
+SB="$T_TMP/stateslow"; : >"$AUTH"
+run --out "$O" --state "$SB" --root "$R" --from-start --no-color >/dev/null 2>&1
+_i=0
+while [ "$_i" -lt 5 ]; do
+    _i=$((_i + 1))
+    for _j in 1 2 3 4; do printf 'Nov 15 02:0%s:0%s web01 sshd[1]: Failed password for root from 10.6.6.6 port 1 ssh2\n' "$_i" "$_j" >>"$AUTH"; done
+    run --out "$O" --state "$SB" --root "$R" --no-color >/dev/null 2>&1
+done
+t_ok "20 failures over several passes is HIGH" grep -q 'HIGH logins   10.6.6.6 .* 20 failed logins so far from this address (slow brute force)' "$SB/alerts.log"
+
+t_start "an ongoing brute force is one alert, not one per check"
+SC="$T_TMP/statebf2"; : >"$AUTH"
+run --out "$O" --state "$SC" --root "$R" --from-start --no-color >/dev/null 2>&1
+for _n in 6 7; do
+    _j=0; while [ "$_j" -lt "$_n" ]; do _j=$((_j + 1)); printf 'Nov 15 02:30:0%s web01 sshd[1]: Failed password for root from 10.3.3.3 port 1 ssh2\n' "$_j" >>"$AUTH"; done
+    run --out "$O" --state "$SC" --root "$R" --no-color >/dev/null 2>&1
+done
+t_eq "$(grep -c '10.3.3.3 .* failed logins from this address' "$SC/alerts.log")" 1 "the second burst from the same address is held back"
+
+t_start "web: refused probes are counted, encoded requests are decoded"
+SW="$T_TMP/statew3"; mkdir -p "$R/var/log/apache2"
+cat >"$R/var/log/apache2/access.log" <<'EOF2'
+10.5.5.5 - - [15/Nov/2026:03:00:01 -0500] "GET /c99.php HTTP/1.1" 404 10 "-" "scan"
+10.5.5.5 - - [15/Nov/2026:03:00:02 -0500] "GET /shell.php HTTP/1.1" 404 10 "-" "scan"
+10.5.5.5 - - [15/Nov/2026:03:00:03 -0500] "GET /r57.php HTTP/1.1" 403 10 "-" "scan"
+10.4.4.4 - - [15/Nov/2026:03:00:04 -0500] "GET /view.php?f=x%3Bid HTTP/1.1" 200 10 "-" "curl"
+EOF2
+r=$(run --out "$O" --state "$SW" --root "$R" --from-start --no-color 2>&1)
+t_ok "three refused probes from one address make one alert" grep -q 'MED  web      10.5.5.5 .* 3 request(s) probing for web shells or injection, all refused' "$SW/alerts.log"
+t_eq "$(grep -c '10.5.5.5' "$SW/alerts.log")" 1 "not three"
+t_ok "a URL-encoded injection that was answered is HIGH" grep -q 'HIGH web      10.4.4.4 GET /view.php .* command-injection' "$SW/alerts.log"
+t_ok "web.log keeps the request's own time" grep -q '^15/Nov/2026:03:00:04 -0500 10.4.4.4' "$SW/web.log"
+
+
 # ---- web shell: web-user commands, process origin, access log ---------------
 mkdir -p "$R/var/www/html/uploads" "$R/var/log/apache2"
 t_start "web shell: command by the web-server user, and process origin"
