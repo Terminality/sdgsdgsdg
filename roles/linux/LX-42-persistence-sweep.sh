@@ -306,19 +306,22 @@ NFOUND=0; AREA_SHOWN=0; AREA_HID=0; N_H=0; N_M=0; N_L=0
 : >"$W/findings"
 f() {
     ignored "$3" && return 0
-    _fd=$(printf '%s' "$4" | tr '|\n\r\t' '/   ' | cut -c1-400)
+    # The detail keeps its "|" on screen and in the CSV; in the internal
+    # "|"-separated list it is stored as \001 and turned back when read.
+    _fs=$(printf '%s' "$4" | tr '\n\r\t' '   ' | cut -c1-400)
+    _fd=$(printf '%s' "$_fs" | tr '|' '\001')
     _fa=$(printf '%s' "${6:-}" | tr '\n\r' '  ')
     NFOUND=$((NFOUND + 1))
     printf '%s|%s|%s|%s|%s|%s|%s\n' "$NFOUND" "$1" "$2" "$3" "$_fd" "${5:-none}" "$_fa" >>"$W/findings"
-    cc_flag "$1" "$2" "$3" "$_fd"
+    cc_flag "$1" "$2" "$3" "$_fs"
     case "$1" in HIGH) N_H=$((N_H + 1)) ;; MED) N_M=$((N_M + 1)) ;; *) N_L=$((N_L + 1)) ;; esac
     [ "$1" = LOW ] && [ "$SHOWLOW" != 1 ] && return 0
     if [ "$AREA_SHOWN" -ge "$MAXSHOW" ]; then AREA_HID=$((AREA_HID + 1)); return 0; fi
     AREA_SHOWN=$((AREA_SHOWN + 1))
     case "$1" in
-        HIGH) cc_show "$C_RED" "  [!] #$NFOUND $3" ; cc_show "$C_RED" "        $_fd" ;;
-        MED)  cc_show "$C_YEL" "  [*] #$NFOUND $3" ; cc_show "$C_YEL" "        $_fd" ;;
-        *)    cc_show "$C_GRY" "  [-] #$NFOUND $3: $_fd" ;;
+        HIGH) cc_show "$C_RED" "  [!] #$NFOUND $3" ; cc_show "$C_RED" "        $_fs" ;;
+        MED)  cc_show "$C_YEL" "  [*] #$NFOUND $3" ; cc_show "$C_YEL" "        $_fs" ;;
+        *)    cc_show "$C_GRY" "  [-] #$NFOUND $3: $_fs" ;;
     esac
     return 0
 }
@@ -334,7 +337,7 @@ area_end() {
     if [ "$_h" -eq 0 ] && [ "$_m" -eq 0 ]; then cc_show "$C_GRN" "  [ok] nothing unusual$([ "$_l" -gt 0 ] && echo " ($_l low-priority note(s) in findings.txt)")"; fi
     printf '%s|%s|%s|%s\n' "$AREA_NAME" "$_h" "$_m" "$_l" >>"$W/areas"
 }
-: >"$W/areas"
+: >"$W/areas"; : >"$W/once"
 
 cc_show "$C_CYN" "LX-42 Persistence sweep | host $CC_HOST | results in $CC_RUN_DIR"
 cc_show "$C_CYN" "Areas:$( [ "$AREAS" = "$ALL_AREAS" ] && echo ' all (full scan)' || echo " $AREAS") | recent = last $SINCE day(s) | package check: $([ "$PKGCHECK" = 1 ] && echo yes || echo no)"
@@ -561,8 +564,11 @@ a_boot() {
 
 # ---- ssh ----------------------------------------------------------------------
 # keys_file LOGICAL USER UID SHELL -> every key in one authorized_keys file.
+# once KEY -> true the first time KEY is seen (two accounts can share a home).
+once() { grep -qxF "$1" "$W/once" 2>/dev/null && return 1; printf '%s\n' "$1" >>"$W/once"; return 0; }
 keys_file() {
     _kf=$(P "$1"); [ -f "$_kf" ] || return 0
+    once "keys:$1" || return 0
     _krec=0; recent "$_kf" && _krec=1
     lines "$_kf" >"$W/kl"
     while IFS= read -r _l; do
@@ -619,6 +625,7 @@ a_ssh() {
     [ -f "$(P /etc/ssh/sshrc)" ] && f HIGH ssh /etc/ssh/sshrc "runs for every SSH login on the box: $(lines "$(P /etc/ssh/sshrc)" | head -n 1 | cut -c1-160)" file
     while IFS='|' read -r _n _uid _gid _home _sh; do
         [ -n "$_home" ] && [ -d "$(P "$_home/.ssh")" ] || continue
+        once "sshhome:$_home" || continue
         keys_file "$_home/.ssh/authorized_keys" "$_n" "$_uid" "$_sh"
         if [ -f "$(P "$_home/.ssh/authorized_keys2")" ]; then
             f MED ssh "$_home/.ssh/authorized_keys2" "second key file for $_n (old name, still honoured by some setups; easy to overlook)" none
@@ -637,6 +644,7 @@ a_ssh() {
 # rc_file LOGICAL WHO -> line-by-line check of one startup file.
 rc_file() {
     _rf=$(P "$1"); [ -f "$_rf" ] || return 0
+    once "rc:$1" || return 0
     lines "$_rf" | awk -v who="$2" '
         function out(sev, why) { print sev "\t" why "\t" $0; done = 1 }    # awk: posix-ok
         {
@@ -1079,6 +1087,7 @@ a_misc() {
     fi
     while IFS='|' read -r _n _uid _gid _home _sh; do
         [ -n "$_home" ] || continue
+        once "mailhome:$_home" || continue
         if [ -f "$(P "$_home/.forward")" ] && grep -q '|' "$(P "$_home/.forward")" 2>/dev/null; then
             f HIGH misc "$_home/.forward" "mail to $_n runs a program: $(grep -m 1 '|' "$(P "$_home/.forward")" | cut -c1-160)" file
         fi
@@ -1119,7 +1128,7 @@ done
 FCSV=$(cc_csv_new findings "number,severity,area,item,detail,can_remove")
 for _sv in HIGH MED LOW; do
     awk -F'|' -v s="$_sv" '$2 == s' "$W/findings" >"$W/fs"
-    while IFS='|' read -r _n _s _a _it _d _fk _fa; do cc_csv_row "$FCSV" "$_n" "$_s" "$_a" "$_it" "$_d" "$([ "$_fk" = none ] && echo no || echo "yes ($_fk)")"; done <"$W/fs"
+    while IFS='|' read -r _n _s _a _it _d _fk _fa; do cc_csv_row "$FCSV" "$_n" "$_s" "$_a" "$_it" "$(printf '%s' "$_d" | tr '\001' '|')" "$([ "$_fk" = none ] && echo no || echo "yes ($_fk)")"; done <"$W/fs"
 done
 cc_csv_pretty "$FCSV" "$CC_RUN_DIR/findings.txt" 110
 # shellcheck disable=SC2034  # read by cc_flag_report
@@ -1147,6 +1156,7 @@ else
     cc_show "" "  $NFIX finding(s) can be removed. Removed files go to $CC_RUN_DIR/quarantine/ (nothing is deleted)."
     awk -F'|' '($2 == "HIGH" || $2 == "MED") && $6 != "none"' "$W/findings" | sort -t'|' -k2,2 -k1,1n >"$W/fixlist"
     while IFS='|' read -r _n _s _a _it _d _fk _fa; do
+        _d=$(printf '%s' "$_d" | tr '\001' '|')
         _def=N; [ "$_s" = HIGH ] && [ "$YESHIGH" = 1 ] && _def=Y
         [ "$_fk" = pid ] && _def=N
         case "$_fk" in
