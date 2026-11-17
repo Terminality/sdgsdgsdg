@@ -39,6 +39,7 @@ Contents:
 29. Windows firewall, `roles/windows-ad/WN-25-firewall.ps1` (WN-25)
 30. Linux session & command logging, `roles/linux/LX-41-session-log.sh` (LX-41)
 31. Service hardening (FTP + legacy), `roles/applications/SV-30-service-hardening.sh` (SV-30)
+32. Linux persistence sweep, `roles/linux/LX-42-persistence-sweep.sh` (LX-42)
 
 ---
 
@@ -1133,76 +1134,70 @@ In a numbered folder: `<out>/passwords-1`, `passwords-2`, ...
 
 ## 17. SSH hardening and key cleanup, `roles/linux/LX-22-ssh-hardening.sh` (LX-22)
 
-A changed password does not stop a red team that planted an SSH key. This lists every authorized key on the box, removes the ones not on the team's list, puts safe settings at the top of `sshd_config`, and reloads sshd without dropping open sessions. If sshd stops listening after the reload, it puts the old config back by itself.
-
-Password logins are left on: scoring engines usually log in with passwords.
+Shows every SSH key on the box and every important sshd setting, asks key by key whether to keep it and setting by setting whether to turn it on or off, then installs the result with a revert timer. A changed password does not stop a red team that planted a key; this does. Keep a second root session open while applying.
 
 ### How to run it
 
 ```sh
-sudo sh LX-22-ssh-hardening.sh --out /root/ccdc-out                                   # dry run: lists every key
-sudo sh LX-22-ssh-hardening.sh --out /root/ccdc-out --apply --protected /root/protected.csv
-sudo sh LX-22-ssh-hardening.sh --out /root/ccdc-out --apply --protected /root/protected.csv --allow-keys /root/team.pub
+sudo sh LX-22-ssh-hardening.sh                        # look and plan: asks, changes nothing
+sudo sh LX-22-ssh-hardening.sh --apply --protected /root/protected.csv
+sudo sh LX-22-ssh-hardening.sh --apply --batch        # recommended answers, no questions
+sudo sh LX-22-ssh-hardening.sh --apply --allow-keys team.pub   # keep only the team's keys
 ```
 
-Keep a second root session open while applying, as with any SSH change.
+### What you see
 
-| Option | What it does |
-| --- | --- |
-| `--allow-keys FILE` | The team's public keys (`authorized_keys` format) or fingerprints (`SHA256:...`). Every other key is removed from every account |
-| `--remove-all-keys` | Remove every authorized key |
-| `--no-root-login` | `PermitRootLogin no`. The default is `prohibit-password`: root by key only. The default is NOT applied when root has a password but no SSH key that stays (root could no longer log in by SSH at all) or when root is on the protected list; root login is then left as it is and the summary says so |
-| `--root-key-only` | `PermitRootLogin prohibit-password` even if root has no key |
-| `--keep-root-login` | Leave `PermitRootLogin` alone |
-| `--no-forwarding` | Also `AllowTcpForwarding no`, `PermitTunnel no`, `GatewayPorts no` (stops pivoting through the box) |
-| `--allow-users LIST` | `AllowUsers`: only these accounts may log in by SSH. Accounts on the protected list are added automatically. Easy to lock yourself out with |
-| `--banner FILE` | Shown before login |
-| `--no-reload` | Install the config but do not reload sshd |
+1. **SSH now**: sshd version and ports, root login and password login as they are now, Match blocks that loosen things, extra key sources, extra sshd processes, `~/.ssh/rc` files.
+2. **Keys**: every key of every account, numbered, with fingerprint, comment and file. Red `[!]` = looks planted (forced command, a service account, an account with no shell); yellow `[*]` = check it (root's keys, a file changed in the last 7 days, a key kept outside the home folder).
+3. **Questions**.
+4. **The plan**: each setting `before -> after`, the keys to remove; the new config is tested with `sshd -t`.
+5. **Apply**, the reload check, then keep-or-revert.
 
-Without `--allow-keys` or `--remove-all-keys`, keys are only listed.
+### The questions
 
-### What it does
+| Question | Default | Flag |
+| --- | --- | --- |
+| Keep key #N? (one per key) | yes; **no** for keys that look planted | `--allow-keys FILE`, `--remove-all-keys`, `--keep-all-keys` |
+| Move `~/.ssh/rc` to quarantine? (runs at every login) | yes | |
+| Root login: no, key-only or leave? | key-only if root keeps a key; otherwise **leave**, so root is never locked out | `--root-login` |
+| Turn off empty-password logins? | yes | `--set emptypw=no` to skip |
+| Turn off host-based / .rhosts logins? | yes | `rhosts` |
+| Stop users setting environment at login? | yes | `userenv` |
+| Turn off X11 forwarding? | yes | `x11` |
+| Turn off agent forwarding? | yes | `agent` |
+| Limit tries per connection to 4? | yes | `maxauth` |
+| Drop connections not logged in after 30s? | yes | `grace` |
+| Drop dead idle sessions? | yes | `alive` |
+| Log which key logged in (LogLevel VERBOSE)? | yes | `loglevel` |
+| Turn OFF password logins? | **no** (scoring logs in with passwords) | `--no-passwords` |
+| Turn off TCP forwarding and tunnels? | **no** | `--no-forwarding` |
+| Modern ciphers only? | **no** (old clients may fail) | `--strong-crypto` |
+| Only these accounts may log in | none | `--allow-users` |
+| Apply these changes now? | yes | `--batch` |
 
-| Part | Detail |
-| --- | --- |
-| Keys | Reads every `AuthorizedKeysFile` (from `sshd -T`) of EVERY account, including service accounts such as `www-data`, a favourite hiding place. Keys not allowed are removed; comments and allowed keys stay exactly as they were. The removed lines are saved under the quarantine folder as evidence. Accounts on the protected list keep their keys |
-| Settings | A marked block at the very top of `sshd_config` (sshd uses the first value it reads, so the block wins over the rest of the file and `sshd_config.d`): `PermitEmptyPasswords no`, `PermitRootLogin prohibit-password`, `HostbasedAuthentication no`, `IgnoreRhosts yes`, `PermitUserEnvironment no`, `X11Forwarding no`, `AllowAgentForwarding no`, `MaxAuthTries 4`, `LoginGraceTime 30`. Running it again replaces the block; it never adds a second |
-| Test, then reload | The new file is tested with `sshd -t` and installed only if it passes. sshd is reloaded (open sessions stay up), then checked: if it is no longer listening, the old config goes back and sshd is reloaded or started again |
-| Login scripts | `~/.ssh/rc` and `/etc/ssh/sshrc` run commands at every login; they are moved to quarantine |
-| Reported | `Match` blocks that loosen login settings, `AuthorizedKeysCommand` and similar, extra sshd processes on other ports or configs, keys with forced commands or environment options, `~/.ssh/environment` files, symlinked key files |
+Each question shows the current value and one line on what it does. A setting that is already right is shown as `[ok]` and not asked. `--set KEY=yes|no` answers one setting in advance.
+
+### Safety
+
+- **Block at the top.** sshd uses the first value it reads, so the marked block at the top of `sshd_config` wins over the rest of the file and `sshd_config.d`. Nothing else in the file is changed.
+- **Tested first.** The new config must pass `sshd -t` or it is not installed.
+- **Reload check.** sshd is reloaded (open sessions stay up); if it stops listening the old config is put back at once.
+- **Revert timer.** Everything is undone after `--timer` seconds (default 120) unless you confirm, after logging in from a NEW session. A revert also reloads sshd.
+- **Evidence.** Removed keys are kept in `quarantine/`; rc files are moved there, not deleted.
+- **Protected accounts** keep their keys; a protected root keeps its login.
 
 ### What it produces
 
-In `<out>/LX-22_<host>_<UTC time>/`:
-
-| File | Contents |
-| --- | --- |
-| `summary.txt` | Config status, reload result, each setting before and after, the effective values from `sshd -T`, every key and what happened to it, things to check by hand |
-| `keys.csv` | `user,file,type,fingerprint,comment,options,action` |
-| `settings.csv` | `setting,before,after,status` |
-
-`sshd_config` and every rewritten key file are backed up first; the undo log restores them.
-
-### Getting the team's keys
-
-On the admin workstation, the team's public key is usually `~/.ssh/id_ed25519.pub`. Put every teammate's public key (or its `SHA256:` fingerprint from `ssh-keygen -lf key.pub`) in one file and pass it with `--allow-keys`.
-
-### What to watch for
-
-- **Check the key list before removing.** Run once without `--allow-keys`: `keys.csv` shows every key with its comment. Fan-out tools (the team's own automation) use keys too.
-- **A scoring engine that logs in with a key** needs that account on the protected list.
-- **`Match` blocks are reported, not changed.** A red team can add `Match User x` with looser settings at the end of the file; read the report.
-- **Immutable key files.** A red team can `chattr +i` an `authorized_keys` file. Rewriting it then fails and the report says so: `lsattr` it, `chattr -i` it, run again.
+In `ssh-hardening-N/`: `output.txt`, `summary.txt`, `keys.txt`, `settings.txt`, `csv/`, `quarantine/`, `revert.sh` (after a live apply).
 
 ### Problems and fixes
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `sshd rejected the new config` (exit 5) | The existing config has an error, or this sshd is too old for a setting | Read the log for the line; fix it and run again. The config was NOT changed |
-| `sshd not found ... sshd_config NOT changed` | No sshd on PATH or in the sbin folders | Keys are still handled; check the SSH server package |
-| `FAILED: sshd stopped listening; old config restored` | sshd did not come back after the reload | The script restored the old config; check `ss -ltnp`, start sshd by hand if needed, read the log |
-| A teammate cannot log in by key any more | Their key was not on `--allow-keys` | Add it and run again, or restore the file from the undo log |
-| `could not rewrite it (immutable?)` | `chattr +i` on the key file | `chattr -i FILE` and run again |
+| `sshd -t rejected the new config` (exit 5) | A setting this sshd version does not know (often `--strong-crypto` on an old OpenSSH) | Run again without that option |
+| Scoring's SSH check fails after applying | Password logins off, `AllowUsers`, or crypto | Let the timer revert, or `revert.sh`; apply again without that answer |
+| A key file could not be rewritten | `chattr +i` | `lsattr FILE`, `chattr -i FILE`, run again |
+| Root login was left alone | root has a password and no key that stays | Give root a team key, or answer `no` once another admin account can sudo |
 
 ---
 
@@ -2188,4 +2183,67 @@ In `service-hardening-N/`: `output.txt`, `plan.txt`, `changes.txt`, `summary.txt
 - **A `service`-level change is verified by whether the service still runs** after a reload; if it stopped, that one change is put back automatically.
 - **Don't disable a scored service.** Keep `--force-scored` off and pass your scored services in the protected list — `access` actions skip anything protected.
 - **ftp-tls and snmp-default are reported, not applied** — TLS needs a cert and a new SNMP community must be coordinated, so they're yours to set.
+
+
+---
+
+## 32. Linux persistence sweep, `roles/linux/LX-42-persistence-sweep.sh` (LX-42)
+
+Finds the ways an attacker makes sure they get back in or their code keeps running, then (with `--apply`) asks finding by finding whether to remove it. Run it after the enum and the safe fixes, and again whenever the red team has been on the box.
+
+### How to run it
+
+```sh
+sudo sh LX-42-persistence-sweep.sh                    # asks what to scan, then looks
+sudo sh LX-42-persistence-sweep.sh --batch            # full scan, no questions
+sudo sh LX-42-persistence-sweep.sh --areas cron,ssh,systemd
+sudo sh LX-42-persistence-sweep.sh --apply --protected /root/protected.csv   # look, then ask what to remove
+```
+
+### The questions
+
+| Question | Default | Flag |
+| --- | --- | --- |
+| Do a full scan? | yes | `--full` |
+| (if no) Which areas? | cron systemd ssh shell accounts | `--areas a,b` |
+| Other folders to search for planted programs and web shells | none | `--scan-dir /opt` |
+| How many days back counts as recently changed? | 7 | `--since N` |
+| Compare key system programs with their packages? | yes | `--pkg-check` / `--no-pkg-check` |
+| Accounts to leave out | none | `--ignore-user` (and `--ignore-path`) |
+| (with `--apply`) Remove finding #N? one per finding | **no** (`--yes-high`: yes for HIGH) | |
+
+### What it looks at
+
+| Area | Where |
+| --- | --- |
+| cron | /etc/crontab, cron.d, cron.hourly/daily/..., every user crontab, `at` jobs |
+| systemd | units, timers, drop-in overrides, user units, generators |
+| boot | rc.local, init.d, motd / network / DHCP / sleep hook folders, udev rules, apt hooks, logrotate scripts, inetd/xinetd, desktop autostart |
+| ssh | every authorized_keys (forced commands, service accounts, accounts with no shell), sshd settings that add keys or commands, ~/.ssh/rc, /etc/ssh/sshrc |
+| shell | /etc/profile, profile.d, every user's bashrc/profile/zshrc: reverse shells, `alias sudo=...`, LD_PRELOAD, PATH tricks, history hiding |
+| preload | /etc/ld.so.preload, linker config, LD_PRELOAD in service settings and running processes |
+| accounts | extra UID 0, hashes in /etc/passwd, service accounts that can log in, sudoers (NOPASSWD ALL), docker/lxd/disk groups |
+| pam | pam_exec, pam_permit as sufficient, PAM modules no package installed, nsswitch |
+| kernel | modules loaded at boot or loaded now with no file on disk, modprobe `install` tricks, core_pattern and modprobe hooks |
+| files | programs in /tmp and /dev/shm, `...` folders, files in /dev, commands shadowed in /usr/local/bin, system programs no package installed or that do not match their package, SUID/SGID (GTFOBins), capabilities, immutable files, Python startup hooks |
+| procs | deleted programs, programs run from /tmp or memory, fake kernel-thread names, shells holding a connection |
+| web | web shell code, scripts in upload folders, recently changed scripts, `.htaccess`/php.ini tricks |
+| misc | mail aliases and `.forward` that run programs, polkit rules, a world-writable docker socket |
+
+**HIGH** = almost certainly planted or dangerous. **MED** = unusual, look at it. **LOW** = context (in `findings.txt`; `--low` shows them). "Not from a package" means the package database does not know the file; in a place only packages write to, that is the clearest sign.
+
+### Removing
+
+With `--apply` it asks about each HIGH and MED finding that can be removed. Files are **moved** to `quarantine/`, never deleted; single lines (a cron entry, a key, a line in .bashrc) are taken out after a backup; units are stopped and disabled first; SUID is taken off. All of it is undone by `revert.sh` and by the revert timer. Killing a process is asked separately (default no) and cannot be undone.
+
+### What to watch for
+
+- **Removing persistence does not remove the attacker.** Change passwords (LX-20), check the logs (LX-41) for how they got in.
+- **Hand-installed software** (in /opt, /usr/local) is "not from a package" too: it shows as MED or LOW unless something else is wrong.
+- **A kernel rootkit can hide files** from any scanner; the kernel area and the package check are the tell-tales.
+- **Without root** other accounts' files and processes cannot be read.
+
+### Outputs
+
+In `persistence-N/`: `output.txt`, `summary.txt` (counts per area, HIGH and MED list), `findings.txt` (every finding, numbered), `csv/`, `quarantine/`, `revert.sh`. No password hash is ever written.
 
