@@ -1208,45 +1208,71 @@ On the admin workstation, the team's public key is usually `~/.ssh/id_ed25519.pu
 
 ## 18. Linux firewall builder, `roles/linux/LX-25-firewall.sh` (LX-25)
 
-Drops every incoming connection the box does not need. Run it LAST of the Linux hardening, after the backup, safe fixes, passwords and SSH, and keep a second session open.
+Shows every open port on the box, says what each one is and which program is behind it, asks port by port whether to keep it or drop it, then builds a firewall that drops everything you did not keep. Run it LAST of the Linux hardening, and keep a second session open.
 
 ### How to run it
 
 ```sh
-sudo sh LX-25-firewall.sh --out /root/ccdc-out --protected /root/protected.csv                  # dry run: prints the rules
-sudo sh LX-25-firewall.sh --out /root/ccdc-out --protected /root/protected.csv --apply --admin 10.0.0.5
+sudo sh LX-25-firewall.sh                       # look and plan: asks, changes nothing
+sudo sh LX-25-firewall.sh --apply --protected /root/protected.csv    # ask, then load the rules
 # then, from a NEW ssh session, within 2 minutes:
-sudo sh /root/ccdc-out/LX-25_web01_<time>/keep-firewall.sh
-# once scoring is confirmed green, keep the rules across a reboot:
-sudo sh LX-25-firewall.sh --out /root/ccdc-out --save --apply
+sudo sh /root/ccdc-out/firewall-1/keep-firewall.sh
+# once scoring is green, keep the rules across a reboot:
+sudo sh LX-25-firewall.sh --save --apply
 ```
 
-| Option | What it does |
-| --- | --- |
-| `--allow SPEC` | Also allow `80`, `80/tcp`, `53/udp` or `8000-8100/tcp` (repeat or comma-separate) |
-| `--admin CIDR` | Allow everything from this address or network (the team's workstations). Repeat for more |
-| `--ssh-from CIDR` | SSH only from these addresses. Leave it out if the scoring engine checks SSH |
-| `--strict` | Allow only scored ports, `--allow`, SSH and DHCP; NOT every port that is listening |
-| `--restrict-out` | Also limit outgoing traffic to DNS, DHCP, NTP, HTTP(S), replies and the admin addresses. Stops reverse shells; can break software that calls out |
-| `--keep-ipv6` | Do not drop IPv6 |
-| `--backend nft\|iptables` | Default: nft when it works |
-| `--confirm-timeout N` | Seconds before the automatic rollback (default 120). `0` = no timer: only when you are at the console |
-| `--save` | With `--apply`: save the live ccdc rules for reboot |
-| `--remove` | With `--apply`: remove the ccdc rules |
+### What you see
 
-### What it allows
+Five sections, colour-coded (KEEP green, DROP red, CHECK yellow, local grey):
 
-| Allowed | Why |
-| --- | --- |
-| Loopback, replies to the box's own connections | Nothing works without them |
-| ICMP (ping, errors) | Scoring often pings; path MTU needs ICMP errors |
-| UDP 68 (and 546 with `--keep-ipv6`) | DHCP replies: without them a DHCP box loses its address at lease renewal |
-| SSH, on the port `sshd -T` reports | Team access (limited with `--ssh-from`) |
-| Every port on the protected list (type `port`) | Scored services, even if down right now |
-| Every port listening on a network address now | Running services keep working. Not with `--strict` |
-| Everything from `--admin` and protected hosts (type `host`) | The team and the scoring engine |
+1. **The firewall now**: which backend it will use, whether CCDC rules are already live, and whether ufw or firewalld is also running.
+2. **Open ports**: one block per listening port.
 
-Not allowed, and listed under "NOT allowed": ports listening on backdoor-style numbers (1337, 4444, 4445, 5555, 6666, 6667, 12345, 31337, 54321, 2375 Docker API), and listeners on 127.0.0.1 only (they need no rule). IPv6 is dropped except loopback.
+   ```
+   KEEP  tcp 80     HTTP            all addresses  apache2 (pid 812, runs as root)
+         command: /usr/sbin/apache2 -k start
+         what:    HTTP: the web server. Scored (web store, webmail) in past competitions.
+         advice:  a scored service in past competitions
+   DROP  tcp 4444   backdoor-style  all addresses  nc (pid 3321, runs as www-data)
+         command: nc -lvp 4444 -e /bin/sh
+         what:    Not a normal service port: this number is a favourite for backdoors ...
+         advice:  suspicious: a bare nc listener is a classic backdoor
+   ```
+
+   The command line shows the script behind an interpreter (`python3 /opt/app/server.py`). "Scored in past competitions" comes from `docs/ENVIRONMENT.md`; it is a hint, so check the team packet.
+3. **Questions** (Enter takes the default).
+4. **The plan**: what stays open, what is dropped, who is always allowed.
+5. **Apply**, then the summary.
+
+### The questions
+
+| Question | Default | Flag that answers it |
+| --- | --- | --- |
+| Your team's addresses that must always get in | none | `--admin CIDR` (repeat) |
+| Keep PORT open? (one per listening port) | see below | `--keep 80,53/udp` / `--drop 3306` |
+| Other ports to open that are not listening now | none | `--allow 8089/tcp,9000-9010/tcp` |
+| SSH only from your team's addresses? (only asked if you gave some) | no | `--ssh-from CIDR` |
+| Also limit outgoing traffic? | no | `--restrict-out` / `--no-restrict-out` |
+| Block IPv6? | yes | `--drop-ipv6` / `--keep-ipv6` |
+| Load these rules now? (with `--apply`) | yes | `--batch` |
+
+Default for each port:
+
+| Port is... | Default | Asked? |
+| --- | --- | --- |
+| SSH, DHCP client, on the protected list | keep | no |
+| Loopback only (127.0.0.1) | left alone: outsiders cannot reach it anyway | no |
+| A scored service in past competitions (22, 25, 53, 80, 143, 443, 993, 123/udp, 1433, 8000, 8089, 9997) | keep | yes |
+| A normal service, a database, FTP | keep, with a note on when to drop it | yes |
+| Unknown | keep, marked CHECK: find out what it is | yes |
+| Rarely needed (telnet, rsh, TFTP, SNMP, rpcbind, CUPS, mDNS, VNC, Webmin) | drop | yes |
+| A backdoor-style number, a bare `nc`/`socat` listener, a program running from `/tmp` or `/dev/shm`, a deleted program file | drop | yes |
+
+`--strict` turns every "keep" default into "drop" except SSH, DHCP and the protected list. Dropping a port only blocks it from outside; the program keeps running, so also look at what started it.
+
+Other options: `--backend nft|iptables`, `--confirm-timeout N` (default 120; `0` = no timer, console only), `--save` and `--remove` (with `--apply`), `--no-color`, `--batch`.
+
+Always allowed, whatever you answer: loopback, replies to the box's own connections, **ping** (every box has a ping check), DHCP replies, and everything from your team's addresses and the protected hosts (the scoring engine).
 
 ### Safety
 
@@ -1257,12 +1283,14 @@ Not allowed, and listed under "NOT allowed": ports listening on backdoor-style n
 
 ### What it produces
 
-In `<out>/LX-25_<host>_<UTC time>/`:
+In `<out>/firewall-N/` (next free number):
 
 | File | Contents |
 | --- | --- |
-| `summary.txt` | State (live, rolled back, dry run), allowed ports and why, what is not allowed, the confirm command |
-| `ports.csv` | `proto,port,allowed,reason` |
+| `output.txt` | Everything shown on screen, without colour |
+| `summary.txt` | State (live, rolled back, dry run), what is open and why, what is dropped, the confirm command |
+| `ports.txt` | Every listening port: where it is bound, program, pid, account, what it is, the decision and why, the command line |
+| `csv/ports.csv` | The same as CSV |
 | `ruleset.nft` or `ruleset.iptables.sh` | The exact rules |
 | `rollback.sh` | Removes the rules (also in the undo log) |
 | `keep-firewall.sh` | Cancels the rollback timer |
@@ -1272,8 +1300,9 @@ Dropped packets are logged with the prefix `CCDC-DROP` (`journalctl -k | grep CC
 
 ### What to watch for
 
-- **A scored service that is down right now** is not listening, so its port opens only if it is on the protected list or in `--allow`. Keep the protected list complete.
-- **Port 2024, 8000 and other unknown listeners** are opened by default because they are listening. Read the allowed list; anything you do not recognise is worth a look with the enum (SH-05) before you `--save`. `--strict` is the tight option once the protected list is right.
+- **A scored service that is down right now** is not listening, so it is not in the list. Open its port at the "other ports" question, with `--allow`, or put it on the protected list.
+- **Unknown ports are kept by default** (marked CHECK) so nothing scored breaks. Read the command line shown with each one; drop what you do not need. `--strict` is the tight option once the protected list is right.
+- **Without root** the program behind another account's port shows as `?`.
 - **Other firewalls still apply.** A port allowed here can still be blocked by ufw or firewalld rules.
 - **Fan-out:** without a terminal the script does not ask; confirm from the admin workstation with `ssh root@box sh .../keep-firewall.sh`, which is itself the "new connection" test.
 
@@ -1281,6 +1310,7 @@ Dropped packets are logged with the prefix `CCDC-DROP` (`journalctl -k | grep CC
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
+| A port shows program `?` | Not root, or a kernel service | Run with `sudo` |
 | `nft rejected the ruleset` (exit 5) | A rule this nft version does not understand | Read the log line; try `--backend iptables` |
 | Scoring went red right after applying | A scored port was not open | Wait for the timer or run `rollback.sh`; add the port to the protected list or `--allow`; apply again |
 | `too late: the rules were already rolled back` | `keep-firewall.sh` ran after the timer | Apply again and confirm sooner, or use a longer `--confirm-timeout` |

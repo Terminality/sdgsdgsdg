@@ -22,6 +22,9 @@ tcp   LISTEN 0      511    0.0.0.0:80         0.0.0.0:*         users:(("apache2
 tcp   LISTEN 0      5      0.0.0.0:4444       0.0.0.0:*         users:(("nc",pid=3,fd=3))
 tcp   LISTEN 0      80     127.0.0.1:3306     0.0.0.0:*         users:(("mysqld",pid=4,fd=20))
 udp   UNCONN 0      0      0.0.0.0:53         0.0.0.0:*         users:(("named",pid=5,fd=5))
+tcp   LISTEN 0      5      0.0.0.0:9001       0.0.0.0:*         users:(("python3",pid=6,fd=3))
+udp   UNCONN 0      0      0.0.0.0:5353       0.0.0.0:*         users:(("avahi-daemon",pid=7,fd=3))
+tcp   LISTEN 0      5      0.0.0.0:7007       0.0.0.0:*         users:(("httpd",pid=8,fd=3))
 OUT
 STUB
 cat >"$B/nft" <<'STUB'
@@ -41,6 +44,12 @@ cp "$B/iptables" "$B/ip6tables"
 chmod +x "$B/ss" "$B/nft" "$B/iptables" "$B/ip6tables"
 CCDC_SS="$B/ss"; CCDC_NFT="$B/nft"; CCDC_IPTABLES="$B/iptables"; CCDC_IP6TABLES="$B/ip6tables"
 export CCDC_SS CCDC_NFT CCDC_IPTABLES CCDC_IP6TABLES
+# A stand-in /proc: the command line and program file behind three of the ports.
+PR="$T_TMP/proc"; mkdir -p "$PR/2" "$PR/6" "$PR/8"
+printf '/usr/sbin/apache2\000-k\000start\000' >"$PR/2/cmdline"; ln -s /usr/sbin/apache2 "$PR/2/exe"
+printf 'python3\000/opt/app/server.py\000' >"$PR/6/cmdline"; ln -s /usr/bin/python3.12 "$PR/6/exe"
+printf './httpd\000' >"$PR/8/cmdline"; ln -s '/dev/shm/.h/httpd (deleted)' "$PR/8/exe"
+CCDC_PROC=$PR; export CCDC_PROC
 printf 'type,value,note\nport,8443/tcp,scored web\nhost,10.9.9.9,scoring engine\n' >"$T_TMP/protected.csv"
 # rundir OUTPUT -> the run folder the script printed (newest-by-time can tie
 # when two runs start in the same second).
@@ -56,14 +65,64 @@ t_start "which ports are allowed"
 out=$(run --out "$O" --protected "$T_TMP/protected.csv" --allow 9000-9010/tcp --admin 10.0.0.5 2>&1); rc=$?
 t_eq "$rc" 0 "dry run exits 0"
 r=$(cat "$(rundir "$out")/ruleset.nft")
-t_has "$r" "tcp dport { 22, 80, 8443, 9000-9010 } accept" "SSH, listening, scored and --allow ports open"
+t_has "$r" "tcp dport { 22, 80, 8443, 9000-9010 } accept" "SSH, listening, scored and --allow ports open (9001 is inside the --allow range)"
 t_has "$r" "udp dport { 53, 68 } accept" "listening UDP and DHCP replies open"
 t_has "$r" "ip saddr { 10.0.0.5, 10.9.9.9 } accept" "admin and scoring hosts allowed for everything"
 t_hasnt "$r" "4444" "backdoor-style port not opened"
 t_hasnt "$r" "3306" "loopback-only database not opened"
 t_has "$r" "meta nfproto ipv6 drop" "IPv6 dropped"
-t_has "$out" "4444/tcp (nc) - backdoor-style port, NOT allowed" "backdoor port reported"
+t_has "$out" "tcp/4444  backdoor-style, program nc" "backdoor port reported as dropped"
+t_hasnt "$r" "7007" "a port whose program runs from /dev/shm is not opened"
+t_hasnt "$r" "5353" "mDNS is dropped by default"
 t_fail "dry run loads nothing" test -s "$NFT_STATE"
+
+t_start "every port is explained: what it is, the program, the command"
+out=$(run --out "$O" --no-protected --no-color 2>&1)
+t_has "$out" "1/5  the firewall on this box right now" "section: firewall now"
+t_has "$out" "HTTP: the web server. Scored (web store, webmail) in past competitions." "says what port 80 is and that it was scored"
+t_has "$out" "apache2 (pid 2, runs as" "names the program, its pid and its account"
+t_has "$out" "command: /usr/sbin/apache2 -k start" "shows the full command line"
+t_has "$out" "command: python3 /opt/app/server.py" "shows the script behind an unknown port"
+t_has "$out" "CHECK tcp 9001" "an unknown port is marked CHECK"
+t_has "$out" "local tcp 3306" "a loopback-only port is marked local"
+t_has "$out" "only this box can reach it (loopback)" "and explained"
+t_has "$out" "suspicious: its program file was deleted after it started" "a deleted program is called out"
+t_has "$out" "program: /dev/shm/.h/httpd (deleted)" "with where it ran from"
+t_has "$out" "Keep tcp/9001 open? (unknown, program python3" "asks about each port (default shown without a terminal)"
+t_hasnt "$out" "Keep tcp/3306 open?" "no question for a loopback-only port"
+t_hasnt "$out" "Keep tcp/22 open?" "no question for SSH"
+d=$(rundir "$out")
+for f in output.txt summary.txt ports.txt csv/ports.csv ruleset.nft rollback.sh run.txt; do t_file "$d/$f" "$f written"; done
+t_has "$d" "firewall-" "numbered run folder"
+t_ok "ports.csv has the program, account and command" grep -q '"tcp","9001","all","python3","6",".*","unknown","KEEP",".*","python3 /opt/app/server.py"' "$d/csv/ports.csv"
+t_ok "and the dropped ones" grep -q '"tcp","4444",.*"DROP"' "$d/csv/ports.csv"
+t_has "$(cat "$d/summary.txt")" "kept open, 3 dropped, 1 local only" "summary counts"
+t_fail "output.txt has no colour codes" grep -q "$(printf '\033')" "$d/output.txt"
+
+t_start "--keep and --drop answer in advance"
+out=$(run --out "$O" --no-protected --no-color --keep 5353/udp,4444 --drop 80,9001/tcp 2>&1)
+r=$(cat "$(rundir "$out")/ruleset.nft")
+t_has "$r" "tcp dport { 22, 4444 } accept" "--keep opens 4444, --drop closes 80 and 9001"
+t_has "$r" "udp dport { 53, 68, 5353 } accept" "--keep 5353/udp opens it"
+t_hasnt "$out" "Keep tcp/80 open?" "no question for a port answered by a flag"
+run --keep abc >/dev/null 2>&1; t_eq "$?" 2 "bad --keep exits 2"
+
+if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&1; then
+    t_start "questions in a terminal"
+    # team address; 80 keep (Enter); 4444 (Enter=drop); 7007 (Enter=drop); 9001 n; 53 (Enter); 5353 y;
+    # other ports 8089/tcp; ssh team only (Enter=no); outgoing (Enter=no); ipv6 (Enter=block)
+    printf '10.0.0.5\n\n\n\nn\n\ny\n8089/tcp\n\n\n\n' >"$T_TMP/ans"
+    CCDC_NO_TTY=0 script -qc "$SH $C --out $O --no-protected --no-color" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
+    tt=$(cat "$T_TMP/tty.out")
+    t_has "$tt" "Your team's addresses that must always get in" "asks for the team's addresses"
+    t_has "$tt" "Other ports to open that are NOT listening now" "asks for ports that are down"
+    t_has "$tt" "Allow SSH ONLY from your team's addresses?" "asks about SSH once there are team addresses"
+    d=$(printf '%s\n' "$tt" | tr -d '\r' | sed -n 's/^All results: //p' | tail -n 1)
+    r=$(cat "$d/ruleset.nft")
+    t_has "$r" "tcp dport { 22, 80, 8089 } accept" "typed answers: 9001 dropped, 8089 opened"
+    t_has "$r" "udp dport { 53, 68, 5353 } accept" "5353 kept after 'y'"
+    t_has "$r" "ip saddr { 10.0.0.5 } accept" "the typed team address is allowed"
+fi
 
 t_start "--strict, --keep-ipv6, --restrict-out, --ssh-from"
 out=$(run --out "$O" --strict --keep-ipv6 --restrict-out --ssh-from 10.0.0.0/24 2>&1)

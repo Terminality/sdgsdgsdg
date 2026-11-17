@@ -2,6 +2,15 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-16: Linux firewall rebuilt around the open ports (LX-25 v2)
+
+- Lists every listening port with the program, pid, account and full command line behind it (so the script behind `python3` shows), where it is bound (all addresses or this box only), what the port normally is in plain words, and whether it was a scored service in past competitions (docs/ENVIRONMENT.md) or is on the protected list.
+- Asks keep or drop for each port, with a default: scored and normal services keep, unknown keep but marked CHECK, rarely-needed services drop, backdoor-style ports and programs running from /tmp, /dev/shm or a deleted file drop. `--keep` and `--drop` answer in advance.
+- Also asks: team addresses, ports to open that are not listening now, SSH from the team only, limit outgoing, block IPv6, and "load these rules now?".
+- New look: five sections, colours, `firewall-N` folders, `output.txt`, `ports.txt`, CSV in `csv/`. Says if ufw or firewalld is also running.
+- Unchanged underneath: own table/chains only, `nft -c` check, the rollback timer confirmed from a new session, `--save`, `--remove`.
+- Tested with stand-ins under seven shells and three awks (71 checks), and live in a separate network namespace: rules load, a 4444 listener is dropped, the timer removes the rules when nobody confirms.
+
 ## 2026-11-16: Review of the recent scripts: bugs fixed, gaps filled
 
 **LX-41 session & command logging**
