@@ -41,7 +41,7 @@
 #                       other key is removed, without asking
 #   --remove-all-keys   remove every key (no questions)
 #   --keep-all-keys     keep every key (no questions)
-#   --root-login MODE   no | key-only | leave   (PermitRootLogin)
+#   --root-login MODE   yes | no | key-only | leave   (PermitRootLogin)
 #   --no-passwords      turn password logins OFF (key only).  Off by default:
 #                       scoring engines usually log in with passwords
 #   --no-forwarding     turn off TCP forwarding, tunnels and gateway ports
@@ -117,7 +117,7 @@ LX-22 SSH hardening and key cleanup - see every key and setting, keep or change 
 
   --allow-keys FILE    team keys/fingerprints: every other key is removed
   --remove-all-keys    remove every key        --keep-all-keys   keep every key
-  --root-login MODE    no | key-only | leave
+  --root-login MODE    yes | no | key-only | leave
   --no-passwords       password logins OFF (key only) - careful, scoring uses passwords
   --no-forwarding      TCP forwarding and tunnels off
   --strong-crypto      modern ciphers only (can lock out old clients)
@@ -144,7 +144,7 @@ while [ $# -gt 0 ]; do
         --allow-keys)      [ $# -ge 2 ] || cc_die 2 "--allow-keys needs a file"; [ -r "$2" ] || cc_die 2 "--allow-keys: cannot read $2"; ALLOWKEYS=$2; KEYMODE=allow; shift 2 ;;
         --remove-all-keys) [ "$KEYMODE" = allow ] && cc_die 2 "use --allow-keys or --remove-all-keys, not both"; KEYMODE=all; shift ;;
         --keep-all-keys)   KEYMODE=keep; shift ;;
-        --root-login)      [ $# -ge 2 ] || cc_die 2 "--root-login needs no, key-only or leave"; ROOTMODE=$2; shift 2 ;;
+        --root-login)      [ $# -ge 2 ] || cc_die 2 "--root-login needs yes, no, key-only or leave"; ROOTMODE=$2; shift 2 ;;
         --no-root-login)   ROOTMODE=no; shift ;;
         --root-key-only)   ROOTMODE=key-only; shift ;;
         --keep-root-login) ROOTMODE=leave; shift ;;
@@ -164,7 +164,7 @@ while [ $# -gt 0 ]; do
         *)                 cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-case "$ROOTMODE" in ''|no|key-only|leave) ;; *) cc_die 2 "--root-login must be no, key-only or leave" ;; esac
+case "$ROOTMODE" in y|yes) ROOTMODE=yes ;; n|no) ROOTMODE=no ;; k|key-only) ROOTMODE=key-only ;; l|leave) ROOTMODE=leave ;; '') ;; *) cc_die 2 "--root-login must be yes, no, key-only or leave" ;; esac
 case "$TIMER" in ''|*[!0-9]*) cc_die 2 "--timer needs a whole number of seconds" ;; esac
 for _s in $SETS; do
     case "$_s" in
@@ -336,12 +336,18 @@ done <"$W/users"
 [ "$_n" -eq 0 ] && cc_show "$C_GRN" "  [ok] no SSH keys on any account"
 
 # ---- 3/5  Questions -------------------------------------------------------------------
-header "3/5  questions (Enter takes the answer in capitals)"
+header "3/5  questions (each one lists the answers it takes; Enter = the one in capitals)"
+# yn QUESTION DEFAULT(Y|N) YES-MEANS NO-MEANS -> 0 for y, 1 for n.
+yn() {
+    cc_choose "$1" "$2" "y=$3" "n=$4"
+    [ "$CC_CHOICE" = y ]
+}
 # Keys, one by one, unless a flag already decided.
 : >"$W/keydec"
 while IFS='|' read -r _n _u _uid _f _ln _t _b _c _o _fp _v _why _d _act; do
     if [ -z "$_act" ]; then
-        if cc_ask "Keep key #$_n ($_u, $_fp, ${_c:-no comment})?$([ -n "$_why" ] && echo " [$_why]")" "$_d"; then _act=keep; else _act=remove; fi
+        if yn "Keep key #$_n ($_u, $_fp, ${_c:-no comment})?$([ -n "$_why" ] && echo " [$_why]")" "$_d" \
+            "yes, keep it (this key can still log in)" "no, remove it (backup kept; that key can no longer log in)"; then _act=keep; else _act=remove; fi
     fi
     printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$_n" "$_u" "$_f" "$_ln" "$_t" "$_fp" "$_c" "$_o" "$_v" "$_why" "$_act" "$_uid" >>"$W/keydec"
 done <"$W/keys"
@@ -352,7 +358,7 @@ _rootkeys=$(awk -F'|' '$12 == 0 && $11 == "keep"' "$W/keydec" | grep -c .)
 if [ -s "$W/rcfiles" ]; then
     while IFS= read -r _f; do
         cc_show "$C_RED" "  [!] $_f runs at every SSH login: $(grep -Ev '^[[:space:]]*(#|$)' "$R$_f" | head -n 1 | cut -c1-100)"
-        cc_ask "Move $_f to quarantine?" Y && printf '%s\n' "$_f" >>"$W/rcq"
+        yn "Move $_f to quarantine?" Y "yes, move it (it stops running at every login; backup kept)" "no, leave it" && printf '%s\n' "$_f" >>"$W/rcq"
     done <"$W/rcfiles"
 fi
 
@@ -364,17 +370,20 @@ if cc_is_protected account root && [ "$CC_FORCE_SCORED" != 1 ]; then
 elif [ -z "$ROOTMODE" ]; then
     # Never default to locking root out of SSH: key-only only when root keeps a key.
     if [ "$_rootkeys" -gt 0 ] || [ "$_rpw" = no ]; then _rd=key-only; else _rd=leave; fi
-    cc_show "" "  Root login is now: $(rootword "$_rnow"). no = root cannot log in over SSH at all; key-only = only with a key; leave = no change."
-    [ "$_rd" = leave ] && cc_show "$C_YEL" "  root has a password and no SSH key that stays, so key-only would lock root out of SSH: the default is leave."
-    cc_ask_text "Root login over SSH: no, key-only or leave?" "$_rd"
-    case "$CC_ANSWER" in no|key-only|leave) ROOTMODE=$CC_ANSWER ;; *) cc_die 2 "not an answer: '$CC_ANSWER' (no, key-only or leave)" ;; esac
+    [ "$_rd" = leave ] && cc_show "$C_YEL" "  root has a password and no SSH key that stays, so key-only would lock root out of SSH: the default is l (leave)."
+    cc_choose "Allow root to log in over SSH? (now: $(rootword "$_rnow"))" "$(printf '%s' "$_rd" | cut -c1)" \
+        "y=yes, with a password or a key (not recommended)" \
+        "n=no, root cannot log in over SSH at all (log in as yourself, then sudo)" \
+        "k=key-only, root needs an SSH key; passwords are refused" \
+        "l=leave it as it is"
+    case "$CC_CHOICE" in y) ROOTMODE=yes ;; n) ROOTMODE=no ;; k) ROOTMODE=key-only ;; *) ROOTMODE=leave ;; esac
 fi
 
 # One question per setting.  Format: key|sshd lines|question|why|default|now-key|now-default|want
 # The question is skipped when the setting is already what we want.
-ans() {  # ans KEY QUESTION DEFAULT -> 0 = yes, from --set or a question
+ans() {  # ans KEY QUESTION DEFAULT YES-MEANS NO-MEANS -> 0 = yes, from --set or a question
     for _s in $SETS; do [ "${_s%%=*}" = "$1" ] && { [ "${_s#*=}" = yes ]; return; }; done
-    cc_ask "$2" "$3"
+    yn "$2" "$3" "$4" "$5"
 }
 : >"$W/lines"
 q() {  # q KEY WANT-KEY WANT-VALUE NOW-DEFAULT DEFAULT QUESTION -- why
@@ -386,7 +395,7 @@ q() {  # q KEY WANT-KEY WANT-VALUE NOW-DEFAULT DEFAULT QUESTION -- why
         return 0
     fi
     cc_show "$C_GRY" "        $_qw"
-    if ans "$_qk" "$_qq (now: $_now)" "$_qd"; then printf '%s %s\n' "$_wk" "$_wv" >>"$W/lines"; fi
+    if ans "$_qk" "$_qq (now: $_now)" "$_qd" "yes, set $_wk $_wv" "no, leave it ($_wk $_now)"; then printf '%s %s\n' "$_wk" "$_wv" >>"$W/lines"; fi
     return 0
 }
 q emptypw  PermitEmptyPasswords no  no Y "Turn OFF logins with an empty password?" "Accounts with no password could log in over SSH with nothing at all."
@@ -404,26 +413,26 @@ q loglevel LogLevel VERBOSE info Y "Log the fingerprint of the key used at every
 _pw=$(cur passwordauthentication yes)
 if [ "$_pw" = yes ]; then
     cc_show "$C_GRY" "        Key-only logins stop password guessing completely, but scoring engines usually log in with a PASSWORD: that check would fail."
-    if [ "$NOPW" = Y ] || { [ -z "$NOPW" ] && cc_ask "Turn OFF password logins (key only)? (now: yes)" N; }; then
+    if [ "$NOPW" = Y ] || { [ -z "$NOPW" ] && yn "Turn OFF password logins (key only)? (now: yes)" N "yes, keys only (a scoring check that logs in with a password will FAIL)" "no, keep password logins"; }; then
         printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' >>"$W/lines"
         awk -F'|' '$11 == "keep" && $12 != 0' "$W/keydec" | grep -q . || cc_show "$C_RED" "  [!] No account except root keeps a key: after this, only root can log in (with a key)."
     fi
 fi
 if [ "$(cur allowtcpforwarding yes)" != no ]; then
     cc_show "$C_GRY" "        Port forwarding lets anyone who logs in tunnel to other machines through this box (pivoting). Some apps tunnel on purpose."
-    if [ "$NOFWD" = Y ] || { [ -z "$NOFWD" ] && cc_ask "Turn OFF TCP forwarding, tunnels and gateway ports? (now: $(cur allowtcpforwarding yes))" N; }; then
+    if [ "$NOFWD" = Y ] || { [ -z "$NOFWD" ] && yn "Turn OFF TCP forwarding, tunnels and gateway ports? (now: $(cur allowtcpforwarding yes))" N "yes, turn them off" "no, leave them on"; }; then
         printf 'AllowTcpForwarding no\nPermitTunnel no\nGatewayPorts no\nAllowStreamLocalForwarding no\n' >>"$W/lines"
     fi
 fi
 cc_show "$C_GRY" "        Modern ciphers only: drops old algorithms, but an old client or scoring engine may no longer connect."
-if [ "$STRONG" = Y ] || { [ -z "$STRONG" ] && cc_ask "Allow only modern ciphers, key exchange and MACs?" N; }; then
+if [ "$STRONG" = Y ] || { [ -z "$STRONG" ] && yn "Allow only modern ciphers, key exchange and MACs?" N "yes, modern only (a very old client or scoring engine may not connect)" "no, keep the defaults"; }; then
     printf 'KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512\n' >>"$W/lines"
     printf 'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr\n' >>"$W/lines"
     printf 'MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256\n' >>"$W/lines"
 fi
 if [ "$AUSET" = 0 ]; then
     cc_show "$C_GRY" "        AllowUsers: ONLY the accounts listed may log in by SSH. Strong, but easy to lock out the scoring engine or yourself."
-    cc_ask_text "Only these accounts may log in by SSH (space separated; Enter = no limit)" ""
+    cc_ask_text "Only these accounts may log in by SSH? Type the names separated by spaces, or press Enter for no limit" ""
     ALLOWUSERS=$(printf '%s' "$CC_ANSWER" | tr ',' ' ')
 fi
 if [ -n "$ALLOWUSERS" ]; then
@@ -435,7 +444,7 @@ if [ -n "$ALLOWUSERS" ]; then
     fi
     printf 'AllowUsers %s\n' "$_au" >>"$W/lines"
 fi
-case "$ROOTMODE" in no) printf 'PermitRootLogin no\n' >>"$W/lines" ;; key-only) printf 'PermitRootLogin prohibit-password\n' >>"$W/lines" ;; esac
+case "$ROOTMODE" in yes) printf 'PermitRootLogin yes\n' >>"$W/lines" ;; no) printf 'PermitRootLogin no\n' >>"$W/lines" ;; key-only) printf 'PermitRootLogin prohibit-password\n' >>"$W/lines" ;; esac
 [ -n "$BANNER" ] && printf 'Banner %s\n' "$BANNER" >>"$W/lines"
 
 # ---- 4/5  The plan --------------------------------------------------------------------
@@ -498,7 +507,7 @@ if [ "$NCH" -eq 0 ]; then
     cc_show "$C_GRN" "  [ok] Nothing to change."
 elif [ "$CC_APPLY" != 1 ]; then
     cc_show "$C_GRY" "  $NCH change(s) planned. Dry run: nothing was changed. Run again with --apply (keep a second root session open)."
-elif ! cc_ask "Apply these $NCH change(s) now? (a revert timer undoes them unless you confirm from a NEW session)" Y; then
+elif ! yn "Apply these $NCH change(s) now?" Y "yes, apply them (a revert timer undoes them unless you confirm from a NEW session)" "no, change nothing"; then
     cc_show "$C_GRY" "  Not applied. The plan is in $CC_RUN_DIR"
 else
     APPLIED=1

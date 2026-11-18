@@ -1159,7 +1159,7 @@ sudo sh LX-22-ssh-hardening.sh --apply --allow-keys team.pub   # keep only the t
 | --- | --- | --- |
 | Keep key #N? (one per key) | yes; **no** for keys that look planted | `--allow-keys FILE`, `--remove-all-keys`, `--keep-all-keys` |
 | Move `~/.ssh/rc` to quarantine? (runs at every login) | yes | |
-| Root login: no, key-only or leave? | key-only if root keeps a key; otherwise **leave**, so root is never locked out | `--root-login` |
+| Allow root to log in over SSH? `[y]` yes, `[n]` no, `[k]` key-only, `[l]` leave | `k` if root keeps a key; otherwise `l`, so root is never locked out | `--root-login yes/no/key-only/leave` |
 | Turn off empty-password logins? | yes | `--set emptypw=no` to skip |
 | Turn off host-based / .rhosts logins? | yes | `rhosts` |
 | Stop users setting environment at login? | yes | `userenv` |

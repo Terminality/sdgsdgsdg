@@ -83,7 +83,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     t_has "$(cat "$d9/contents.txt")" "${D#/}/conf/app.conf" "a typed path was backed up"
     t_hasnt "$(cat "$d9/contents.txt")" ".hidden" "a typed leave-out path was left out"
     t_fail "answered n to hashing system programs" test -s "$d9/system.sha256"
-    t_has "$(cat "$d9/output.txt")" "[?] Other files or folders to back up? (comma list) $D" "the typed answer is in output.txt"
+    t_has "$(cat "$d9/output.txt")" "[?] Other files or folders to back up? $D" "the typed answer is in output.txt"
 else
     t_start "(skipped: no 'script' command)"
 fi

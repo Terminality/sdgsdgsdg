@@ -219,9 +219,8 @@ find_webroots() {
 
 header "QUESTIONS (Enter = the default)"
 if [ -z "$BOX" ]; then
-    cc_ask_text "Which box is this? splunk / webmail / ecomm / other" other
-    BOX=$CC_ANSWER
-    case "$BOX" in splunk|webmail|ecomm|other) ;; *) cc_show "$C_GRY" "    '$BOX' is not one of the four: using other"; BOX=other ;; esac
+    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "o=other"
+    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
 fi
 # Folders that matter for each scored box, beyond /etc and the web roots.
 _boxp=""
@@ -234,30 +233,30 @@ _boxf=""
 for _p in $_boxp; do [ -e "$_p" ] && _boxf="$_boxf $_p"; done
 if [ -n "$_boxf" ]; then
     for _p in $_boxf; do cc_show "$C_YEL" "    $BOX: $_p ($(size_of "$_p"))"; done
-    cc_ask "Back up these $BOX folders too?" Y && list_add ADD "$(printf '%s' "$_boxf" | tr ' ' ',')"
+    cc_ask "Back up these $BOX folders too?" Y "yes, back them up" "no, skip them" && list_add ADD "$(printf '%s' "$_boxf" | tr ' ' ',')"
 fi
 
 if [ "$F_WEB" = 0 ]; then
     find_webroots >"$W/webfound"
     if [ -s "$W/webfound" ]; then
         while IFS= read -r _d; do cc_show "$C_YEL" "    web root: $_d ($(size_of "$_d"))"; done <"$W/webfound"
-        cc_ask "Back up these web roots? (big ones can be left out; SV-14 backs up databases)" Y || NO_WEB=1
+        cc_ask "Back up these web roots? (SV-14 backs up databases)" Y "yes, back them up" "no, leave them out (if they are big)" || NO_WEB=1
     else
         cc_show "$C_GRY" "    No web roots found."
     fi
 fi
-[ "$F_HOMES" = 1 ] || cc_ask "Back up every account's dotfiles and .ssh keys? (where shells, startup files and keys live)" Y || NO_HOMES=1
-[ "$F_FAST" = 1 ] || cc_ask "Hash system programs and service units too? (10-60 s; shows later which programs were replaced)" Y || FAST=1
+[ "$F_HOMES" = 1 ] || cc_ask "Back up every account's dotfiles and .ssh keys?" Y "yes, back them up" "no, skip them" || NO_HOMES=1
+[ "$F_FAST" = 1 ] || cc_ask "Hash system programs and service units too? (shows later which programs were replaced)" Y "yes, hash them (10-60 s)" "no, skip it" || FAST=1
 if [ "$F_ADD" = 0 ]; then
-    cc_ask_text "Other files or folders to back up? (comma list)" ""
+    cc_ask_text "Other files or folders to back up?" "" "paths separated by commas, like /opt/app,/srv/data"
     list_add ADD "$CC_ANSWER"
 fi
 if [ "$F_SKIP" = 0 ]; then
-    cc_ask_text "Anything to leave out? (comma list of paths)" ""
+    cc_ask_text "Anything to leave out?" "" "paths separated by commas, like /var/www/big-videos"
     list_add SKIPP "$CC_ANSWER"
 fi
 if [ "$F_COPY" = 0 ]; then
-    cc_ask_text "Copy the backup off the box? (user@host:/path/, Enter for no)" ""
+    cc_ask_text "Copy the backup off the box?" "" "an scp destination like admin@10.0.0.5:/backups/, or Enter for no copy"
     COPYTO=$CC_ANSWER
 fi
 
@@ -354,7 +353,7 @@ _total_mb=$((_total_kb / 1024))
 cc_show "" "  About $_total_mb MB in $(grep -c . "$W/paths") paths."
 if [ "$_total_mb" -gt "$MAXMB" ]; then
     cc_show "$C_YEL" "  [*] That is more than the $MAXMB MB limit (--max-mb). The big paths are listed above."
-    cc_ask "Back up $_total_mb MB anyway?" N || cc_die 3 "the backup would be about $_total_mb MB, more than --max-mb $MAXMB. Leave big paths out (the leave-out question or --skip, --no-webroots) or raise --max-mb"
+    cc_ask "Back up $_total_mb MB anyway?" N "yes, back it all up" "no, stop" || cc_die 3 "the backup would be about $_total_mb MB, more than --max-mb $MAXMB. Leave big paths out (the leave-out question or --skip, --no-webroots) or raise --max-mb"
 fi
 # Room on the disk that holds the output folder (df -P: POSIX columns).
 _free_kb=$(df -Pk "$CC_RUN_DIR" 2>/dev/null | awk 'NR == 2 { print $4 }')

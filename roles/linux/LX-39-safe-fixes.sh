@@ -239,7 +239,7 @@ protected_check() {
     _pc=${CC_PROTECTED:-${CC_OUT:-${CCDC_OUT:-${HOME:-/root}/ccdc-out}}/protected.csv}
     [ -r "$_pc" ] && return 0
     cc_show "$C_YEL" "[*] No protected list at $_pc (the list of scored ports, services and accounts no script may touch)."
-    if cc_ask "Continue without a protected list? LX-39 does not touch ports or services anyway" N; then CC_NO_PROTECTED=1; return 0; fi
+    if cc_ask "Continue without a protected list? (LX-39 does not touch ports or services anyway)" N "yes, continue" "no, stop"; then CC_NO_PROTECTED=1; return 0; fi
     return 1
 }
 if [ "$CC_APPLY" = 1 ] && ! protected_check; then
@@ -715,9 +715,8 @@ fix_desc() { list_fixes | awk -v f="$1" '$1 == f { $1 = ""; sub(/^ +/, ""); prin
 
 header "QUESTIONS (Enter = the default in capitals)"
 if [ -z "$BOX" ]; then
-    cc_ask_text "Which box is this? splunk / webmail / ecomm / other" other
-    BOX=$CC_ANSWER
-    case "$BOX" in splunk|webmail|ecomm|other) ;; *) cc_show "$C_GRY" "    '$BOX' is not one of the four: using other"; BOX=other ;; esac
+    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "o=other"
+    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
 fi
 case "$BOX" in
     splunk)  cc_show "$C_GRY" "    Scored here: chrony (123/udp), Splunk management (8089), search, SSH, ping. LX-39 touches none of them." ;;
@@ -741,21 +740,21 @@ else
                 # unless --no-forwarding said otherwise.
                 if ! _cc_can_ask; then cc_show "$C_GRY" "    IP forwarding: left on (turn it off with --no-forwarding)"; continue; fi
                 _d=N; [ "$BOX" = ecomm ] && _d=Y
-                if cc_ask "Does this box route traffic or run Docker/containers? (they need IP forwarding)" "$_d"; then
+                if cc_ask "Does this box route traffic or run Docker/containers? (they need IP forwarding)" "$_d" "yes, it does (forwarding stays on)" "no, it does not"; then
                     cc_show "$C_GRY" "    IP forwarding stays on."
-                elif cc_ask "Turn IP forwarding off? (forwarding)" Y; then
+                elif cc_ask "Turn IP forwarding off? (forwarding)" Y "yes, turn it off" "no, leave it on"; then
                     _keep="$_keep $_f"; NOFWD=1
                 fi ;;
-            ipv6)  cc_ask "Turn IPv6 off? Check no scored service uses IPv6 first (ipv6)" Y && _keep="$_keep $_f" ;;
-            hosts) cc_ask "Check /etc/hosts for odd entries? Report only (hosts)" Y && _keep="$_keep $_f" ;;
+            ipv6)  cc_ask "Turn IPv6 off? Check no scored service uses IPv6 first (ipv6)" Y "yes, turn IPv6 off" "no, leave it on" && _keep="$_keep $_f" ;;
+            hosts) cc_ask "Check /etc/hosts for odd entries? (hosts)" Y "yes, check it (report only, changes nothing)" "no, skip it" && _keep="$_keep $_f" ;;
             uid0|emptypw|suid)
                 # Show what it found first, so you know what you are answering.
                 case "$_f" in uid0) uid0_list >"$W/found" ;; emptypw) emptypw_list >"$W/found" ;; suid) suid_list >"$W/found" ;; esac
                 if [ ! -s "$W/found" ]; then cc_show "$C_GRY" "    $_f: nothing found ($(fix_desc "$_f"))"; continue; fi
                 _nf=$(grep -c . "$W/found")
                 cc_show "$C_YEL" "    $_f found: $(head -n 6 "$W/found" | tr '\n' ' ')$([ "$_nf" -gt 6 ] && echo "+$((_nf - 6)) more (all in the plan below)")"
-                cc_ask "$(fix_desc "$_f")? ($_f)" Y && _keep="$_keep $_f" ;;
-            *)     cc_ask "$(fix_desc "$_f")? ($_f)" Y && _keep="$_keep $_f" ;;
+                cc_ask "$(fix_desc "$_f")? ($_f)" Y "yes, fix it" "no, skip it" && _keep="$_keep $_f" ;;
+            *)     cc_ask "$(fix_desc "$_f")? ($_f)" Y "yes, fix it" "no, skip it" && _keep="$_keep $_f" ;;
         esac
         # A fix that acts on named items: ask what to leave alone (unless
         # --exclude already said).
@@ -768,7 +767,7 @@ else
             sysctl) _what="settings, e.g. net.ipv4.tcp_syncookies" ;;
             logging) _what="services: rsyslog, syslog-ng, auditd" ;;
         esac
-        cc_ask_text "  Leave any alone for $_f? ($_what, comma list)" ""
+        cc_ask_text "  Leave any alone for $_f?" "" "$_what separated by commas, or Enter to fix them all"
         [ -n "$CC_ANSWER" ] && EXCL="$EXCL,$CC_ANSWER"
     done
     FIXES=$_keep
@@ -871,7 +870,7 @@ elif [ "$CANAPPLY" = 0 ]; then
     cc_show "$C_GRY" "$NCH change(s) planned. Dry run only, so nothing was changed."
 else
     _ad=N; [ "$APPLY_FLAG" = 1 ] && _ad=Y
-    if cc_ask "Apply these $NCH change(s)?" "$_ad"; then
+    if cc_ask "Apply these $NCH change(s)?" "$_ad" "yes, apply them now" "no, change nothing"; then
         if [ "$APPLY_FLAG" = 0 ] && ! protected_check; then
             cc_show "$C_YEL" "[*] Not applied: no protected list."
         elif cc_timer_fired || { [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -lt 3 ]; }; then

@@ -185,9 +185,9 @@ if command -v script >/dev/null 2>&1; then
     # fails: 5 | web: Enter | ban: 60 | services: ssh | never: 10.0.0.9 | seconds: 0
     printf '5\n\n60\nssh\n10.0.0.9\n0\n' >"$T_TMP/answers"
     out=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --no-color --out '$O' --state '$T_TMP/state-q' --no-protected --log '$L/auth.log'" /dev/null <"$T_TMP/answers" 2>&1)
-    t_has "$out" "Failed logins (SSH, FTP, mail)" "asks the failure limit"
-    t_has "$out" "Never ban these" "asks who never to ban"
-    t_has "$out" "Seconds between checks" "asks how often"
+    t_has "$out" "How many failed logins (SSH, FTP, mail)" "asks the failure limit"
+    t_has "$out" "Addresses never to ban" "asks who never to ban"
+    t_has "$out" "How often should it check?" "asks how often"
     t_has "$out" "Ban after:    5 failed logins" "typed limit used"
     t_has "$out" "Ban length:   60 minutes" "typed ban length used"
     t_has "$(cat "$T_TMP/state-q/settings")" "never=10.0.0.9" "typed never-ban saved"

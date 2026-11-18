@@ -75,7 +75,9 @@ t_has "$out" "Keep key #4 (www-data" "asks about each key"
 t_has "$out" "Turn OFF X11 forwarding? (now: yes)" "asks about each setting, showing the current value"
 t_has "$out" "Graphical forwarding: not needed on a server" "with a plain explanation"
 t_has "$out" "[ok] PermitUserEnvironment is already no" "settings already right are not asked"
-t_has "$out" "Root login over SSH: no, key-only or leave?" "asks about root login"
+t_has "$out" "Allow root to log in over SSH? (now:" "asks about root login"
+t_has "$out" "[y/n/K/l] k (default): key-only, root needs an SSH key; passwords are refused" "a batch run shows the default answer and what it means"
+t_has "$out" "Turn OFF X11 forwarding? (now: yes) [Y/n] y (default): yes, set X11Forwarding no" "yes/no answers say what they do"
 t_has "$out" "Turn OFF password logins (key only)? (now: yes)" "asks about password logins"
 t_has "$out" "[~] X11Forwarding: yes -> no" "the plan shows each change"
 t_has "$out" "the new config passed sshd -t" "the config is tested first"
@@ -152,7 +154,7 @@ plant
 printf 'root:$6$a$roothash:19000:0:99999:7:::\n' >"$R/etc/shadow"
 out=$(run --out "$O" --root "$R" --apply --batch --no-protected --no-color 2>&1)
 t_hasnt "$(blk)" "PermitRootLogin" "root with a password and no key: root login left alone"
-t_has "$out" "key-only would lock root out of SSH: the default is leave" "and it says why"
+t_has "$out" "key-only would lock root out of SSH: the default is l (leave)" "and it says why"
 t_has "$(cat "$R/etc/ssh/sshd_config")" "PermitEmptyPasswords no" "the other settings still go in"
 plant
 printf 'root:$6$a$roothash:19000:0:99999:7:::\n' >"$R/etc/shadow"
@@ -175,10 +177,24 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     CCDC_NO_TTY=0 script -qc "$SH $C --out $O --root $R --no-color --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
     tt=$(cat "$T_TMP/tty.out")
     t_has "$tt" "Apply these" "asks before applying"
+    t_has "$tt" "[y] yes, with a password or a key" "root question lists y"
+    t_has "$tt" "[n] no, root cannot log in over SSH at all" "root question lists n"
+    t_has "$tt" "[k] key-only, root needs an SSH key" "root question lists k"
+    t_has "$tt" "[l] leave it as it is" "root question lists l"
+    t_has "$tt" "Answer [y/n/K/l]:" "and says which letters it takes, default in capitals"
+    t_has "$tt" "[y] yes, keep it" "key questions say what y does"
+    t_has "$tt" "[n] no, remove it" "and what n does"
     cfg=$(cat "$R/etc/ssh/sshd_config")
     t_has "$cfg" "PermitRootLogin no" "typed root answer used"
     t_hasnt "$(blk)" "X11Forwarding" "'n' to X11 respected"
     t_has "$cfg" "AllowTcpForwarding no" "'y' to forwarding respected"
     t_hasnt "$(cat "$R/home/alice/.ssh/authorized_keys")" "$(cut -d' ' -f2 "$K/evil.pub")" "'n' to a key removes it"
+    # A wrong answer is asked again; a letter works.  Root question: zz, then k.
+    plant
+    printf '\n\n\n\n\nzz\nk\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n' >"$T_TMP/ans2"
+    CCDC_NO_TTY=0 script -qc "$SH $C --out $O --root $R --no-color --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans2" >"$T_TMP/tty2.out" 2>&1
+    t_has "$(cat "$T_TMP/tty2.out")" '"zz" is not an answer here: type one of [y/n/K/l]' "a wrong answer is refused and asked again"
+    cp "$T_TMP/tty2.out" /tmp/claude-0/-home-claude/3ffb2eda-5138-5d3e-9f99-6d28bba8f70e/scratchpad/tty2.out
+    t_has "$(blk)" "PermitRootLogin prohibit-password" "'k' means key-only"
 fi
 t_done

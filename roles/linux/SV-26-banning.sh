@@ -363,28 +363,28 @@ cc_show "" "Legend: ${C_RED}[!]${C_OFF} banned   ${C_YEL}[*]${C_OFF} would ban /
 # ---- 1/4 Questions -------------------------------------------------------------------
 header "1/4  setup: limits and who never to ban"
 if [ -z "$MAXF" ]; then
-    cc_ask_text "Failed logins (SSH, FTP, mail) in $WINDOW minutes before a ban" "$(setting maxfails | grep . || echo 10)"; MAXF=$CC_ANSWER
+    cc_ask_text "How many failed logins (SSH, FTP, mail) in $WINDOW minutes before a ban?" "$(setting maxfails | grep . || echo 10)" "a number, like 10"; MAXF=$CC_ANSWER
 fi
 if [ -z "$WEBMAX" ]; then
-    cc_ask_text "Web login attempts in $WINDOW minutes before a ban (real users log in once)" "$(setting webmax | grep . || echo 30)"; WEBMAX=$CC_ANSWER
+    cc_ask_text "How many web login attempts in $WINDOW minutes before a ban? (real users log in once)" "$(setting webmax | grep . || echo 30)" "a number, like 30"; WEBMAX=$CC_ANSWER
 fi
 if [ -z "$BANTIME" ]; then
-    cc_ask_text "Ban length in minutes (the ban ends by itself)" "$(setting bantime | grep . || echo 30)"; BANTIME=$CC_ANSWER
+    cc_ask_text "How long is a ban? (it ends by itself)" "$(setting bantime | grep . || echo 30)" "minutes, like 30"; BANTIME=$CC_ANSWER
 fi
 ok_limits
 if [ -z "$SERVICES" ]; then
-    cc_ask_text "Services to watch: ssh ftp mail web pam (all = every one)" "$(setting services | grep . || echo all)"
+    cc_ask_text "Which services to watch?" "$(setting services | grep . || echo all)" "names separated by spaces from: ssh ftp mail web pam - or all"
     SERVICES=$CC_ANSWER; ok_services "$SERVICES"
 fi
 SERVICES=$(printf '%s' "$SERVICES" | tr ',' ' ' | sed 's/^ *//; s/ *$//'); [ -n "$SERVICES" ] || SERVICES=all
 case " $SERVICES " in *" all "*) SERVICES=all ;; esac
 if [ "$IGNSET" = 0 ]; then
-    cc_ask_text "Never ban these - your team and the scoring engine (e.g. 10.0.0.5 10.0.0.0/24)" "$(setting never)"
+    cc_ask_text "Addresses never to ban: your team and the scoring engine?" "$(setting never)" "addresses or networks separated by spaces, like 10.0.0.5 10.0.0.0/24"
     IGNORE=$(printf '%s' "$CC_ANSWER" | tr ', ' '\n\n')
     for _a in $IGNORE; do valid_addr "$_a" || cc_die 2 "not an address or network: $_a"; done
 fi
 if [ -z "$LOOP" ]; then
-    if _cc_can_ask; then cc_ask_text "Seconds between checks (0 = check once and stop)" 60; LOOP=$CC_ANSWER; ok_loop "$LOOP"
+    if _cc_can_ask; then cc_ask_text "How often should it check?" 60 "seconds between checks, like 60; 0 = check once and stop"; LOOP=$CC_ANSWER; ok_loop "$LOOP"
     else LOOP=0; fi
 fi
 printf 'maxfails=%s\nwebmax=%s\nbantime=%s\nservices=%s\nnever=%s\n' "$MAXF" "$WEBMAX" "$BANTIME" "$SERVICES" "$(printf '%s' "$IGNORE" | grep . | tr '\n' ' ' | sed 's/ $//')" >"$STATE/settings"

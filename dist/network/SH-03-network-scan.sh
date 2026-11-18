@@ -661,58 +661,109 @@ _cc_left_txt() {
     return 0
 }
 
+# cc_choose QUESTION DEFAULT "l=meaning" "m=meaning" ... -> CC_CHOICE
+#   Every answer is spelled out, in the password-rotation style:
+#     [?] Allow root to log in over SSH? (now: key-only)
+#         [y] yes, with a password or a key
+#         [n] no, never
+#         [k] key-only, root needs an SSH key
+#         [l] leave it as it is
+#         Answer [y/n/K/l]:
+#   Enter takes DEFAULT (a letter, shown in capitals).  The first word of a
+#   meaning works too ("yes", "no", "key-only").  Anything else is refused
+#   and asked again.  With --batch or no terminal the default is taken and
+#   shown with its meaning.
+cc_choose() {
+    _cc_ch_q=$1; _cc_ch_d=$(printf '%s' "$2" | tr 'A-Z' 'a-z'); shift 2
+    _cc_ch_hint=""; _cc_ch_m=""
+    for _cc_ch_o in "$@"; do
+        _cc_ch_l=${_cc_ch_o%%=*}
+        if [ "$_cc_ch_l" = "$_cc_ch_d" ]; then _cc_ch_m=${_cc_ch_o#*=}; _cc_ch_l=$(printf '%s' "$_cc_ch_l" | tr 'a-z' 'A-Z'); fi
+        _cc_ch_hint="$_cc_ch_hint/$_cc_ch_l"
+    done
+    _cc_ch_hint=${_cc_ch_hint#/}
+    if ! _cc_can_ask; then
+        cc_show "${C_CYN:-}" "[?] $_cc_ch_q [$_cc_ch_hint] $_cc_ch_d (default): $_cc_ch_m"
+        CC_CHOICE=$_cc_ch_d
+        return 0
+    fi
+    # The question, then each answer on its own line.
+    printf '%s[?]%s %s\n' "${C_CYN:-}" "${C_OFF:-}" "$_cc_ch_q" >/dev/tty
+    for _cc_ch_o in "$@"; do printf '      [%s] %s\n' "${_cc_ch_o%%=*}" "${_cc_ch_o#*=}" >/dev/tty; done
+    _cc_ch_prompt="      Answer [$_cc_ch_hint]:"
+    while :; do
+        printf '%s%s ' "$_cc_ch_prompt" "$(_cc_left_txt)" >/dev/tty
+        if ! _cc_read _cc_ch_a; then
+            printf '\n' >/dev/tty
+            [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
+            _cc_ch_a=""
+        fi
+        _cc_ch_t=$(printf '%s' "$_cc_ch_a" | tr 'A-Z' 'a-z' | sed 's/^ *//; s/ *$//')
+        [ -z "$_cc_ch_t" ] && _cc_ch_t=$_cc_ch_d
+        # The letter, or the first word of its meaning ("yes", "key-only").
+        _cc_ch_a=""
+        for _cc_ch_o in "$@"; do
+            _cc_ch_w=$(printf '%s' "${_cc_ch_o#*=}" | awk '{ w = tolower($1); sub(/[,.:;]$/, "", w); print w }')
+            if [ "$_cc_ch_t" = "${_cc_ch_o%%=*}" ] || [ "$_cc_ch_t" = "$_cc_ch_w" ]; then _cc_ch_a=${_cc_ch_o%%=*}; fi
+        done
+        [ -n "$_cc_ch_a" ] && break
+        printf '      "%s" is not an answer here: type one of [%s] (Enter = %s).\n' "$_cc_ch_t" "$_cc_ch_hint" "$_cc_ch_d" >/dev/tty
+    done
+    CC_CHOICE=$_cc_ch_a
+    for _cc_ch_o in "$@"; do [ "${_cc_ch_o%%=*}" = "$CC_CHOICE" ] && _cc_ch_m=${_cc_ch_o#*=}; done
+    [ -n "$CC_TEE" ] && printf '[?] %s [%s] %s: %s\n' "$_cc_ch_q" "$_cc_ch_hint" "$CC_CHOICE" "$_cc_ch_m" >>"$CC_TEE"
+    cc_note "asked: $_cc_ch_q -> $CC_CHOICE: $_cc_ch_m"
+    return 0
+}
+
 # _cc_can_ask -> true when there is someone to ask.
 #   CCDC_NO_TTY=1 says there is nobody (the test suite sets it, so tests
 #   never wait for an answer when run from a terminal).
 _cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${CCDC_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
 
-# cc_ask QUESTION DEFAULT -> 0 for yes, 1 for no.  DEFAULT is Y or N.
-#   Enter takes the default.  With --batch or no terminal the default is
-#   taken and shown.  If the revert timer runs out while waiting, the script
-#   stops (nothing has been changed while questions are still being asked).
+# cc_ask QUESTION DEFAULT [YES-MEANS] [NO-MEANS] -> 0 for yes, 1 for no.
+#   DEFAULT is Y or N.  Shown like cc_choose, with what each answer does:
+#     [?] Back up the web roots?
+#         [y] yes, back them up
+#         [n] no, skip them
+#         Answer [Y/n]:
+#   Without meanings the answers are plain "yes" and "no".  Enter takes the
+#   default.  With --batch or no terminal the default is taken and shown.
+#   If the revert timer runs out while waiting, the script stops (nothing
+#   has been changed while questions are still being asked).
 cc_ask() {
-    _cc_ak_q=$1; _cc_ak_d=${2:-N}
-    case "$_cc_ak_d" in Y|y) _cc_ak_h="Y/n"; _cc_ak_d=Y ;; *) _cc_ak_h="y/N"; _cc_ak_d=N ;; esac
-    if ! _cc_can_ask; then
-        cc_show "${C_CYN:-}" "[?] $_cc_ak_q [$_cc_ak_h] $_cc_ak_d (default)"
-    else
-        while :; do
-            printf '%s[?]%s %s [%s]%s ' "${C_CYN:-}" "${C_OFF:-}" "$_cc_ak_q" "$_cc_ak_h" "$(_cc_left_txt)" >/dev/tty
-            if ! _cc_read _cc_ak_a; then
-                printf '\n' >/dev/tty
-                [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
-                _cc_ak_a=""
-            fi
-            case "$_cc_ak_a" in
-                '') _cc_ak_a=$_cc_ak_d; break ;;
-                y|Y|yes|YES|Yes) _cc_ak_a=Y; break ;;
-                n|N|no|NO|No) _cc_ak_a=N; break ;;
-                *) printf '    please answer y or n\n' >/dev/tty ;;
-            esac
-        done
-        [ -n "$CC_TEE" ] && printf '[?] %s [%s] %s\n' "$_cc_ak_q" "$_cc_ak_h" "$_cc_ak_a" >>"$CC_TEE"
-        cc_note "asked: $_cc_ak_q -> $_cc_ak_a"
-        _cc_ak_d=$_cc_ak_a
-    fi
-    [ "$_cc_ak_d" = Y ]
+    case "${2:-N}" in Y|y) _cc_ak_d=y ;; *) _cc_ak_d=n ;; esac
+    cc_choose "$1" "$_cc_ak_d" "y=${3:-yes}" "n=${4:-no}"
+    [ "$CC_CHOICE" = y ]
 }
 
-# cc_ask_text QUESTION DEFAULT -> the answer in CC_ANSWER (DEFAULT on Enter,
-#   with --batch, or with no terminal).
+# cc_ask_text QUESTION DEFAULT [WHAT-TO-TYPE] -> the answer in CC_ANSWER
+#   (DEFAULT on Enter, with --batch, or with no terminal).  WHAT-TO-TYPE is
+#   shown under the question, e.g. "addresses or networks separated by
+#   spaces, like 10.0.0.5 10.0.0.0/24":
+#     [?] Your team's addresses (never blocked)?
+#         type: addresses or networks separated by spaces, like 10.0.0.5 10.0.0.0/24
+#         [Enter = none]:
 cc_ask_text() {
     CC_ANSWER=$2
     if ! _cc_can_ask; then
         cc_show "${C_CYN:-}" "[?] $1 ${2:-(none)} (default)"
         return 0
     fi
-    printf '%s[?]%s %s [%s]%s ' "${C_CYN:-}" "${C_OFF:-}" "$1" "${2:-Enter for none}" "$(_cc_left_txt)" >/dev/tty
+    if [ -n "${3:-}" ]; then
+        printf '%s[?]%s %s\n' "${C_CYN:-}" "${C_OFF:-}" "$1" >/dev/tty
+        printf '      type: %s\n' "$3" >/dev/tty
+        printf '      [Enter = %s]:%s ' "${2:-none}" "$(_cc_left_txt)" >/dev/tty
+    else
+        printf '%s[?]%s %s  [Enter = %s]:%s ' "${C_CYN:-}" "${C_OFF:-}" "$1" "${2:-none}" "$(_cc_left_txt)" >/dev/tty
+    fi
     if ! _cc_read _cc_at_a; then
         printf '\n' >/dev/tty
         [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
         _cc_at_a=""
     fi
     [ -n "$_cc_at_a" ] && CC_ANSWER=$_cc_at_a
-    [ -n "$CC_TEE" ] && printf '[?] %s %s\n' "$1" "$CC_ANSWER" >>"$CC_TEE"
+    [ -n "$CC_TEE" ] && printf '[?] %s %s\n' "$1" "${CC_ANSWER:-(none)}" >>"$CC_TEE"
     cc_note "asked: $1 -> $CC_ANSWER"
     return 0
 }
@@ -1567,23 +1618,24 @@ if [ "$NMAP_MISSING" = 1 ]; then
     cc_show "$C_YEL" "[!] nmap is not installed on this box, so the scan questions are skipped."
     cc_show "$C_YEL" "    Without it: $(printf '%s' "$FALLBACK_PORTS" | tr ',' '\n' | grep -c .) common TCP ports only, a banner instead of a version, no scripts, no vulns, no UDP."
     cc_show "$C_YEL" "    Install it: $(install_hint)"
-    cc_ask "Keep going with the $ENGINE scan anyway?" Y || { cc_show "" "Install nmap and run again: $(install_hint)"; exit 3; }
+    cc_ask "Keep going with the $ENGINE scan anyway?" Y "yes, scan with $ENGINE" "no, stop (install nmap first)" || { cc_show "" "Install nmap and run again: $(install_hint)"; exit 3; }
 elif [ "$ENGINE" = nmap ]; then
     cc_show "$C_GRN" "[ok] nmap found: $(nmap --version 2>/dev/null | head -n 1)"
 fi
 if [ -z "$TARGETS" ]; then
     _can=0; _cc_can_ask && _can=1
     [ "$_can" = 1 ] || cc_die 2 "nothing to scan: give --target or --targets-file (try --help)"
-    cc_ask_text "What should I scan? (one host 10.0.2.5, a range 10.0.2.1-50, a subnet 10.0.2.0/24; several with spaces)" "$(guess_target)"
+    cc_ask_text "What should I scan?" "$(guess_target)" "one host 10.0.2.5, a range 10.0.2.1-50 or a subnet 10.0.2.0/24; several separated by spaces"
     for _t in $(printf '%s' "$CC_ANSWER" | tr ',' ' '); do add_target "$_t"; done
     [ -n "$TARGETS" ] || cc_die 2 "nothing to scan"
 fi
 
-# ask VAR QUESTION DEFAULT -> fill VAR with Y or N unless a flag already did.
+# ask VAR QUESTION DEFAULT [YES-MEANS] [NO-MEANS] -> fill VAR with Y or N
+#   unless a flag already did.
 ask() {
     eval "_ak=\$$1"
     [ -n "$_ak" ] && return 0
-    if cc_ask "$2" "$3"; then eval "$1=Y"; else eval "$1=N"; fi
+    if cc_ask "$2" "$3" "${4:-yes}" "${5:-no}"; then eval "$1=Y"; else eval "$1=N"; fi
 }
 # ask_val VAR CHECK QUESTION DEFAULT -> fill VAR with a typed answer that
 #   passes CHECK (ok_speed, ok_top, ok_ports), unless a flag already did.
@@ -1593,7 +1645,7 @@ ask_val() {
     [ -n "$_av" ] && return 0
     _av_n=0
     while :; do
-        cc_ask_text "$3" "$4"
+        cc_ask_text "$3" "$4" "${5:-}"
         if "$2" "$CC_ANSWER"; then eval "$1=\$CC_ANSWER"; return 0; fi
         _av_n=$((_av_n + 1))
         [ "$_av_n" -lt 3 ] && _cc_can_ask || cc_die 2 "not a usable answer: '$CC_ANSWER'"
@@ -1601,22 +1653,22 @@ ask_val() {
     done
 }
 if [ "$ENGINE" = nmap ]; then
-    ask_val SPEED ok_speed "How aggressive? 1-2 slow and quiet, 3 normal, 4 fast (good on a LAN), 5 fastest (can miss ports)" 4
-    ask A_QUICK   "Quick scan of the top ports first?" Y
-    [ "$A_QUICK" = Y ] && ask_val TOP ok_top "How many top ports in the quick scan? (100 is very fast, 1000 is nmap's normal)" 1000
+    ask_val SPEED ok_speed "How aggressive?" 4 "1-2 slow and quiet, 3 normal, 4 fast (good on a LAN), 5 fastest (can miss ports)"
+    ask A_QUICK   "Quick scan of the top ports first?" Y "yes, quick scan first" "no, skip it"
+    [ "$A_QUICK" = Y ] && ask_val TOP ok_top "How many top ports in the quick scan?" 1000 "a number: 100 is very fast, 1000 is nmap's normal"
     if [ "$EXTRA_SET" = 0 ] && [ -z "$PORTS" ]; then
-        cc_ask_text "Any other ports to always scan? (e.g. 8080,9000-9100)" ""
+        cc_ask_text "Any other ports to always scan?" "" "ports and ranges separated by commas, like 8080,9000-9100"
         ok_ports "$CC_ANSWER" || cc_die 2 "not a port list: '$CC_ANSWER' (use numbers, commas and ranges)"
         EXTRA=$CC_ANSWER
     fi
-    ask A_FULL    "Full scan of all 65535 ports on the hosts that are up? (slow: minutes per host)" Y
-    ask A_SVC     "Find the service and version behind each open port?" Y
-    ask A_SCRIPTS "Run nmap's default scripts on the open ports (anonymous FTP, SMB signing, ...)?" Y
-    ask A_VULN    "Run nmap's vuln scripts on the open ports? (adds a few minutes)" N
-    [ "$A_VULN" = Y ] && ask A_VSAFE "Only the safe vuln scripts? (no = every vuln script; some can crash a service)" Y
+    ask A_FULL    "Full scan of all 65535 ports on the hosts that are up?" Y "yes, full scan (slow: minutes per host)" "no, quick scan only"
+    ask A_SVC     "Find the service and version behind each open port?" Y "yes, find them" "no, ports only"
+    ask A_SCRIPTS "Run nmap's default scripts on the open ports (anonymous FTP, SMB signing, ...)?" Y "yes, run them" "no, skip them"
+    ask A_VULN    "Run nmap's vuln scripts on the open ports?" N "yes, run them (adds a few minutes)" "no, skip them"
+    [ "$A_VULN" = Y ] && ask A_VSAFE "Only the safe vuln scripts?" Y "yes, safe ones only" "no, every vuln script (some can crash a service)"
     if [ "$IS_ROOT" = 1 ]; then
-        ask A_OS  "Guess each host's operating system?" Y
-        ask A_UDP "Scan the top 25 UDP ports too? (DNS, SNMP, TFTP, ...)" N
+        ask A_OS  "Guess each host's operating system?" Y "yes, guess it" "no, skip it"
+        ask A_UDP "Scan the top 25 UDP ports too? (DNS, SNMP, TFTP, ...)" N "yes, scan UDP too" "no, TCP only"
     else
         [ "$A_OS" = Y ] && cc_warn "OS detection needs root: skipped"
         [ "$A_UDP" = Y ] && cc_warn "UDP scanning needs root: skipped"
@@ -1834,7 +1886,7 @@ run_nmap() {
             # Which hosts: all that answered, or the ones named.
             if [ -z "$FULLHOSTS" ] && [ "$(grep -c . "$W/up_targets")" -gt 1 ]; then
                 show "$C_GRY" "  up: $(tr '\n' ' ' <"$W/up_targets")"
-                cc_ask_text "Full scan which hosts? (all, or addresses with spaces)" all
+                cc_ask_text "Full scan which hosts?" all "all, or addresses separated by spaces"
                 FULLHOSTS=$CC_ANSWER
             fi
             case "$FULLHOSTS" in

@@ -671,58 +671,109 @@ _cc_left_txt() {
     return 0
 }
 
+# cc_choose QUESTION DEFAULT "l=meaning" "m=meaning" ... -> CC_CHOICE
+#   Every answer is spelled out, in the password-rotation style:
+#     [?] Allow root to log in over SSH? (now: key-only)
+#         [y] yes, with a password or a key
+#         [n] no, never
+#         [k] key-only, root needs an SSH key
+#         [l] leave it as it is
+#         Answer [y/n/K/l]:
+#   Enter takes DEFAULT (a letter, shown in capitals).  The first word of a
+#   meaning works too ("yes", "no", "key-only").  Anything else is refused
+#   and asked again.  With --batch or no terminal the default is taken and
+#   shown with its meaning.
+cc_choose() {
+    _cc_ch_q=$1; _cc_ch_d=$(printf '%s' "$2" | tr 'A-Z' 'a-z'); shift 2
+    _cc_ch_hint=""; _cc_ch_m=""
+    for _cc_ch_o in "$@"; do
+        _cc_ch_l=${_cc_ch_o%%=*}
+        if [ "$_cc_ch_l" = "$_cc_ch_d" ]; then _cc_ch_m=${_cc_ch_o#*=}; _cc_ch_l=$(printf '%s' "$_cc_ch_l" | tr 'a-z' 'A-Z'); fi
+        _cc_ch_hint="$_cc_ch_hint/$_cc_ch_l"
+    done
+    _cc_ch_hint=${_cc_ch_hint#/}
+    if ! _cc_can_ask; then
+        cc_show "${C_CYN:-}" "[?] $_cc_ch_q [$_cc_ch_hint] $_cc_ch_d (default): $_cc_ch_m"
+        CC_CHOICE=$_cc_ch_d
+        return 0
+    fi
+    # The question, then each answer on its own line.
+    printf '%s[?]%s %s\n' "${C_CYN:-}" "${C_OFF:-}" "$_cc_ch_q" >/dev/tty
+    for _cc_ch_o in "$@"; do printf '      [%s] %s\n' "${_cc_ch_o%%=*}" "${_cc_ch_o#*=}" >/dev/tty; done
+    _cc_ch_prompt="      Answer [$_cc_ch_hint]:"
+    while :; do
+        printf '%s%s ' "$_cc_ch_prompt" "$(_cc_left_txt)" >/dev/tty
+        if ! _cc_read _cc_ch_a; then
+            printf '\n' >/dev/tty
+            [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
+            _cc_ch_a=""
+        fi
+        _cc_ch_t=$(printf '%s' "$_cc_ch_a" | tr 'A-Z' 'a-z' | sed 's/^ *//; s/ *$//')
+        [ -z "$_cc_ch_t" ] && _cc_ch_t=$_cc_ch_d
+        # The letter, or the first word of its meaning ("yes", "key-only").
+        _cc_ch_a=""
+        for _cc_ch_o in "$@"; do
+            _cc_ch_w=$(printf '%s' "${_cc_ch_o#*=}" | awk '{ w = tolower($1); sub(/[,.:;]$/, "", w); print w }')
+            if [ "$_cc_ch_t" = "${_cc_ch_o%%=*}" ] || [ "$_cc_ch_t" = "$_cc_ch_w" ]; then _cc_ch_a=${_cc_ch_o%%=*}; fi
+        done
+        [ -n "$_cc_ch_a" ] && break
+        printf '      "%s" is not an answer here: type one of [%s] (Enter = %s).\n' "$_cc_ch_t" "$_cc_ch_hint" "$_cc_ch_d" >/dev/tty
+    done
+    CC_CHOICE=$_cc_ch_a
+    for _cc_ch_o in "$@"; do [ "${_cc_ch_o%%=*}" = "$CC_CHOICE" ] && _cc_ch_m=${_cc_ch_o#*=}; done
+    [ -n "$CC_TEE" ] && printf '[?] %s [%s] %s: %s\n' "$_cc_ch_q" "$_cc_ch_hint" "$CC_CHOICE" "$_cc_ch_m" >>"$CC_TEE"
+    cc_note "asked: $_cc_ch_q -> $CC_CHOICE: $_cc_ch_m"
+    return 0
+}
+
 # _cc_can_ask -> true when there is someone to ask.
 #   CCDC_NO_TTY=1 says there is nobody (the test suite sets it, so tests
 #   never wait for an answer when run from a terminal).
 _cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${CCDC_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
 
-# cc_ask QUESTION DEFAULT -> 0 for yes, 1 for no.  DEFAULT is Y or N.
-#   Enter takes the default.  With --batch or no terminal the default is
-#   taken and shown.  If the revert timer runs out while waiting, the script
-#   stops (nothing has been changed while questions are still being asked).
+# cc_ask QUESTION DEFAULT [YES-MEANS] [NO-MEANS] -> 0 for yes, 1 for no.
+#   DEFAULT is Y or N.  Shown like cc_choose, with what each answer does:
+#     [?] Back up the web roots?
+#         [y] yes, back them up
+#         [n] no, skip them
+#         Answer [Y/n]:
+#   Without meanings the answers are plain "yes" and "no".  Enter takes the
+#   default.  With --batch or no terminal the default is taken and shown.
+#   If the revert timer runs out while waiting, the script stops (nothing
+#   has been changed while questions are still being asked).
 cc_ask() {
-    _cc_ak_q=$1; _cc_ak_d=${2:-N}
-    case "$_cc_ak_d" in Y|y) _cc_ak_h="Y/n"; _cc_ak_d=Y ;; *) _cc_ak_h="y/N"; _cc_ak_d=N ;; esac
-    if ! _cc_can_ask; then
-        cc_show "${C_CYN:-}" "[?] $_cc_ak_q [$_cc_ak_h] $_cc_ak_d (default)"
-    else
-        while :; do
-            printf '%s[?]%s %s [%s]%s ' "${C_CYN:-}" "${C_OFF:-}" "$_cc_ak_q" "$_cc_ak_h" "$(_cc_left_txt)" >/dev/tty
-            if ! _cc_read _cc_ak_a; then
-                printf '\n' >/dev/tty
-                [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
-                _cc_ak_a=""
-            fi
-            case "$_cc_ak_a" in
-                '') _cc_ak_a=$_cc_ak_d; break ;;
-                y|Y|yes|YES|Yes) _cc_ak_a=Y; break ;;
-                n|N|no|NO|No) _cc_ak_a=N; break ;;
-                *) printf '    please answer y or n\n' >/dev/tty ;;
-            esac
-        done
-        [ -n "$CC_TEE" ] && printf '[?] %s [%s] %s\n' "$_cc_ak_q" "$_cc_ak_h" "$_cc_ak_a" >>"$CC_TEE"
-        cc_note "asked: $_cc_ak_q -> $_cc_ak_a"
-        _cc_ak_d=$_cc_ak_a
-    fi
-    [ "$_cc_ak_d" = Y ]
+    case "${2:-N}" in Y|y) _cc_ak_d=y ;; *) _cc_ak_d=n ;; esac
+    cc_choose "$1" "$_cc_ak_d" "y=${3:-yes}" "n=${4:-no}"
+    [ "$CC_CHOICE" = y ]
 }
 
-# cc_ask_text QUESTION DEFAULT -> the answer in CC_ANSWER (DEFAULT on Enter,
-#   with --batch, or with no terminal).
+# cc_ask_text QUESTION DEFAULT [WHAT-TO-TYPE] -> the answer in CC_ANSWER
+#   (DEFAULT on Enter, with --batch, or with no terminal).  WHAT-TO-TYPE is
+#   shown under the question, e.g. "addresses or networks separated by
+#   spaces, like 10.0.0.5 10.0.0.0/24":
+#     [?] Your team's addresses (never blocked)?
+#         type: addresses or networks separated by spaces, like 10.0.0.5 10.0.0.0/24
+#         [Enter = none]:
 cc_ask_text() {
     CC_ANSWER=$2
     if ! _cc_can_ask; then
         cc_show "${C_CYN:-}" "[?] $1 ${2:-(none)} (default)"
         return 0
     fi
-    printf '%s[?]%s %s [%s]%s ' "${C_CYN:-}" "${C_OFF:-}" "$1" "${2:-Enter for none}" "$(_cc_left_txt)" >/dev/tty
+    if [ -n "${3:-}" ]; then
+        printf '%s[?]%s %s\n' "${C_CYN:-}" "${C_OFF:-}" "$1" >/dev/tty
+        printf '      type: %s\n' "$3" >/dev/tty
+        printf '      [Enter = %s]:%s ' "${2:-none}" "$(_cc_left_txt)" >/dev/tty
+    else
+        printf '%s[?]%s %s  [Enter = %s]:%s ' "${C_CYN:-}" "${C_OFF:-}" "$1" "${2:-none}" "$(_cc_left_txt)" >/dev/tty
+    fi
     if ! _cc_read _cc_at_a; then
         printf '\n' >/dev/tty
         [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
         _cc_at_a=""
     fi
     [ -n "$_cc_at_a" ] && CC_ANSWER=$_cc_at_a
-    [ -n "$CC_TEE" ] && printf '[?] %s %s\n' "$1" "$CC_ANSWER" >>"$CC_TEE"
+    [ -n "$CC_TEE" ] && printf '[?] %s %s\n' "$1" "${CC_ANSWER:-(none)}" >>"$CC_TEE"
     cc_note "asked: $1 -> $CC_ANSWER"
     return 0
 }
@@ -1457,7 +1508,7 @@ protected_check() {
     _pc=${CC_PROTECTED:-${CC_OUT:-${CCDC_OUT:-${HOME:-/root}/ccdc-out}}/protected.csv}
     [ -r "$_pc" ] && return 0
     cc_show "$C_YEL" "[*] No protected list at $_pc (the list of scored ports, services and accounts no script may touch)."
-    if cc_ask "Continue without a protected list? LX-39 does not touch ports or services anyway" N; then CC_NO_PROTECTED=1; return 0; fi
+    if cc_ask "Continue without a protected list? (LX-39 does not touch ports or services anyway)" N "yes, continue" "no, stop"; then CC_NO_PROTECTED=1; return 0; fi
     return 1
 }
 if [ "$CC_APPLY" = 1 ] && ! protected_check; then
@@ -1933,9 +1984,8 @@ fix_desc() { list_fixes | awk -v f="$1" '$1 == f { $1 = ""; sub(/^ +/, ""); prin
 
 header "QUESTIONS (Enter = the default in capitals)"
 if [ -z "$BOX" ]; then
-    cc_ask_text "Which box is this? splunk / webmail / ecomm / other" other
-    BOX=$CC_ANSWER
-    case "$BOX" in splunk|webmail|ecomm|other) ;; *) cc_show "$C_GRY" "    '$BOX' is not one of the four: using other"; BOX=other ;; esac
+    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "o=other"
+    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
 fi
 case "$BOX" in
     splunk)  cc_show "$C_GRY" "    Scored here: chrony (123/udp), Splunk management (8089), search, SSH, ping. LX-39 touches none of them." ;;
@@ -1959,21 +2009,21 @@ else
                 # unless --no-forwarding said otherwise.
                 if ! _cc_can_ask; then cc_show "$C_GRY" "    IP forwarding: left on (turn it off with --no-forwarding)"; continue; fi
                 _d=N; [ "$BOX" = ecomm ] && _d=Y
-                if cc_ask "Does this box route traffic or run Docker/containers? (they need IP forwarding)" "$_d"; then
+                if cc_ask "Does this box route traffic or run Docker/containers? (they need IP forwarding)" "$_d" "yes, it does (forwarding stays on)" "no, it does not"; then
                     cc_show "$C_GRY" "    IP forwarding stays on."
-                elif cc_ask "Turn IP forwarding off? (forwarding)" Y; then
+                elif cc_ask "Turn IP forwarding off? (forwarding)" Y "yes, turn it off" "no, leave it on"; then
                     _keep="$_keep $_f"; NOFWD=1
                 fi ;;
-            ipv6)  cc_ask "Turn IPv6 off? Check no scored service uses IPv6 first (ipv6)" Y && _keep="$_keep $_f" ;;
-            hosts) cc_ask "Check /etc/hosts for odd entries? Report only (hosts)" Y && _keep="$_keep $_f" ;;
+            ipv6)  cc_ask "Turn IPv6 off? Check no scored service uses IPv6 first (ipv6)" Y "yes, turn IPv6 off" "no, leave it on" && _keep="$_keep $_f" ;;
+            hosts) cc_ask "Check /etc/hosts for odd entries? (hosts)" Y "yes, check it (report only, changes nothing)" "no, skip it" && _keep="$_keep $_f" ;;
             uid0|emptypw|suid)
                 # Show what it found first, so you know what you are answering.
                 case "$_f" in uid0) uid0_list >"$W/found" ;; emptypw) emptypw_list >"$W/found" ;; suid) suid_list >"$W/found" ;; esac
                 if [ ! -s "$W/found" ]; then cc_show "$C_GRY" "    $_f: nothing found ($(fix_desc "$_f"))"; continue; fi
                 _nf=$(grep -c . "$W/found")
                 cc_show "$C_YEL" "    $_f found: $(head -n 6 "$W/found" | tr '\n' ' ')$([ "$_nf" -gt 6 ] && echo "+$((_nf - 6)) more (all in the plan below)")"
-                cc_ask "$(fix_desc "$_f")? ($_f)" Y && _keep="$_keep $_f" ;;
-            *)     cc_ask "$(fix_desc "$_f")? ($_f)" Y && _keep="$_keep $_f" ;;
+                cc_ask "$(fix_desc "$_f")? ($_f)" Y "yes, fix it" "no, skip it" && _keep="$_keep $_f" ;;
+            *)     cc_ask "$(fix_desc "$_f")? ($_f)" Y "yes, fix it" "no, skip it" && _keep="$_keep $_f" ;;
         esac
         # A fix that acts on named items: ask what to leave alone (unless
         # --exclude already said).
@@ -1986,7 +2036,7 @@ else
             sysctl) _what="settings, e.g. net.ipv4.tcp_syncookies" ;;
             logging) _what="services: rsyslog, syslog-ng, auditd" ;;
         esac
-        cc_ask_text "  Leave any alone for $_f? ($_what, comma list)" ""
+        cc_ask_text "  Leave any alone for $_f?" "" "$_what separated by commas, or Enter to fix them all"
         [ -n "$CC_ANSWER" ] && EXCL="$EXCL,$CC_ANSWER"
     done
     FIXES=$_keep
@@ -2089,7 +2139,7 @@ elif [ "$CANAPPLY" = 0 ]; then
     cc_show "$C_GRY" "$NCH change(s) planned. Dry run only, so nothing was changed."
 else
     _ad=N; [ "$APPLY_FLAG" = 1 ] && _ad=Y
-    if cc_ask "Apply these $NCH change(s)?" "$_ad"; then
+    if cc_ask "Apply these $NCH change(s)?" "$_ad" "yes, apply them now" "no, change nothing"; then
         if [ "$APPLY_FLAG" = 0 ] && ! protected_check; then
             cc_show "$C_YEL" "[*] Not applied: no protected list."
         elif cc_timer_fired || { [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -lt 3 ]; }; then

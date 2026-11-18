@@ -114,7 +114,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     printf '10.0.0.5\n\n\n\nn\n\ny\n8089/tcp\n\n\n\n' >"$T_TMP/ans"
     CCDC_NO_TTY=0 script -qc "$SH $C --out $O --no-protected --no-color" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
     tt=$(cat "$T_TMP/tty.out")
-    t_has "$tt" "Your team's addresses that must always get in" "asks for the team's addresses"
+    t_has "$tt" "Your team's addresses: they always get in" "asks for the team's addresses"
     t_has "$tt" "Other ports to open that are NOT listening now" "asks for ports that are down"
     t_has "$tt" "Allow SSH ONLY from your team's addresses?" "asks about SSH once there are team addresses"
     d=$(printf '%s\n' "$tt" | tr -d '\r' | sed -n 's/^All results: //p' | tail -n 1)
