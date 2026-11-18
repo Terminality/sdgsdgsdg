@@ -1998,7 +1998,7 @@ _ini_get() {
 #   other uncommented ones are dropped; appended when there is none.
 _ini_set() {
     awk -v k="$2" -v v="$3" '
-        function key(s,   a) { sub(/^[ \t]+/, "", s); if (s ~ /^[#;]/) return ""; split(s, a, "="); gsub(/[ \t]/, "", a[1]); return (index(s, "=") ? a[1] : "") }
+        function key(s,   a) { sub(/^[ \t]+/, "", s); if (s ~ /^[#;]/) return ""; split(s, a, "="); gsub(/[ \t]/, "", a[1]); return (index(s, "=") ? a[1] : "") }  # awk, not shell: posix-ok
         skip && /^[ \t]+[^ \t]/ { next }
         { skip = 0 }
         key($0) == k && $0 !~ /^[ \t]/ { if (!done) { print k " = " v; done = 1 }; skip = 1; next }

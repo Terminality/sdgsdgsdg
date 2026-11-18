@@ -1,13 +1,13 @@
 # Build status
 
-26 of 32 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+27 of 33 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
 | Tier | Built | Total |
 | --- | --- | --- |
 | Enum (look only) | 6 | 7 |
-| Backup and prep | 4 | 4 |
+| Backup and prep | 5 | 5 |
 | Hardening: easy | 3 | 3 |
 | Hardening: medium | 2 | 2 |
 | Hardening: hard | 2 | 6 |
@@ -34,6 +34,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LX-31 | Linux backup | none | built | `roles/linux/LX-31-backup.sh` |
 | WN-35 | Windows backup | none | built | `roles/windows-ad/WN-35-backup.ps1` |
 | SV-14 | Database backup | none | built | `roles/applications/SV-14-db-backup.sh` |
+| SV-15 | Site backup and restore | medium | built | `roles/applications/SV-15-site-backup.sh` |
 | NW-01 | Network config backup and diff | none | built | `roles/network/NW-01-config-backup.sh` |
 
 ## Hardening: easy

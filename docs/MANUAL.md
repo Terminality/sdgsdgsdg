@@ -40,6 +40,7 @@ Contents:
 30. Linux session & command logging, `roles/linux/LX-41-session-log.sh` (LX-41)
 31. Service hardening (FTP + legacy), `roles/applications/SV-30-service-hardening.sh` (SV-30)
 32. Linux persistence sweep, `roles/linux/LX-42-persistence-sweep.sh` (LX-42)
+33. Site backup and restore, `roles/applications/SV-15-site-backup.sh` (SV-15)
 
 ---
 
@@ -734,7 +735,20 @@ Each change gets one flag: a backdoor port that is HIGH is not also listed as ME
 
 ## 13. Web and database enum, `roles/applications/SV-01-web-db-enum.sh` (SV-01)
 
-Shows what web sites and databases are on a Linux or Unix host and what is wrong with them. Run it on every box that serves a web site or holds a database, right after the Linux enum. It only reads; it never records a password.
+Shows what web sites and databases are on a Linux or Unix host and what is wrong with them: the web servers, every site, **which URL path serves which folder or app**, **which languages and app servers run** (PHP, Python, Node.js, Java, Ruby, .NET), the web roots, PHP settings, web apps and databases. Run it on every box that serves a web site or holds a database, right after the Linux enum. It only reads, and never records a password.
+
+Same look as the Linux enum: numbered sections with flags shown live (`[!] FIX` red, `[*] LOOK` yellow), what was found in green, and a summary at the end.
+
+### The questions
+
+Enter takes the default, and a flag answers each one ahead of time. `--batch` takes all the defaults.
+
+| Question | Default | Flag |
+| --- | --- | --- |
+| Look at everything? (no = pick the sections) | yes | `--only` / `--skip` |
+| Search file contents for web shells and phpinfo pages? | yes | `--fast` (no) / `--deep` (yes) |
+| Other web folders to look in? | none | `--webroot DIR` |
+| Log in to the databases (read-only)? | yes | `--no-db` / `--db` |
 
 ### How to run it
 
@@ -747,7 +761,7 @@ sudo sh SV-01-web-db-enum.sh --only mysql --mysql-cnf /root/my.cnf       # when 
 
 | Option | What it does |
 | --- | --- |
-| `--only` / `--skip` | Run or leave out sections: `servers sites webroots php apps mysql postgres datastores` |
+| `--only` / `--skip` | Run or leave out sections: `servers sites paths runtimes webroots php apps mysql postgres datastores` |
 | `--fast` | Skip reading file contents (the web shell and phpinfo search). Names, owners and settings are still checked |
 | `--webroot DIR` | Also scan this folder as a web root. Repeat for more |
 | `--apache-conf FILE` / `--nginx-conf FILE` | Read these config files directly instead of asking the server which files it uses. For when `apachectl` or `nginx` is missing, broken or replaced |
@@ -759,13 +773,15 @@ Run it as root. As a normal user it still runs, but it cannot read most configs,
 
 ### What it produces
 
-In `<out>/SV-01_<host>_<UTC time>/`:
+In `<out>/web-enum-N/`: `output.txt` (the screen without colour), `summary.txt`, `run.txt`, and a readable `.txt` table for each of these (the CSVs are in `csv/`):
 
 | File | Contents |
 | --- | --- |
 | `summary.txt` | Web servers, sites, web roots, apps, databases; a section table; HIGH and MED flags |
 | `servers.csv`, `fpm_pools.csv` | Each web server and PHP-FPM pool: version, running or not, the account it runs as |
 | `sites.csv` | Each Apache virtual host and nginx server block: name, listen address, TLS, web root, config file and line |
+| `paths.csv` | Each URL path and what serves it: web roots, aliases, CGI folders, proxies to an app (`ProxyPass`, `proxy_pass`), PHP and uWSGI handlers, status pages |
+| `runtimes.csv` | Languages installed (with version), app servers running (gunicorn, uwsgi, Node, Java/Tomcat, puma, dotnet ...), app folders (`package.json`, `manage.py`, `Gemfile`, `.war` ...), and unknown programs on web ports |
 | `webroots.csv` | Each web root: owner, mode, file counts, files owned by the web account, world-writable files |
 | `files.csv` | Every file that should not be in a web root, with its kind (`webshell`, `upload_code`, `dump`, `env`, `vcs`, `phpinfo`, `config_readable`, `backup`) |
 | `php.csv` | The risky settings of each `php.ini`, after its `conf.d` overrides |
@@ -779,8 +795,8 @@ In `<out>/SV-01_<host>_<UTC time>/`:
 
 | Severity | When |
 | --- | --- |
-| HIGH | A file that looks like a web shell; a program file in an upload or media folder; a database dump or `.env` inside a web root; a web server or PHP-FPM pool running entirely as root; `allow_url_include` on; a database account with no password; MySQL root or an admin account allowed from other hosts; a user-defined function (the `lib_mysqludf_sys` backdoor); a PostgreSQL `trust` rule for network logins; logging in to MySQL with no name or password; a Redis or similar store open to the network without a password |
-| MED | Directory listing on; a web root owned by the web account; world-writable files in a web root; `.git` folders, backups and phpinfo pages in a web root; app configs every local account can read; MySQL `secure_file_priv` empty; accounts with the FILE privilege; anonymous MySQL accounts; triggers and scheduled events; extra PostgreSQL superusers; `trust` for local logins; a database or data store listening on a network address |
+| HIGH | A development or debug server running (`manage.py runserver`, `flask run`, `php -S`, `node --inspect`, `npm run dev`, Java debug agent): anyone who reaches it can run code; a URL path that serves `/`, `/etc`, `/root` or logs; a file that looks like a web shell; a program file in an upload or media folder; a database dump or `.env` inside a web root; a web server or PHP-FPM pool running entirely as root; `allow_url_include` on; a database account with no password; MySQL root or an admin account allowed from other hosts; a user-defined function (the `lib_mysqludf_sys` backdoor); a PostgreSQL `trust` rule for network logins; logging in to MySQL with no name or password; a Redis or similar store open to the network without a password |
+| MED | A server-status page open to everyone; an unknown program serving web traffic on a web port; an app server running as root; directory listing on; a web root owned by the web account; world-writable files in a web root; `.git` folders, backups and phpinfo pages in a web root; app configs every local account can read; MySQL `secure_file_priv` empty; accounts with the FILE privilege; anonymous MySQL accounts; triggers and scheduled events; extra PostgreSQL superusers; `trust` for local logins; a database or data store listening on a network address |
 | LOW | Server version shown in headers; PHP `display_errors`, `expose_php` on, `disable_functions` empty; MySQL `local_infile` on; accounts allowed from any address; PostgreSQL `password` (clear text) logins |
 
 ### What to watch for
@@ -2258,4 +2274,62 @@ With `--apply` it asks about each HIGH and MED finding that can be removed. File
 ### Outputs
 
 In `persistence-N/`: `output.txt`, `summary.txt` (counts per area, HIGH and MED list), `findings.txt` (every finding, numbered), `csv/`, `quarantine/`, `revert.sh`. No password hash is ever written.
+
+---
+
+## 33. Site backup and restore, `roles/applications/SV-15-site-backup.sh` (SV-15)
+
+Keeps every web site restorable. It backs up each site's files and database, checks a site against the backup at any time, and puts back **only what changed** when the red team defaces a page, deletes files, plants a web shell or wipes the database. Your own fixes elsewhere stay put.
+
+**Back up after cleaning.** A web shell that is already there goes into the backup and looks normal to the check. Run SV-01 first.
+
+### How to run it
+
+```sh
+sudo sh SV-15-site-backup.sh                                   # asks what to do
+sudo sh SV-15-site-backup.sh --backup --batch                  # back up every site
+sudo sh SV-15-site-backup.sh --check --batch                   # what changed? (changes nothing)
+sudo sh SV-15-site-backup.sh --restore                         # dry run: shows what it would put back
+sudo sh SV-15-site-backup.sh --restore --protected p.csv --apply
+```
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| What do you want to do? | `[b]` back up, `[c]` check, `[r]` restore (default: back up if there is no backup yet, else check) | `--backup` / `--check` / `--restore` |
+| Which sites? (backup) | all, or names | `--site NAME` |
+| Back up each site's database too? | yes / no | `--db` / `--no-db` |
+| Copy the backup off the box? | an scp destination | `--copy-to DEST` |
+| Per site (restore) | `[a]` all back to the backup, `[f]` files only, `[q]` quarantine new files only, `[n]` nothing | `--what all/files/new/none` |
+| Put the database back too? (restore) | yes / no (default no) | `--restore-db` / `--no-restore-db` |
+
+### What it does
+
+- **Finds the sites** from the Apache and nginx configs, every folder in `/var/www`, and `--webroot DIR`.
+- **Finds each site's database** in the app's own config: WordPress, Joomla, Drupal, PrestaShop, OpenCart, Magento, Roundcube or `.env`. MySQL/MariaDB and PostgreSQL are dumped. SQLite files are already in the file archive. A database on another host is reported, not dumped.
+- **Backup** writes `site-backup-N/`. For each site: `files.tar.gz`, a hash of every file (`files.sha256`) and the database dump. Once per box: the Apache, nginx and PHP configs. The folder is mode 700, because it holds dumps and passwords.
+- **Check** compares each site with the newest backup (or `--from DIR`):
+  - **CHANGED** files: a page means "defaced?", code means "backdoor added?", and a changed `.htaccess` is HIGH
+  - **DELETED** files
+  - **NEW** files: a new `.php`/`.jsp`/`.asp`/`.sh` is HIGH ("web shell?"), anything else LOW
+  - changed web server and PHP config files
+- **Restore** does the same comparison, then for each site puts back changed and deleted files (owners and modes kept), moves new files to quarantine, and loads the database if you said so. The current files and database are saved first, and a revert timer runs. Afterwards it checks again that the site matches. A site whose files are unchanged is still offered a database restore.
+
+### What to watch for
+
+- **Real uploads since the backup show as NEW.** They are moved to quarantine, not deleted, so look before saying `[a]`, or use `[f]`.
+- **Database restore loses everything since the backup**, including real orders or mail. The current database is saved in `before/` and the revert puts it back.
+- **Web server configs are reported, not restored,** because a bad config breaks the site on restart. `RESTORE.txt` in the backup shows how to put one back and test it.
+- **Permissions are not compared,** only content. LX-40 watches for permission changes.
+- **Back up again after big fixes,** so the check compares against the clean state. `--keep N` drops old backups.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `no site backup found` (exit 3) | No `--backup` yet in this `--out` | Run `--backup` first, or `--from DIR` |
+| `database ...: could not log in` | root cannot log in through the socket | `--mysql-cnf FILE` with a `[client]` user and password |
+| The backup is too big | Media or caches | `--exclude '*/cache/*'`, or raise `--max-mb` |
+| A site is missing | Its folder is outside the usual places | `--webroot DIR` |
 
