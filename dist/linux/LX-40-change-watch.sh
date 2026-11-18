@@ -1515,7 +1515,7 @@ proc_info() {
     [ -n "$PROCROOT" ] && [ -n "$1" ] && [ -d "$PROCROOT/$1" ] || return 0
     # shellcheck disable=SC2012  # ls: the owner of /proc/PID is the account
     PR_USER=$(ls -ld "$PROCROOT/$1" 2>/dev/null | awk '{ print $3 }')
-    PR_CMD=$(tr '\000' ' ' <"$PROCROOT/$1/cmdline" 2>/dev/null | tr '|\n\r\t' '/   ' | sed 's/ *$//' | cut -c1-160)
+    PR_CMD=$(tr '\000' ' ' 2>/dev/null <"$PROCROOT/$1/cmdline" | tr '|\n\r\t' '/   ' | sed 's/ *$//' | cut -c1-160)
     PR_EXE=$(readlink "$PROCROOT/$1/exe" 2>/dev/null) || PR_EXE=""
 }
 # shellish NAME -> true for a shell, interpreter or network tool: almost never
@@ -1663,13 +1663,13 @@ snap_conns() {
     fi | awk -v lp=" $_lp " -v adm=" $ADMIN_PORTS " -v team="$TEAM" '
         function ip4(s,   a, n) { n = split(s, a, "."); if (n != 4) return -1; return ((a[1] * 256 + a[2]) * 256 + a[3]) * 256 + a[4] }  # awk: posix-ok
         function hp(s,   h, p) { p = s; sub(/.*:/, "", p); h = s; sub(/:[^:]*$/, "", h); gsub(/[][]/, "", h); sub(/%.*/, "", h); sub(/^::[fF][fF][fF][fF]:/, "", h); H = h; P = p }  # awk: posix-ok
-        function inteam(ip,   i, t, net, bits, d, v, nv, x) {  # awk: posix-ok
+        function inteam(ip,   i, j, t, net, bits, d, v, nv, x) {  # awk: posix-ok (no "^": busybox awk may lack math)
             for (i = 1; i <= nt; i++) {
                 t = tm[i]; net = t; bits = -1
                 x = index(t, "/"); if (x) { net = substr(t, 1, x - 1); bits = substr(t, x + 1) + 0 }
                 if (net == ip) return 1
                 v = ip4(ip); nv = ip4(net)
-                if (v >= 0 && nv >= 0 && bits >= 0) { d = 2 ^ (32 - bits); if (int(v / d) == int(nv / d)) return 1 }
+                if (v >= 0 && nv >= 0 && bits >= 0) { d = 1; for (j = bits; j < 32; j++) d = d * 2; if (int(v / d) == int(nv / d)) return 1 }
                 else if (v < 0 && bits >= 0) { sub(/:+$/, "", net); if (net != "" && index(tolower(ip), tolower(net) ":") == 1) return 1 }
             }
             return 0

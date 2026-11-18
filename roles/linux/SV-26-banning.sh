@@ -480,7 +480,7 @@ if [ "$CC_APPLY" = 1 ]; then DS=$STATE; else DS="$W/dry"; mkdir -p "$DS"; cp "$S
 read_new() {
     : >"$W/offsets.new"
     while IFS= read -r _f; do
-        _size=$(wc -c <"$_f" 2>/dev/null | tr -d ' ')
+        _size=$(wc -c 2>/dev/null <"$_f" | tr -d ' ')
         _off=$(awk -F'\t' -v f="$_f" '$1 == f { print $2 }' "$DS/offsets")
         if [ -z "$_off" ]; then
             tail -n "$HIST" "$_f" 2>/dev/null

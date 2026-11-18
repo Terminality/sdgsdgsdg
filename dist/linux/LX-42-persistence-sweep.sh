@@ -1937,7 +1937,7 @@ a_preload() {
     if [ -n "$PROCROOT" ]; then
         for _e in "$PROCROOT"/[0-9]*/environ; do
             [ -r "$_e" ] || continue
-            _v=$(tr '\000' '\n' <"$_e" 2>/dev/null | grep -E -m 1 '^LD_(PRELOAD|AUDIT)=') || continue
+            _v=$(tr '\000' '\n' 2>/dev/null <"$_e" | grep -E -m 1 '^LD_(PRELOAD|AUDIT)=') || continue
             _pid=${_e%/environ}; _pid=${_pid##*/}
             f HIGH preload "pid $_pid ($(cat "$PROCROOT/$_pid/comm" 2>/dev/null))" "running with $_v" none
         done
@@ -2221,7 +2221,7 @@ a_procs() {
         _pid=${_pd##*/}; [ "$_pid" = "$_self" ] && continue
         _exe=$(readlink "$_pd/exe" 2>/dev/null) || _exe=""
         _comm=$(cat "$_pd/comm" 2>/dev/null) || _comm=""
-        _cmd=$(tr '\000' ' ' <"$_pd/cmdline" 2>/dev/null | tr '|\n\r\t' '/   ' | cut -c1-200)
+        _cmd=$(tr '\000' ' ' 2>/dev/null <"$_pd/cmdline" | tr '|\n\r\t' '/   ' | cut -c1-200)
         [ -n "$_exe$_cmd" ] || continue
         # shellcheck disable=SC2012  # ls: the owner of /proc/PID is the account
         _usr=$(ls -ld "$_pd" 2>/dev/null | awk '{ print $3 }')

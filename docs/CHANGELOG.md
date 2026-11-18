@@ -2,6 +2,16 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Linux review pass
+
+Every Linux script was run for real (dry run or read-only) on Ubuntu 24.04 under dash and busybox sh, with the output read line by line, plus a search for known portability traps.
+- **LX-40:** a team *network* (`10.0.0.0/24`) stopped the whole connection watch under busybox awk (no `^` operator: "Math support is not compiled in"). Now multiplies instead; the test uses a network.
+- **All scripts:** errors from reading a file that vanished (`/proc/PID/...`) leaked to the screen under busybox sh, because `<file` was opened before `2>/dev/null`. Order swapped in LX-25, LX-40, LX-41, LX-42, SH-05, SV-26, SV-30.
+- **LX-20:** the "human accounts not disabled" note listed locked build accounts (nixbld1..32); now only accounts someone can log in to. The kept-accounts line shows 15 names + a count.
+- **LX-39:** the "found" line before a question shows 6 items + a count instead of every path.
+- **LX-22, SH-05:** `PermitRootLogin without-password` reads like "root logs in without a password"; now shown as `key-only (without-password)`.
+- Tests: every changed script under dash, ksh and busybox sh.
+
 ## 2026-11-18: Brute-force banning rebuilt (SV-26 v2)
 
 - Questions: failure limit, web limit, ban length, services to watch, never-ban addresses (team and scoring engine), seconds between checks. Flags answer each; `--batch` does one check; answers saved as next defaults.

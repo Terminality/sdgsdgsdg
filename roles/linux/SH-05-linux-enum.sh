@@ -805,7 +805,9 @@ s_ssh() {
                 *) flag HIGH AuthorizedKeysFile "sshd also reads keys from '$_t'; a moved key file is a common way to hide a backdoor key" ;;
             esac
         done
-        say "SSH: root login '$(_get permitrootlogin)', password login '$(_get passwordauthentication)', port(s) $(awk '$1 == "port" { printf "%s ", $2 }' "$W/sshd")"
+        _rl=$(_get permitrootlogin)
+        case "$_rl" in prohibit-password|without-password) _rl="key-only ($_rl)" ;; forced-commands-only) _rl="key-only, forced commands" ;; esac
+        say "SSH: root login '$_rl', password login '$(_get passwordauthentication)', port(s) $(awk '$1 == "port" { printf "%s ", $2 }' "$W/sshd")"
     fi
 
     # Every authorized_keys file for every account, including system
@@ -1508,7 +1510,7 @@ s_trust() {
             [ -f "$_f" ] || continue
             case "$_f" in
                 *.netrc) cc_csv_row "$F" "$_f" "(contents not recorded: may hold passwords)"; flag MED "$_f" ".netrc stores login details for $_u" ;;
-                *) cc_csv_row "$F" "$_f" "$(tr '\n' ' ' <"$_f" 2>/dev/null)"; flag HIGH "$_f" "$_u trusts other hosts to log in without a password" ;;
+                *) cc_csv_row "$F" "$_f" "$(tr '\n' ' ' 2>/dev/null <"$_f")"; flag HIGH "$_f" "$_u trusts other hosts to log in without a password" ;;
             esac
         done
     done <"$W/homes"
