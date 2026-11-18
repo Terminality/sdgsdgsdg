@@ -201,21 +201,21 @@ cc_color_init
 [ "$COLOR" = 1 ] || { C_RED=""; C_YEL=""; C_GRN=""; C_CYN=""; C_GRY=""; C_OFF=""; }
 if [ "$FULL" = 1 ]; then AREAS=$ALL_AREAS
 elif [ -z "$AREAS" ]; then
-    if cc_ask "Do a full scan (every area: cron, services, ssh keys, startup files, accounts, files, processes, web ...)?" Y; then
+    if cc_ask "Do a full scan (cron, services, ssh keys, startup files, accounts, files, processes, web ...)?" Y "yes, scan every area" "no, let me pick the areas"; then
         AREAS=$ALL_AREAS
     else
-        cc_ask_text "Which areas? ($ALL_AREAS)" "cron systemd ssh shell accounts"
+        cc_ask_text "Which areas?" "cron systemd ssh shell accounts" "area names separated by spaces, from: $ALL_AREAS"
         AREAS=$(printf '%s' "$CC_ANSWER" | tr ',' ' ')
         ok_areas "$AREAS" || cc_die 2 "unknown area '$BADAREA' (areas: $ALL_AREAS)"
     fi
 fi
 want() { case " $AREAS " in *" $1 "*) return 0 ;; esac; return 1; }
 if [ "$SCANSET" = 0 ] && { want files || want web; }; then
-    cc_ask_text "Other folders to search for planted programs and web shells, besides the standard ones (e.g. /opt /srv)" ""
+    cc_ask_text "Other folders to search for planted programs and web shells, besides the standard ones?" "" "folders separated by spaces, like /opt /srv"
     SCANDIRS=$(printf '%s' "$CC_ANSWER" | tr ',' ' ')
 fi
 if [ -z "$SINCE" ]; then
-    cc_ask_text "How many days back counts as 'recently changed'? (since the competition image was built)" 7
+    cc_ask_text "How many days back counts as 'recently changed'?" 7 "a number of days, like 7 (since the competition image was built)"
     SINCE=$CC_ANSWER
     case "$SINCE" in ''|*[!0-9]*) cc_die 2 "not a number of days: '$SINCE'" ;; esac
 fi
@@ -223,11 +223,11 @@ fi
 if [ -z "$PKGCHECK" ]; then
     PKGCHECK=0
     if want files || want pam; then
-        cc_ask "Compare key system programs (ssh, sudo, login, PAM ...) with their packages? (finds replaced programs; takes a minute)" Y && PKGCHECK=1
+        cc_ask "Compare key system programs (ssh, sudo, login, PAM ...) with their packages?" Y "yes, compare them (finds replaced programs; takes a minute)" "no, skip it" && PKGCHECK=1
     fi
 fi
 if [ "$IGSET" = 0 ]; then
-    cc_ask_text "Accounts to leave out (their keys, crontabs and startup files are not reported)" ""
+    cc_ask_text "Accounts to leave out (their keys, crontabs and startup files are not reported)?" "" "account names separated by spaces, or Enter for none"
     IGUSERS=$(printf '%s' "$CC_ANSWER" | tr ',' ' ')
 fi
 
@@ -1168,7 +1168,15 @@ else
         esac
         cc_show "$([ "$_s" = HIGH ] && printf '%s' "$C_RED" || printf '%s' "$C_YEL")" "  #$_n [$_s] $_it"
         cc_show "" "        $_d"
-        cc_ask "$_q" "$_def" || continue
+        case "$_fk" in
+            file) _yes="yes, move it to quarantine (it can be put back)" ;;
+            unit) _yes="yes, stop and disable it, unit file to quarantine" ;;
+            line) _yes="yes, remove that line (backup kept)" ;;
+            suid) _yes="yes, take the SUID/SGID bit off" ;;
+            pid)  _yes="yes, kill it" ;;
+            *)    _yes="yes, do it" ;;
+        esac
+        cc_ask "$_q" "$_def" "$_yes" "no, leave it" || continue
         _src=$(P "$_it"); _rc=1
         case "$_fk" in
             file|unit)

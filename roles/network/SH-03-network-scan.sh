@@ -349,23 +349,24 @@ if [ "$NMAP_MISSING" = 1 ]; then
     cc_show "$C_YEL" "[!] nmap is not installed on this box, so the scan questions are skipped."
     cc_show "$C_YEL" "    Without it: $(printf '%s' "$FALLBACK_PORTS" | tr ',' '\n' | grep -c .) common TCP ports only, a banner instead of a version, no scripts, no vulns, no UDP."
     cc_show "$C_YEL" "    Install it: $(install_hint)"
-    cc_ask "Keep going with the $ENGINE scan anyway?" Y || { cc_show "" "Install nmap and run again: $(install_hint)"; exit 3; }
+    cc_ask "Keep going with the $ENGINE scan anyway?" Y "yes, scan with $ENGINE" "no, stop (install nmap first)" || { cc_show "" "Install nmap and run again: $(install_hint)"; exit 3; }
 elif [ "$ENGINE" = nmap ]; then
     cc_show "$C_GRN" "[ok] nmap found: $(nmap --version 2>/dev/null | head -n 1)"
 fi
 if [ -z "$TARGETS" ]; then
     _can=0; _cc_can_ask && _can=1
     [ "$_can" = 1 ] || cc_die 2 "nothing to scan: give --target or --targets-file (try --help)"
-    cc_ask_text "What should I scan? (one host 10.0.2.5, a range 10.0.2.1-50, a subnet 10.0.2.0/24; several with spaces)" "$(guess_target)"
+    cc_ask_text "What should I scan?" "$(guess_target)" "one host 10.0.2.5, a range 10.0.2.1-50 or a subnet 10.0.2.0/24; several separated by spaces"
     for _t in $(printf '%s' "$CC_ANSWER" | tr ',' ' '); do add_target "$_t"; done
     [ -n "$TARGETS" ] || cc_die 2 "nothing to scan"
 fi
 
-# ask VAR QUESTION DEFAULT -> fill VAR with Y or N unless a flag already did.
+# ask VAR QUESTION DEFAULT [YES-MEANS] [NO-MEANS] -> fill VAR with Y or N
+#   unless a flag already did.
 ask() {
     eval "_ak=\$$1"
     [ -n "$_ak" ] && return 0
-    if cc_ask "$2" "$3"; then eval "$1=Y"; else eval "$1=N"; fi
+    if cc_ask "$2" "$3" "${4:-yes}" "${5:-no}"; then eval "$1=Y"; else eval "$1=N"; fi
 }
 # ask_val VAR CHECK QUESTION DEFAULT -> fill VAR with a typed answer that
 #   passes CHECK (ok_speed, ok_top, ok_ports), unless a flag already did.
@@ -375,7 +376,7 @@ ask_val() {
     [ -n "$_av" ] && return 0
     _av_n=0
     while :; do
-        cc_ask_text "$3" "$4"
+        cc_ask_text "$3" "$4" "${5:-}"
         if "$2" "$CC_ANSWER"; then eval "$1=\$CC_ANSWER"; return 0; fi
         _av_n=$((_av_n + 1))
         [ "$_av_n" -lt 3 ] && _cc_can_ask || cc_die 2 "not a usable answer: '$CC_ANSWER'"
@@ -383,22 +384,22 @@ ask_val() {
     done
 }
 if [ "$ENGINE" = nmap ]; then
-    ask_val SPEED ok_speed "How aggressive? 1-2 slow and quiet, 3 normal, 4 fast (good on a LAN), 5 fastest (can miss ports)" 4
-    ask A_QUICK   "Quick scan of the top ports first?" Y
-    [ "$A_QUICK" = Y ] && ask_val TOP ok_top "How many top ports in the quick scan? (100 is very fast, 1000 is nmap's normal)" 1000
+    ask_val SPEED ok_speed "How aggressive?" 4 "1-2 slow and quiet, 3 normal, 4 fast (good on a LAN), 5 fastest (can miss ports)"
+    ask A_QUICK   "Quick scan of the top ports first?" Y "yes, quick scan first" "no, skip it"
+    [ "$A_QUICK" = Y ] && ask_val TOP ok_top "How many top ports in the quick scan?" 1000 "a number: 100 is very fast, 1000 is nmap's normal"
     if [ "$EXTRA_SET" = 0 ] && [ -z "$PORTS" ]; then
-        cc_ask_text "Any other ports to always scan? (e.g. 8080,9000-9100)" ""
+        cc_ask_text "Any other ports to always scan?" "" "ports and ranges separated by commas, like 8080,9000-9100"
         ok_ports "$CC_ANSWER" || cc_die 2 "not a port list: '$CC_ANSWER' (use numbers, commas and ranges)"
         EXTRA=$CC_ANSWER
     fi
-    ask A_FULL    "Full scan of all 65535 ports on the hosts that are up? (slow: minutes per host)" Y
-    ask A_SVC     "Find the service and version behind each open port?" Y
-    ask A_SCRIPTS "Run nmap's default scripts on the open ports (anonymous FTP, SMB signing, ...)?" Y
-    ask A_VULN    "Run nmap's vuln scripts on the open ports? (adds a few minutes)" N
-    [ "$A_VULN" = Y ] && ask A_VSAFE "Only the safe vuln scripts? (no = every vuln script; some can crash a service)" Y
+    ask A_FULL    "Full scan of all 65535 ports on the hosts that are up?" Y "yes, full scan (slow: minutes per host)" "no, quick scan only"
+    ask A_SVC     "Find the service and version behind each open port?" Y "yes, find them" "no, ports only"
+    ask A_SCRIPTS "Run nmap's default scripts on the open ports (anonymous FTP, SMB signing, ...)?" Y "yes, run them" "no, skip them"
+    ask A_VULN    "Run nmap's vuln scripts on the open ports?" N "yes, run them (adds a few minutes)" "no, skip them"
+    [ "$A_VULN" = Y ] && ask A_VSAFE "Only the safe vuln scripts?" Y "yes, safe ones only" "no, every vuln script (some can crash a service)"
     if [ "$IS_ROOT" = 1 ]; then
-        ask A_OS  "Guess each host's operating system?" Y
-        ask A_UDP "Scan the top 25 UDP ports too? (DNS, SNMP, TFTP, ...)" N
+        ask A_OS  "Guess each host's operating system?" Y "yes, guess it" "no, skip it"
+        ask A_UDP "Scan the top 25 UDP ports too? (DNS, SNMP, TFTP, ...)" N "yes, scan UDP too" "no, TCP only"
     else
         [ "$A_OS" = Y ] && cc_warn "OS detection needs root: skipped"
         [ "$A_UDP" = Y ] && cc_warn "UDP scanning needs root: skipped"
@@ -616,7 +617,7 @@ run_nmap() {
             # Which hosts: all that answered, or the ones named.
             if [ -z "$FULLHOSTS" ] && [ "$(grep -c . "$W/up_targets")" -gt 1 ]; then
                 show "$C_GRY" "  up: $(tr '\n' ' ' <"$W/up_targets")"
-                cc_ask_text "Full scan which hosts? (all, or addresses with spaces)" all
+                cc_ask_text "Full scan which hosts?" all "all, or addresses separated by spaces"
                 FULLHOSTS=$CC_ANSWER
             fi
             case "$FULLHOSTS" in

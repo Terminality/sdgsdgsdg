@@ -236,11 +236,11 @@ if [ "$HAVEBASE" = 0 ]; then
     BASEMODE=new
     cc_show "" "  No baseline yet: one is taken now, so the first check compares against this moment."
 elif [ -z "$BASEMODE" ]; then
-    if cc_ask "Use the baseline from ${BASETIME:-earlier}? (say No to take a new one, e.g. after your own hardening)" Y; then BASEMODE=keep; else BASEMODE=new; fi
+    if cc_ask "Use the baseline from ${BASETIME:-earlier}?" Y "yes, compare against it" "no, take a new one now (after your own hardening)"; then BASEMODE=keep; else BASEMODE=new; fi
 fi
 if [ -z "$LOOP" ]; then
     if _cc_can_ask; then
-        cc_ask_text "Seconds between checks (0 = check once and stop)" 60
+        cc_ask_text "How often should it check?" 60 "seconds between checks, like 60; 0 = check once and stop"
         LOOP=$CC_ANSWER; ok_loop "$LOOP"
     else
         LOOP=0
@@ -248,10 +248,10 @@ if [ -z "$LOOP" ]; then
 fi
 _d=$(setting conns)
 if [ -z "$CONNS" ]; then
-    if cc_ask "Watch connections too? (new outgoing connections catch reverse shells; new addresses on SSH/RDP/database ports show who got in)" "$([ "$_d" = 0 ] && echo N || echo Y)"; then CONNS=1; else CONNS=0; fi
+    if cc_ask "Watch connections too?" "$([ "$_d" = 0 ] && echo N || echo Y)" "yes, watch them (catches reverse shells and who logs in)" "no, skip connections"; then CONNS=1; else CONNS=0; fi
 fi
 if [ "$CONNS" = 1 ] && [ "$TEAMSET" = 0 ]; then
-    cc_ask_text "Your team's addresses or networks - never alerted (e.g. 10.0.0.5 10.0.0.0/24)" "$(setting team)"
+    cc_ask_text "Your team's addresses (their connections are never alerted)?" "$(setting team)" "addresses or networks separated by spaces, like 10.0.0.5 10.0.0.0/24"
     TEAM=$(printf '%s' "$CC_ANSWER" | tr ',' ' ')
     for _a in $TEAM; do valid_net "$_a" || cc_die 2 "not an address or network: $_a"; done
 fi
@@ -260,7 +260,7 @@ TEAM=$(printf '%s' "$TEAM" | sed 's/^ *//; s/ *$//')
 # anything new.  All without the --root prefix.
 _saved_web=""; [ "$BASEMODE" = keep ] && _saved_web=$(cat "$STATE/baseline/.webroots" 2>/dev/null)
 if [ "$WEBSET" = 0 ]; then
-    cc_ask_text "Other web folders to watch, besides /var/www /srv/www /usr/share/nginx/html ... (e.g. /opt/app/public)" ""
+    cc_ask_text "Other web folders to watch, besides /var/www /srv/www /usr/share/nginx/html ...?" "" "folders separated by spaces, like /opt/app/public"
     for _w in $(printf '%s' "$CC_ANSWER" | tr ',' ' '); do
         [ -d "$R$_w" ] || [ -d "$_w" ] || { cc_show "$C_YEL" "  [!] not a folder, skipped: $_w"; continue; }
         if [ -d "$_w" ]; then WEBARGS="$WEBARGS$(cc_abspath "$_w")$NL"; else WEBARGS="$WEBARGS$R$_w$NL"; fi
@@ -277,7 +277,7 @@ fi
 } | sed 's|/*$||' | grep . | sort -u | awk '{ for (k in keep) if (index($0, k "/") == 1) next; keep[$0] = 1; print }' >"$W/webroots"
 _d=$(setting suid)
 if [ -z "$SUIDOPT" ]; then
-    if cc_ask "Look for new SUID programs on the whole disk? (slower; in a loop only every ${SUIDEVERY}th check)" "$([ "$_d" = 0 ] && echo N || echo Y)"; then SUIDOPT=1; else SUIDOPT=0; fi
+    if cc_ask "Look for new SUID programs on the whole disk?" "$([ "$_d" = 0 ] && echo N || echo Y)" "yes, scan for them (slower; in a loop every ${SUIDEVERY}th check)" "no, skip it"; then SUIDOPT=1; else SUIDOPT=0; fi
 fi
 NOSUID=$((1 - SUIDOPT))
 printf 'conns=%s\nteam=%s\nsuid=%s\n' "$CONNS" "$TEAM" "$SUIDOPT" >"$STATE/settings"

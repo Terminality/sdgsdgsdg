@@ -179,8 +179,11 @@ done
 if [ -z "$LEVEL" ]; then
     LEVEL=safe
     if _cc_can_ask; then
-        cc_ask_text "How far should I go? safe (cannot break anything) / service (checks, undoes if it breaks) / access (can disable services)" safe
-        case "$CC_ANSWER" in safe|service|access) LEVEL=$CC_ANSWER ;; *) cc_die 2 "not a level: '$CC_ANSWER' (safe, service or access)" ;; esac
+        cc_choose "How far should I go?" s \
+            "s=safe: settings that cannot break anything" \
+            "v=service: also service changes; each is checked and undone if the service breaks" \
+            "a=access: also turns off services that should not run (telnet, rsh, tftp ...)"
+        case "$CC_CHOICE" in s) LEVEL=safe ;; v) LEVEL=service ;; a) LEVEL=access ;; esac
     fi
 fi
 
@@ -324,7 +327,7 @@ for _a in $CONSIDER; do
     # access defaults to no, unless the action was named explicitly in --only.
     _def=Y; [ "$_risk" = access ] && _def=N
     case ",$ONLY," in *",$_a,"*) _def=Y ;; esac
-    if cc_ask "[$_risk] $(act_desc "$_a")?" "$_def"; then CHOSEN="$CHOSEN $_a"; fi
+    if cc_ask "[$_risk] $(act_desc "$_a")?" "$_def" "yes, do it" "no, skip it"; then CHOSEN="$CHOSEN $_a"; fi
 done
 if [ -z "$CHOSEN" ]; then
     cc_show "$C_GRY" "Nothing chosen. Nothing to do."
@@ -638,7 +641,7 @@ elif [ "$CANAPPLY" = 0 ]; then
     cc_show "$C_GRY" "$NCH change(s) planned. Dry run only (use --apply as root), so nothing was changed."
 else
     _ad=Y
-    if cc_ask "Apply these $NCH change(s)?" "$_ad"; then
+    if cc_ask "Apply these $NCH change(s)?" "$_ad" "yes, apply them now" "no, change nothing"; then
         if [ "$TIMER_ON" = 1 ] && { cc_timer_fired || [ "$(cc_timer_left)" -lt 3 ]; }; then
             cc_die 3 "the revert timer ran out before anything was changed. Nothing was changed. Run again with a bigger --timer or --batch"
         fi

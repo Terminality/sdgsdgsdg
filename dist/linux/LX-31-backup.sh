@@ -642,58 +642,109 @@ _cc_left_txt() {
     return 0
 }
 
+# cc_choose QUESTION DEFAULT "l=meaning" "m=meaning" ... -> CC_CHOICE
+#   Every answer is spelled out, in the password-rotation style:
+#     [?] Allow root to log in over SSH? (now: key-only)
+#         [y] yes, with a password or a key
+#         [n] no, never
+#         [k] key-only, root needs an SSH key
+#         [l] leave it as it is
+#         Answer [y/n/K/l]:
+#   Enter takes DEFAULT (a letter, shown in capitals).  The first word of a
+#   meaning works too ("yes", "no", "key-only").  Anything else is refused
+#   and asked again.  With --batch or no terminal the default is taken and
+#   shown with its meaning.
+cc_choose() {
+    _cc_ch_q=$1; _cc_ch_d=$(printf '%s' "$2" | tr 'A-Z' 'a-z'); shift 2
+    _cc_ch_hint=""; _cc_ch_m=""
+    for _cc_ch_o in "$@"; do
+        _cc_ch_l=${_cc_ch_o%%=*}
+        if [ "$_cc_ch_l" = "$_cc_ch_d" ]; then _cc_ch_m=${_cc_ch_o#*=}; _cc_ch_l=$(printf '%s' "$_cc_ch_l" | tr 'a-z' 'A-Z'); fi
+        _cc_ch_hint="$_cc_ch_hint/$_cc_ch_l"
+    done
+    _cc_ch_hint=${_cc_ch_hint#/}
+    if ! _cc_can_ask; then
+        cc_show "${C_CYN:-}" "[?] $_cc_ch_q [$_cc_ch_hint] $_cc_ch_d (default): $_cc_ch_m"
+        CC_CHOICE=$_cc_ch_d
+        return 0
+    fi
+    # The question, then each answer on its own line.
+    printf '%s[?]%s %s\n' "${C_CYN:-}" "${C_OFF:-}" "$_cc_ch_q" >/dev/tty
+    for _cc_ch_o in "$@"; do printf '      [%s] %s\n' "${_cc_ch_o%%=*}" "${_cc_ch_o#*=}" >/dev/tty; done
+    _cc_ch_prompt="      Answer [$_cc_ch_hint]:"
+    while :; do
+        printf '%s%s ' "$_cc_ch_prompt" "$(_cc_left_txt)" >/dev/tty
+        if ! _cc_read _cc_ch_a; then
+            printf '\n' >/dev/tty
+            [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
+            _cc_ch_a=""
+        fi
+        _cc_ch_t=$(printf '%s' "$_cc_ch_a" | tr 'A-Z' 'a-z' | sed 's/^ *//; s/ *$//')
+        [ -z "$_cc_ch_t" ] && _cc_ch_t=$_cc_ch_d
+        # The letter, or the first word of its meaning ("yes", "key-only").
+        _cc_ch_a=""
+        for _cc_ch_o in "$@"; do
+            _cc_ch_w=$(printf '%s' "${_cc_ch_o#*=}" | awk '{ w = tolower($1); sub(/[,.:;]$/, "", w); print w }')
+            if [ "$_cc_ch_t" = "${_cc_ch_o%%=*}" ] || [ "$_cc_ch_t" = "$_cc_ch_w" ]; then _cc_ch_a=${_cc_ch_o%%=*}; fi
+        done
+        [ -n "$_cc_ch_a" ] && break
+        printf '      "%s" is not an answer here: type one of [%s] (Enter = %s).\n' "$_cc_ch_t" "$_cc_ch_hint" "$_cc_ch_d" >/dev/tty
+    done
+    CC_CHOICE=$_cc_ch_a
+    for _cc_ch_o in "$@"; do [ "${_cc_ch_o%%=*}" = "$CC_CHOICE" ] && _cc_ch_m=${_cc_ch_o#*=}; done
+    [ -n "$CC_TEE" ] && printf '[?] %s [%s] %s: %s\n' "$_cc_ch_q" "$_cc_ch_hint" "$CC_CHOICE" "$_cc_ch_m" >>"$CC_TEE"
+    cc_note "asked: $_cc_ch_q -> $CC_CHOICE: $_cc_ch_m"
+    return 0
+}
+
 # _cc_can_ask -> true when there is someone to ask.
 #   CCDC_NO_TTY=1 says there is nobody (the test suite sets it, so tests
 #   never wait for an answer when run from a terminal).
 _cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${CCDC_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
 
-# cc_ask QUESTION DEFAULT -> 0 for yes, 1 for no.  DEFAULT is Y or N.
-#   Enter takes the default.  With --batch or no terminal the default is
-#   taken and shown.  If the revert timer runs out while waiting, the script
-#   stops (nothing has been changed while questions are still being asked).
+# cc_ask QUESTION DEFAULT [YES-MEANS] [NO-MEANS] -> 0 for yes, 1 for no.
+#   DEFAULT is Y or N.  Shown like cc_choose, with what each answer does:
+#     [?] Back up the web roots?
+#         [y] yes, back them up
+#         [n] no, skip them
+#         Answer [Y/n]:
+#   Without meanings the answers are plain "yes" and "no".  Enter takes the
+#   default.  With --batch or no terminal the default is taken and shown.
+#   If the revert timer runs out while waiting, the script stops (nothing
+#   has been changed while questions are still being asked).
 cc_ask() {
-    _cc_ak_q=$1; _cc_ak_d=${2:-N}
-    case "$_cc_ak_d" in Y|y) _cc_ak_h="Y/n"; _cc_ak_d=Y ;; *) _cc_ak_h="y/N"; _cc_ak_d=N ;; esac
-    if ! _cc_can_ask; then
-        cc_show "${C_CYN:-}" "[?] $_cc_ak_q [$_cc_ak_h] $_cc_ak_d (default)"
-    else
-        while :; do
-            printf '%s[?]%s %s [%s]%s ' "${C_CYN:-}" "${C_OFF:-}" "$_cc_ak_q" "$_cc_ak_h" "$(_cc_left_txt)" >/dev/tty
-            if ! _cc_read _cc_ak_a; then
-                printf '\n' >/dev/tty
-                [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
-                _cc_ak_a=""
-            fi
-            case "$_cc_ak_a" in
-                '') _cc_ak_a=$_cc_ak_d; break ;;
-                y|Y|yes|YES|Yes) _cc_ak_a=Y; break ;;
-                n|N|no|NO|No) _cc_ak_a=N; break ;;
-                *) printf '    please answer y or n\n' >/dev/tty ;;
-            esac
-        done
-        [ -n "$CC_TEE" ] && printf '[?] %s [%s] %s\n' "$_cc_ak_q" "$_cc_ak_h" "$_cc_ak_a" >>"$CC_TEE"
-        cc_note "asked: $_cc_ak_q -> $_cc_ak_a"
-        _cc_ak_d=$_cc_ak_a
-    fi
-    [ "$_cc_ak_d" = Y ]
+    case "${2:-N}" in Y|y) _cc_ak_d=y ;; *) _cc_ak_d=n ;; esac
+    cc_choose "$1" "$_cc_ak_d" "y=${3:-yes}" "n=${4:-no}"
+    [ "$CC_CHOICE" = y ]
 }
 
-# cc_ask_text QUESTION DEFAULT -> the answer in CC_ANSWER (DEFAULT on Enter,
-#   with --batch, or with no terminal).
+# cc_ask_text QUESTION DEFAULT [WHAT-TO-TYPE] -> the answer in CC_ANSWER
+#   (DEFAULT on Enter, with --batch, or with no terminal).  WHAT-TO-TYPE is
+#   shown under the question, e.g. "addresses or networks separated by
+#   spaces, like 10.0.0.5 10.0.0.0/24":
+#     [?] Your team's addresses (never blocked)?
+#         type: addresses or networks separated by spaces, like 10.0.0.5 10.0.0.0/24
+#         [Enter = none]:
 cc_ask_text() {
     CC_ANSWER=$2
     if ! _cc_can_ask; then
         cc_show "${C_CYN:-}" "[?] $1 ${2:-(none)} (default)"
         return 0
     fi
-    printf '%s[?]%s %s [%s]%s ' "${C_CYN:-}" "${C_OFF:-}" "$1" "${2:-Enter for none}" "$(_cc_left_txt)" >/dev/tty
+    if [ -n "${3:-}" ]; then
+        printf '%s[?]%s %s\n' "${C_CYN:-}" "${C_OFF:-}" "$1" >/dev/tty
+        printf '      type: %s\n' "$3" >/dev/tty
+        printf '      [Enter = %s]:%s ' "${2:-none}" "$(_cc_left_txt)" >/dev/tty
+    else
+        printf '%s[?]%s %s  [Enter = %s]:%s ' "${C_CYN:-}" "${C_OFF:-}" "$1" "${2:-none}" "$(_cc_left_txt)" >/dev/tty
+    fi
     if ! _cc_read _cc_at_a; then
         printf '\n' >/dev/tty
         [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
         _cc_at_a=""
     fi
     [ -n "$_cc_at_a" ] && CC_ANSWER=$_cc_at_a
-    [ -n "$CC_TEE" ] && printf '[?] %s %s\n' "$1" "$CC_ANSWER" >>"$CC_TEE"
+    [ -n "$CC_TEE" ] && printf '[?] %s %s\n' "$1" "${CC_ANSWER:-(none)}" >>"$CC_TEE"
     cc_note "asked: $1 -> $CC_ANSWER"
     return 0
 }
@@ -1437,9 +1488,8 @@ find_webroots() {
 
 header "QUESTIONS (Enter = the default)"
 if [ -z "$BOX" ]; then
-    cc_ask_text "Which box is this? splunk / webmail / ecomm / other" other
-    BOX=$CC_ANSWER
-    case "$BOX" in splunk|webmail|ecomm|other) ;; *) cc_show "$C_GRY" "    '$BOX' is not one of the four: using other"; BOX=other ;; esac
+    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "o=other"
+    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
 fi
 # Folders that matter for each scored box, beyond /etc and the web roots.
 _boxp=""
@@ -1452,30 +1502,30 @@ _boxf=""
 for _p in $_boxp; do [ -e "$_p" ] && _boxf="$_boxf $_p"; done
 if [ -n "$_boxf" ]; then
     for _p in $_boxf; do cc_show "$C_YEL" "    $BOX: $_p ($(size_of "$_p"))"; done
-    cc_ask "Back up these $BOX folders too?" Y && list_add ADD "$(printf '%s' "$_boxf" | tr ' ' ',')"
+    cc_ask "Back up these $BOX folders too?" Y "yes, back them up" "no, skip them" && list_add ADD "$(printf '%s' "$_boxf" | tr ' ' ',')"
 fi
 
 if [ "$F_WEB" = 0 ]; then
     find_webroots >"$W/webfound"
     if [ -s "$W/webfound" ]; then
         while IFS= read -r _d; do cc_show "$C_YEL" "    web root: $_d ($(size_of "$_d"))"; done <"$W/webfound"
-        cc_ask "Back up these web roots? (big ones can be left out; SV-14 backs up databases)" Y || NO_WEB=1
+        cc_ask "Back up these web roots? (SV-14 backs up databases)" Y "yes, back them up" "no, leave them out (if they are big)" || NO_WEB=1
     else
         cc_show "$C_GRY" "    No web roots found."
     fi
 fi
-[ "$F_HOMES" = 1 ] || cc_ask "Back up every account's dotfiles and .ssh keys? (where shells, startup files and keys live)" Y || NO_HOMES=1
-[ "$F_FAST" = 1 ] || cc_ask "Hash system programs and service units too? (10-60 s; shows later which programs were replaced)" Y || FAST=1
+[ "$F_HOMES" = 1 ] || cc_ask "Back up every account's dotfiles and .ssh keys?" Y "yes, back them up" "no, skip them" || NO_HOMES=1
+[ "$F_FAST" = 1 ] || cc_ask "Hash system programs and service units too? (shows later which programs were replaced)" Y "yes, hash them (10-60 s)" "no, skip it" || FAST=1
 if [ "$F_ADD" = 0 ]; then
-    cc_ask_text "Other files or folders to back up? (comma list)" ""
+    cc_ask_text "Other files or folders to back up?" "" "paths separated by commas, like /opt/app,/srv/data"
     list_add ADD "$CC_ANSWER"
 fi
 if [ "$F_SKIP" = 0 ]; then
-    cc_ask_text "Anything to leave out? (comma list of paths)" ""
+    cc_ask_text "Anything to leave out?" "" "paths separated by commas, like /var/www/big-videos"
     list_add SKIPP "$CC_ANSWER"
 fi
 if [ "$F_COPY" = 0 ]; then
-    cc_ask_text "Copy the backup off the box? (user@host:/path/, Enter for no)" ""
+    cc_ask_text "Copy the backup off the box?" "" "an scp destination like admin@10.0.0.5:/backups/, or Enter for no copy"
     COPYTO=$CC_ANSWER
 fi
 
@@ -1572,7 +1622,7 @@ _total_mb=$((_total_kb / 1024))
 cc_show "" "  About $_total_mb MB in $(grep -c . "$W/paths") paths."
 if [ "$_total_mb" -gt "$MAXMB" ]; then
     cc_show "$C_YEL" "  [*] That is more than the $MAXMB MB limit (--max-mb). The big paths are listed above."
-    cc_ask "Back up $_total_mb MB anyway?" N || cc_die 3 "the backup would be about $_total_mb MB, more than --max-mb $MAXMB. Leave big paths out (the leave-out question or --skip, --no-webroots) or raise --max-mb"
+    cc_ask "Back up $_total_mb MB anyway?" N "yes, back it all up" "no, stop" || cc_die 3 "the backup would be about $_total_mb MB, more than --max-mb $MAXMB. Leave big paths out (the leave-out question or --skip, --no-webroots) or raise --max-mb"
 fi
 # Room on the disk that holds the output folder (df -P: POSIX columns).
 _free_kb=$(df -Pk "$CC_RUN_DIR" 2>/dev/null | awk 'NR == 2 { print $4 }')

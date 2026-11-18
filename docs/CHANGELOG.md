@@ -2,6 +2,25 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Clearer questions in every script
+
+Every question now says what each answer does, in the password-rotation style, with the default in capitals:
+
+```
+[?] Allow root to log in over SSH? (now: key-only (prohibit-password))
+      [y] yes, with a password or a key (not recommended)
+      [n] no, root cannot log in over SSH at all (log in as yourself, then sudo)
+      [k] key-only, root needs an SSH key; passwords are refused
+      [l] leave it as it is
+      Answer [y/n/K/l]:
+```
+
+- Typed answers show what to type: `type: addresses or networks separated by spaces, like 10.0.0.5 10.0.0.0/24`.
+- A wrong answer is refused and asked again (no more guessing what "y" means).
+- Choice questions use letters: SV-30 level `[s]afe [v] service [a]ccess`; LX-31/LX-39 box `[s]plunk [w]ebmail [e]comm [o]ther`.
+- LX-22 root login: `y`, `n`, `k`, `l`; `--root-login yes` added.
+- Applies to LX-20, LX-22, LX-25, LX-31, LX-39, LX-40, LX-41, LX-42, SV-26, SV-30, SH-03, and the `dist/` copies.
+
 ## 2026-11-18: Linux review pass
 
 Every Linux script was run for real (dry run or read-only) on Ubuntu 24.04 under dash and busybox sh, with the output read line by line, plus a search for known portability traps.

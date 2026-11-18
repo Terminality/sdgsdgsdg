@@ -263,7 +263,7 @@ if [ "$SETUP_AUDITD" = 1 ]; then
                 cc_undo_add "remove the auditd execve rule" "auditctl -d always,exit -F arch=$_arch -S execve -k ccdc_cmd 2>/dev/null; auditctl -d always,exit -F arch=b32 -S execve -k ccdc_cmd 2>/dev/null; true"
                 cc_show "$C_GRN" "[ok] every command is now logged to $AUDITLOG"
                 # Loaded rules are lost at reboot unless they are in rules.d.
-                if [ -d /etc/audit/rules.d ] && [ ! -f /etc/audit/rules.d/ccdc.rules ] && cc_ask "Keep the rule after a reboot too (writes /etc/audit/rules.d/ccdc.rules)?" Y; then
+                if [ -d /etc/audit/rules.d ] && [ ! -f /etc/audit/rules.d/ccdc.rules ] && cc_ask "Keep the rule after a reboot too?" Y "yes, write /etc/audit/rules.d/ccdc.rules" "no, only until the next reboot"; then
                     { printf -- '-a always,exit -F arch=%s -S execve -k ccdc_cmd\n' "$_arch"
                       [ "$_arch" = b64 ] && printf -- '-a always,exit -F arch=b32 -S execve -k ccdc_cmd\n'; } >/etc/audit/rules.d/ccdc.rules \
                         && cc_undo_add "remove /etc/audit/rules.d/ccdc.rules" "rm -f /etc/audit/rules.d/ccdc.rules" \

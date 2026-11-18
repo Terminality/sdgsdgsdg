@@ -179,7 +179,7 @@ if command -v script >/dev/null 2>&1; then
     printf '\n0\ny\n10.0.0.9\n\nn\n' >"$T_TMP/answers"
     out=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --out '$O' --state '$ST' --root '$R' --no-color" /dev/null <"$T_TMP/answers" 2>&1)
     t_has "$out" "Use the baseline from" "asks about the baseline"
-    t_has "$out" "Seconds between checks" "asks how often"
+    t_has "$out" "How often should it check?" "asks how often"
     t_has "$out" "Watch connections too?" "asks about connections"
     t_has "$out" "Your team's addresses" "asks for team addresses"
     t_has "$out" "new SUID programs" "asks about the SUID scan"

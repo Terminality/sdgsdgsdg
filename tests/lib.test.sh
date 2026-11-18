@@ -252,7 +252,7 @@ r=$(CCDC_TIMER_METHOD=background; export CCDC_TIMER_METHOD; run "$S/ask.sh" --ou
 t_has "$r" "q1=yes" "--batch: a Y question takes yes"
 t_has "$r" "q2=no" "--batch: an N question takes no"
 t_has "$r" "q3=other" "--batch: a text question takes its default"
-t_has "$r" "[?] yes question [Y/n] Y (default)" "the default taken is shown"
+t_has "$r" "[?] yes question [Y/n] y (default): yes" "the default taken is shown"
 t_ok "cc_now is a number" sh -c "printf '%s' '$(printf '%s\n' "$r" | sed -n 's/^now=//p')' | grep -Eq '^[0-9]{9,}$'"
 D=$(printf '%s\n' "$r" | sed -n 's/^dir=//p')
 t_has "$r" "Changes kept (--batch)" "--batch keeps at the end"

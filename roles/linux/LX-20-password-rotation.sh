@@ -448,7 +448,7 @@ set_plan() {
 
 FORCED=""
 header "QUESTIONS (Enter = the default in capitals)"
-if [ "$CANAPPLY" = 1 ] && _cc_can_ask && cc_ask "Go through each account one by one? (no = use the actions in the table)" Y; then
+if [ "$CANAPPLY" = 1 ] && _cc_can_ask && cc_ask "Go through each account one by one?" Y "yes, ask me about each account" "no, use the actions in the table"; then
     _all=0
     cp "$W/loud" "$W/ask"
     while IFS='|' read -r _u _uid _sh _st _a0 _why0 _fl; do
@@ -468,10 +468,10 @@ if [ "$CANAPPLY" = 1 ] && _cc_can_ask && cc_ask "Go through each account one by 
         # for a protected account counts for that account only (FORCED).
         if [ "$_ans" != k ]; then
             if [ -n "$ME" ] && [ "$_u" = "$ME" ]; then
-                cc_ask "  $_u is the account you are logged in as. Change it anyway?" N || { set_plan "$_u" k "you said keep"; continue; }
+                cc_ask "  $_u is the account you are logged in as. Change it anyway?" N "yes, change it" "no, keep it" || { set_plan "$_u" k "you said keep"; continue; }
             fi
             if cc_is_protected account "$_u"; then
-                if cc_ask "  $_u is on the protected list (scoring may log in as it). Change it anyway? Report the new password to scoring" N; then
+                if cc_ask "  $_u is on the protected list (scoring may log in as it). Change it anyway?" N "yes, change it (report the new password to scoring)" "no, keep it"; then
                     FORCED="$FORCED,$_u"
                 else set_plan "$_u" k "protected"; continue; fi
             fi
@@ -480,7 +480,7 @@ if [ "$CANAPPLY" = 1 ] && _cc_can_ask && cc_ask "Go through each account one by 
             r) set_plan "$_u" r "random (you chose)" ;;
             d) set_plan "$_u" d "disable (you chose)" ;;
             k) set_plan "$_u" k "you said keep" ;;
-            s) if [ -n "$(given_pw "$_u")" ] && cc_ask "  Use the password from --passwords for $_u?" Y; then
+            s) if [ -n "$(given_pw "$_u")" ] && cc_ask "  Use the password from --passwords for $_u?" Y "yes, use it" "no, I will type one"; then
                    set_plan "$_u" s "from --passwords"
                elif ask_password "$_u"; then
                    printf '%s\t%s\n' "$_u" "$TYPED" >>"$W/typed"; TYPED=""
@@ -491,7 +491,7 @@ if [ "$CANAPPLY" = 1 ] && _cc_can_ask && cc_ask "Go through each account one by 
 fi
 # End the sessions of disabled accounts?  A lock does not end a login in progress.
 if awk -F'|' '$5 == "d" { f = 1 } END { exit !f }' "$W/plan" && [ "$F_KICK" = 0 ] && cc_have pkill; then
-    cc_ask "End the running sessions and processes of the accounts you disable?" Y && KICK=1
+    cc_ask "End the running sessions and processes of the accounts you disable?" Y "yes, log them out and stop their processes" "no, leave them running" && KICK=1
 fi
 
 # ---- Plan, then apply ------------------------------------------------------------
@@ -524,10 +524,10 @@ N_ROT=0; N_LOCK=0; N_SKIP=0; N_FAIL=0
 APPLIED=0
 if [ "$NCH" -gt 0 ] && [ "$CANAPPLY" = 1 ]; then
     _ad=N; [ "$APPLY_FLAG" = 1 ] && _ad=Y
-    if cc_ask "Apply these $NCH change(s)?" "$_ad"; then
+    if cc_ask "Apply these $NCH change(s)?" "$_ad" "yes, apply them now" "no, change nothing"; then
         if [ "$APPLY_FLAG" = 0 ] && [ -z "$CC_PROTECTED" ] && [ "$CC_NO_PROTECTED" != 1 ]; then
             cc_show "$C_YEL" "[*] No protected list (the accounts scoring logs in with)."
-            if cc_ask "Change passwords without one?" N; then CC_NO_PROTECTED=1; CC_APPLY=1
+            if cc_ask "Change passwords without one?" N "yes, go on without a protected list" "no, stop"; then CC_NO_PROTECTED=1; CC_APPLY=1
             else cc_show "$C_YEL" "[*] Not applied."; fi
         else CC_APPLY=1; fi
         if [ "$CC_APPLY" = 1 ] && { cc_timer_fired || { [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -lt 3 ]; }; }; then

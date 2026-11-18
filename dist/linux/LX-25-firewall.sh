@@ -665,58 +665,109 @@ _cc_left_txt() {
     return 0
 }
 
+# cc_choose QUESTION DEFAULT "l=meaning" "m=meaning" ... -> CC_CHOICE
+#   Every answer is spelled out, in the password-rotation style:
+#     [?] Allow root to log in over SSH? (now: key-only)
+#         [y] yes, with a password or a key
+#         [n] no, never
+#         [k] key-only, root needs an SSH key
+#         [l] leave it as it is
+#         Answer [y/n/K/l]:
+#   Enter takes DEFAULT (a letter, shown in capitals).  The first word of a
+#   meaning works too ("yes", "no", "key-only").  Anything else is refused
+#   and asked again.  With --batch or no terminal the default is taken and
+#   shown with its meaning.
+cc_choose() {
+    _cc_ch_q=$1; _cc_ch_d=$(printf '%s' "$2" | tr 'A-Z' 'a-z'); shift 2
+    _cc_ch_hint=""; _cc_ch_m=""
+    for _cc_ch_o in "$@"; do
+        _cc_ch_l=${_cc_ch_o%%=*}
+        if [ "$_cc_ch_l" = "$_cc_ch_d" ]; then _cc_ch_m=${_cc_ch_o#*=}; _cc_ch_l=$(printf '%s' "$_cc_ch_l" | tr 'a-z' 'A-Z'); fi
+        _cc_ch_hint="$_cc_ch_hint/$_cc_ch_l"
+    done
+    _cc_ch_hint=${_cc_ch_hint#/}
+    if ! _cc_can_ask; then
+        cc_show "${C_CYN:-}" "[?] $_cc_ch_q [$_cc_ch_hint] $_cc_ch_d (default): $_cc_ch_m"
+        CC_CHOICE=$_cc_ch_d
+        return 0
+    fi
+    # The question, then each answer on its own line.
+    printf '%s[?]%s %s\n' "${C_CYN:-}" "${C_OFF:-}" "$_cc_ch_q" >/dev/tty
+    for _cc_ch_o in "$@"; do printf '      [%s] %s\n' "${_cc_ch_o%%=*}" "${_cc_ch_o#*=}" >/dev/tty; done
+    _cc_ch_prompt="      Answer [$_cc_ch_hint]:"
+    while :; do
+        printf '%s%s ' "$_cc_ch_prompt" "$(_cc_left_txt)" >/dev/tty
+        if ! _cc_read _cc_ch_a; then
+            printf '\n' >/dev/tty
+            [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
+            _cc_ch_a=""
+        fi
+        _cc_ch_t=$(printf '%s' "$_cc_ch_a" | tr 'A-Z' 'a-z' | sed 's/^ *//; s/ *$//')
+        [ -z "$_cc_ch_t" ] && _cc_ch_t=$_cc_ch_d
+        # The letter, or the first word of its meaning ("yes", "key-only").
+        _cc_ch_a=""
+        for _cc_ch_o in "$@"; do
+            _cc_ch_w=$(printf '%s' "${_cc_ch_o#*=}" | awk '{ w = tolower($1); sub(/[,.:;]$/, "", w); print w }')
+            if [ "$_cc_ch_t" = "${_cc_ch_o%%=*}" ] || [ "$_cc_ch_t" = "$_cc_ch_w" ]; then _cc_ch_a=${_cc_ch_o%%=*}; fi
+        done
+        [ -n "$_cc_ch_a" ] && break
+        printf '      "%s" is not an answer here: type one of [%s] (Enter = %s).\n' "$_cc_ch_t" "$_cc_ch_hint" "$_cc_ch_d" >/dev/tty
+    done
+    CC_CHOICE=$_cc_ch_a
+    for _cc_ch_o in "$@"; do [ "${_cc_ch_o%%=*}" = "$CC_CHOICE" ] && _cc_ch_m=${_cc_ch_o#*=}; done
+    [ -n "$CC_TEE" ] && printf '[?] %s [%s] %s: %s\n' "$_cc_ch_q" "$_cc_ch_hint" "$CC_CHOICE" "$_cc_ch_m" >>"$CC_TEE"
+    cc_note "asked: $_cc_ch_q -> $CC_CHOICE: $_cc_ch_m"
+    return 0
+}
+
 # _cc_can_ask -> true when there is someone to ask.
 #   CCDC_NO_TTY=1 says there is nobody (the test suite sets it, so tests
 #   never wait for an answer when run from a terminal).
 _cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${CCDC_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
 
-# cc_ask QUESTION DEFAULT -> 0 for yes, 1 for no.  DEFAULT is Y or N.
-#   Enter takes the default.  With --batch or no terminal the default is
-#   taken and shown.  If the revert timer runs out while waiting, the script
-#   stops (nothing has been changed while questions are still being asked).
+# cc_ask QUESTION DEFAULT [YES-MEANS] [NO-MEANS] -> 0 for yes, 1 for no.
+#   DEFAULT is Y or N.  Shown like cc_choose, with what each answer does:
+#     [?] Back up the web roots?
+#         [y] yes, back them up
+#         [n] no, skip them
+#         Answer [Y/n]:
+#   Without meanings the answers are plain "yes" and "no".  Enter takes the
+#   default.  With --batch or no terminal the default is taken and shown.
+#   If the revert timer runs out while waiting, the script stops (nothing
+#   has been changed while questions are still being asked).
 cc_ask() {
-    _cc_ak_q=$1; _cc_ak_d=${2:-N}
-    case "$_cc_ak_d" in Y|y) _cc_ak_h="Y/n"; _cc_ak_d=Y ;; *) _cc_ak_h="y/N"; _cc_ak_d=N ;; esac
-    if ! _cc_can_ask; then
-        cc_show "${C_CYN:-}" "[?] $_cc_ak_q [$_cc_ak_h] $_cc_ak_d (default)"
-    else
-        while :; do
-            printf '%s[?]%s %s [%s]%s ' "${C_CYN:-}" "${C_OFF:-}" "$_cc_ak_q" "$_cc_ak_h" "$(_cc_left_txt)" >/dev/tty
-            if ! _cc_read _cc_ak_a; then
-                printf '\n' >/dev/tty
-                [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
-                _cc_ak_a=""
-            fi
-            case "$_cc_ak_a" in
-                '') _cc_ak_a=$_cc_ak_d; break ;;
-                y|Y|yes|YES|Yes) _cc_ak_a=Y; break ;;
-                n|N|no|NO|No) _cc_ak_a=N; break ;;
-                *) printf '    please answer y or n\n' >/dev/tty ;;
-            esac
-        done
-        [ -n "$CC_TEE" ] && printf '[?] %s [%s] %s\n' "$_cc_ak_q" "$_cc_ak_h" "$_cc_ak_a" >>"$CC_TEE"
-        cc_note "asked: $_cc_ak_q -> $_cc_ak_a"
-        _cc_ak_d=$_cc_ak_a
-    fi
-    [ "$_cc_ak_d" = Y ]
+    case "${2:-N}" in Y|y) _cc_ak_d=y ;; *) _cc_ak_d=n ;; esac
+    cc_choose "$1" "$_cc_ak_d" "y=${3:-yes}" "n=${4:-no}"
+    [ "$CC_CHOICE" = y ]
 }
 
-# cc_ask_text QUESTION DEFAULT -> the answer in CC_ANSWER (DEFAULT on Enter,
-#   with --batch, or with no terminal).
+# cc_ask_text QUESTION DEFAULT [WHAT-TO-TYPE] -> the answer in CC_ANSWER
+#   (DEFAULT on Enter, with --batch, or with no terminal).  WHAT-TO-TYPE is
+#   shown under the question, e.g. "addresses or networks separated by
+#   spaces, like 10.0.0.5 10.0.0.0/24":
+#     [?] Your team's addresses (never blocked)?
+#         type: addresses or networks separated by spaces, like 10.0.0.5 10.0.0.0/24
+#         [Enter = none]:
 cc_ask_text() {
     CC_ANSWER=$2
     if ! _cc_can_ask; then
         cc_show "${C_CYN:-}" "[?] $1 ${2:-(none)} (default)"
         return 0
     fi
-    printf '%s[?]%s %s [%s]%s ' "${C_CYN:-}" "${C_OFF:-}" "$1" "${2:-Enter for none}" "$(_cc_left_txt)" >/dev/tty
+    if [ -n "${3:-}" ]; then
+        printf '%s[?]%s %s\n' "${C_CYN:-}" "${C_OFF:-}" "$1" >/dev/tty
+        printf '      type: %s\n' "$3" >/dev/tty
+        printf '      [Enter = %s]:%s ' "${2:-none}" "$(_cc_left_txt)" >/dev/tty
+    else
+        printf '%s[?]%s %s  [Enter = %s]:%s ' "${C_CYN:-}" "${C_OFF:-}" "$1" "${2:-none}" "$(_cc_left_txt)" >/dev/tty
+    fi
     if ! _cc_read _cc_at_a; then
         printf '\n' >/dev/tty
         [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
         _cc_at_a=""
     fi
     [ -n "$_cc_at_a" ] && CC_ANSWER=$_cc_at_a
-    [ -n "$CC_TEE" ] && printf '[?] %s %s\n' "$1" "$CC_ANSWER" >>"$CC_TEE"
+    [ -n "$CC_TEE" ] && printf '[?] %s %s\n' "$1" "${CC_ANSWER:-(none)}" >>"$CC_TEE"
     cc_note "asked: $1 -> $CC_ANSWER"
     return 0
 }
@@ -1707,7 +1758,7 @@ if ! cc_is_root && [ -z "${CCDC_SS:-}" ]; then cc_show "$C_YEL" "  Not root: pro
 header "3/5  questions (Enter takes the answer in capitals)"
 # Your team's addresses.
 if [ -z "$ADMIN" ] && _cc_can_ask; then
-    cc_ask_text "Your team's addresses that must always get in, for everything (e.g. 10.0.0.5 10.0.0.0/24; Enter for none)" ""
+    cc_ask_text "Your team's addresses: they always get in, to every port?" "" "addresses or networks separated by spaces, like 10.0.0.5 10.0.0.0/24"
     for _a in $(printf '%s' "$CC_ANSWER" | tr ',' ' '); do
         valid_cidr "$_a" || cc_die 2 "not an address or network: $_a"
         ADMIN="$ADMIN$_a$NL"
@@ -1723,26 +1774,26 @@ while IFS='|' read -r _pr _p _bind _proc _pid _user _name _class _def _why _cmd;
         *)
             _d=Y; [ "$_def" = drop ] && _d=N
             # (cc_ask reads the terminal, not this loop's file.)
-            if cc_ask "Keep $_pr/$_p open? ($_name, program $_proc${_user:+ as $_user}: $_why)" "$_d"; then _dec=keep; else _dec=drop; fi ;;
+            if cc_ask "Keep $_pr/$_p open? ($_name, program $_proc${_user:+ as $_user}: $_why)" "$_d" "yes, keep it open" "no, block it"; then _dec=keep; else _dec=drop; fi ;;
     esac
     printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$_pr" "$_p" "$_bind" "$_proc" "$_pid" "$_user" "$_name" "$_class" "$_dec" "$_why" "$_cmd" >>"$W/decided"
 done <"$W/ports"
 # Ports that are not listening now.
 if [ -z "$ALLOW" ] && _cc_can_ask; then
-    cc_ask_text "Other ports to open that are NOT listening now, e.g. a scored service that is down (8089/tcp 123/udp; Enter for none)" ""
+    cc_ask_text "Other ports to open that are NOT listening now (e.g. a scored service that is down)?" "" "port/protocol separated by spaces, like 8089/tcp 123/udp"
     SPECS=$(parse_specs "$CC_ANSWER") || { parse_specs "$CC_ANSWER" >/dev/null; cc_die 2 "not a port or range (1-65535): $BADSPEC"; }
 fi
 # SSH from the team only: only offered when there are team addresses.
 if [ -z "$SSHFROM" ] && [ -n "$ADMIN" ] && _cc_can_ask; then
-    if cc_ask "Allow SSH ONLY from your team's addresses? (say no if the scoring engine checks SSH)" N; then SSHFROM=$ADMIN; fi
+    if cc_ask "Allow SSH ONLY from your team's addresses?" N "yes, only the team can SSH in (scoring SSH checks will FAIL)" "no, SSH stays open to everyone"; then SSHFROM=$ADMIN; fi
 fi
 if [ -z "$RESTOUT" ]; then
     RESTOUT=0
-    cc_ask "Also limit OUTGOING traffic to DNS, NTP, web and your team? (stops reverse shells; can break apps that call out)" N && RESTOUT=1
+    cc_ask "Also limit OUTGOING traffic to DNS, NTP, web and your team?" N "yes, block the rest (stops reverse shells; can break apps that call out)" "no, leave outgoing open" && RESTOUT=1
 fi
 if [ -z "$KEEP6" ]; then
     KEEP6=1
-    cc_ask "Block IPv6? (yes unless this box is scored or managed over IPv6)" Y && KEEP6=0
+    cc_ask "Block IPv6?" Y "yes, block all IPv6 (fine unless something is scored over IPv6)" "no, leave IPv6 as it is" && KEEP6=0
 fi
 
 # ---- Decide every port ---------------------------------------------------------------
@@ -1907,7 +1958,7 @@ if [ "$BACKEND" = nft ] && ! "$NFT" -c -f "$RULES" >"$W/check" 2>&1; then
     cc_err "nft rejected the ruleset (nothing applied): $(head -n 1 "$W/check")"
     CC_N_FAIL=$((CC_N_FAIL + 1))
     _state="FAILED: nft -c rejected the ruleset (see the log)"
-elif [ "$CC_APPLY" = 1 ] && ! cc_ask "Load these rules now? (they are removed again in ${TIMEOUT}s unless you confirm from a NEW session)" Y; then
+elif [ "$CC_APPLY" = 1 ] && ! cc_ask "Load these rules now?" Y "yes, load them (removed again in ${TIMEOUT}s unless you confirm from a NEW session)" "no, load nothing"; then
     CC_APPLY=0
     _state="not loaded: you said no at the last question"
     cc_show "$C_GRY" "  Not loaded. The plan and rules are in $CC_RUN_DIR"
