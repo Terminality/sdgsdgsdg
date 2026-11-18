@@ -42,6 +42,7 @@ Contents:
 32. Linux persistence sweep, `roles/linux/LX-42-persistence-sweep.sh` (LX-42)
 33. Site backup and restore, `roles/applications/SV-15-site-backup.sh` (SV-15)
 34. Database hardening, `roles/applications/SV-20-db-hardening.sh` (SV-20)
+35. PHP and web app hardening, `roles/applications/SV-21-web-hardening.sh` (SV-21)
 
 ---
 
@@ -2401,3 +2402,72 @@ In `db-hardening-N/` (mode 700): `output.txt`, `accounts.txt` (every account, ho
 | `APPLIED, then PUT BACK` | The site broke after a change | Look at `changes.txt`, then rerun with `--skip` for that fix |
 | An app account is listed `used by: -` | Its config is outside /var/www, /srv, /opt | `--webroot DIR` |
 
+
+## 35. PHP and web app hardening, `roles/applications/SV-21-web-hardening.sh` (SV-21)
+
+Makes the web apps hard to take over and makes an uploaded web shell useless, without taking the site down. It finds the apps first (WordPress, Joomla, Drupal, PrestaShop, OpenCart, Magento, Roundcube), then offers each fix, graded like SV-20. After the changes, the site must still load, or everything is put back.
+
+**Back up first** (SV-15).
+
+### How to run it
+
+```sh
+sudo sh SV-21-web-hardening.sh                                         # dry run, asks
+sudo sh SV-21-web-hardening.sh --protected p.csv --apply --level service
+sudo sh SV-21-web-hardening.sh --protected p.csv --apply --batch --level safe --url http://127.0.0.1/shop/
+```
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| How far should I go? | `[s]afe`, `[v]` service, `[a]ccess` | `--level` |
+| Each fix | `[y]` do it / `[n]` skip it (access-level fixes default to no) | `--only` / `--skip` |
+| Each new WordPress admin | `[k]eep` / `[d]emote` to subscriber | `--admins` |
+| Apply these changes? | `[y]` / `[n]` | `--batch` |
+
+### The fixes
+
+| Fix | Level | What it does |
+| --- | --- | --- |
+| `php-urlinclude` | safe | `allow_url_include = Off` (no including code from another server) |
+| `php-errors` | safe | `display_errors = Off`, `log_errors = On` (error pages show paths and SQL) |
+| `php-expose` | safe | `expose_php = Off` (no PHP version in the headers) |
+| `app-config` | safe | App config files (they hold the database password) become `root:www-data 640` |
+| `wp-fileedit` | safe | WordPress: `DISALLOW_FILE_EDIT`, no editing theme/plugin code from the admin panel |
+| `upload-nophp` | service | PHP can't run in upload folders: an uploaded web shell gets 403 |
+| `block-files` | service | `.git`, `.env`, backups, `.sql` dumps and archives can't be downloaded |
+| `wp-xmlrpc` | service | Blocks `xmlrpc.php` (password guessing, many tries per request) |
+| `wp-admins` | service | Lists WordPress admins; ones made in the last `--days` days are asked about one by one |
+| `php-functions` | access | `disable_functions` adds system, exec, shell_exec, passthru, proc_open, popen, pcntl_exec (keeps what was there) |
+| `code-readonly` | access | The web server account no longer owns the site's code; upload, cache and temp folders are left alone |
+
+PHP settings go into the apache2, fpm and cgi `php.ini`, never the command line one. Apache rules go in one file, `zz-ccdc-web.conf`. **nginx is not edited:** the lines go into `nginx-ccdc.conf` in the run folder to include by hand.
+
+**Reported, not changed:** phpinfo pages, app versions.
+
+### Safety
+
+- **Site check:** `--url` (default the home page and each app folder) is loaded before and after. Worse afterwards (stopped working, or a PHP/database error shows) puts everything back on the spot. Retried for 10 seconds for PHP's cache.
+- **Config test** (`apache2ctl -t`, `php-fpm -t`) before each reload. A failed test puts everything back.
+- **Undo:** every file is backed up, every owner and mode recorded (`owners-*.txt` for `code-readonly`), the drop-in removed, demoted admins made admins again. The revert timer runs as usual.
+
+### What it produces
+
+In `web-hardening-N/`: `output.txt`, `apps.txt`, `plan.txt`, `changes.txt`, `summary.txt`, `nginx-ccdc.conf` (when nginx is there), `owners-*.txt`, `revert.sh`.
+
+### What to watch for
+
+- **`php-functions`** can break features that run programs (image tools, some mail, backup plugins). The site check only loads pages: click through checkout after it. A broken feature says "has been disabled for security reasons".
+- **`code-readonly`** stops updates and plugin installs from the admin panel. That's the point during the competition.
+- **A new admin you made yourself:** answer `k`. Put team accounts on the protected list.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `no known app found` | The site is outside /var/www, /srv, /opt | `--webroot DIR` |
+| `could not read wp_users` | WordPress not set up, or root can't log in | `--mysql-cnf FILE` |
+| `APPLIED, then PUT BACK` | The site broke after a change | Look at `changes.txt`, rerun with `--skip` for that fix |
+| A web shell in uploads still runs on nginx | nginx is not edited | Include `nginx-ccdc.conf` in the server block, `nginx -t`, reload |

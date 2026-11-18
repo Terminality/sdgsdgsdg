@@ -2,6 +2,12 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: PHP and web app hardening (SV-21, new)
+
+- **SV-21** finds the web apps and offers fixes by level: safe (allow_url_include, display_errors, expose_php, app config files root:www-data 640, WordPress DISALLOW_FILE_EDIT), service (no PHP in upload folders, block .git/.env/backups/dumps, block xmlrpc.php, new WordPress admins kept or demoted), access (disable_functions for web shell functions, code read-only for the web server). nginx lines are written to a file to include by hand.
+- Config test before reload; the site must still load afterwards, or everything is put back on the spot. Undo restores every file, owner and admin role.
+- Tested: 38 checks on a fake root under seven shells and three awks; live with Apache and PHP 8.3: a web shell in uploads, xmlrpc.php, .git and a .sql dump all went from 200 to 403, the site stayed up, a red admin was demoted, and a page that needed shell_exec was put back automatically.
+
 ## 2026-11-18: Database hardening (SV-20, new); text files only in SV-15 and SV-20
 
 - **SV-20** lists every MySQL/MariaDB account with the app that uses it, then offers fixes by level: safe (anonymous accounts, empty test database, local_infile), service (remote root, accounts with no password, FILE right, new app passwords written into the app's config), access (bind to 127.0.0.1, drop backdoor UDFs). Reports SUPER/GRANT accounts, planted-looking admin accounts, triggers, events, secure_file_priv, PostgreSQL trust.
