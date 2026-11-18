@@ -1,6 +1,6 @@
 # Build status
 
-25 of 31 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+26 of 32 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -9,7 +9,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | Enum (look only) | 6 | 7 |
 | Backup and prep | 4 | 4 |
 | Hardening: easy | 3 | 3 |
-| Hardening: medium | 1 | 1 |
+| Hardening: medium | 2 | 2 |
 | Hardening: hard | 2 | 6 |
 | Management | 3 | 3 |
 | Alerts | 3 | 4 |
@@ -48,7 +48,8 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 
 | ID | Script | Risk | Status | File |
 | --- | --- | --- | --- | --- |
-| LX-22 | SSH fixes | service | built | `roles/linux/LX-22-ssh-hardening.sh` |
+| LX-22 | SSH hardening | service | built | `roles/linux/LX-22-ssh-hardening.sh` |
+| LX-42 | Linux persistence sweep | service | built | `roles/linux/LX-42-persistence-sweep.sh` |
 
 ## Hardening: hard
 

@@ -2,6 +2,21 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-17: Persistence sweep (LX-42) and SSH hardening rebuilt (LX-22 v2)
+
+**LX-42 persistence sweep (new)**
+- Asks: full scan or which areas, extra folders, how far back is "recent", package check, accounts to leave out.
+- 13 areas: cron and at; systemd units, overrides, user units, generators; rc.local, init.d and hook folders (motd, network, DHCP, sleep), udev, apt hooks, logrotate, inetd/xinetd, autostart; every authorized_keys and sshd key settings; shell startup files (reverse shells, `alias sudo`, LD_PRELOAD, PATH, history hiding); ld.so.preload and LD_PRELOAD in services and processes; extra UID 0, service accounts that can log in, sudoers; pam_exec/pam_permit and unpackaged PAM modules; boot modules, modules with no file, modprobe and core_pattern hooks; planted and hidden files, shadowed commands, unpackaged or modified system programs, SUID/caps; deleted or fake-kernel processes and connected shells; web shells; mail hooks and polkit.
+- HIGH/MED/LOW with plain explanations. "Not from a package" is checked against the package database.
+- With --apply: asks about each finding; files go to quarantine, lines are removed after a backup, units stopped first, SUID taken off; revert timer and revert.sh.
+- Tested: a fake root with 60+ planted examples next to clean look-alikes (all found, none of the clean ones), a clean root (no HIGH or MED), removal and undo, seven shells and three awks. Live on a container it found a planted web shell and nothing false among the system programs after tuning.
+
+**LX-22 SSH hardening v2**
+- Five sections in the new look: SSH now, every key (numbered, fingerprint, why it looks planted), questions, the plan (before -> after), apply.
+- Asks keep or remove for each key (planted-looking keys default to remove), and on or off for each setting with the current value and what it does; settings already right are not asked. New settings: client-alive, LogLevel VERBOSE, modern crypto (opt-in), password logins off (opt-in).
+- Revert timer with confirm from a new session; a revert reloads sshd. Numbered folders, output.txt, keys.txt, settings.txt.
+- Tested: 84 checks under seven shells and three awks; the generated config with every option passes the real OpenSSH 9.6 `sshd -t`; a real sshd with it lets the kept key in and refuses the removed key and passwords.
+
 ## 2026-11-16: Linux firewall rebuilt around the open ports (LX-25 v2)
 
 - Lists every listening port with the program, pid, account and full command line behind it (so the script behind `python3` shows), where it is bound (all addresses or this box only), what the port normally is in plain words, and whether it was a scored service in past competitions (docs/ENVIRONMENT.md) or is on the protected list.
