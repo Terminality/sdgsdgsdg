@@ -7,7 +7,7 @@ a1aeac42f58782686c7d399821a2423694b46de7c7ae8c5434e3a6ea300c6012  applications/S
 32af0f11d49e6c85a905a68db8bde7f8c5cbb2d4e14d1565cba877e0c49dd181  linux/LX-25-firewall.sh
 384fcbd41b406f8ef6f1df41e451cfe33a19216580bd9b21b0f85dcd7a459211  linux/LX-31-backup.sh
 417fa95c7949670bd8210fefd9a796f66ee6766c9edd69517bf6306ec090baa1  linux/LX-39-safe-fixes.sh
-6807d209463577f99da247b45115117cb5767159b19872087b6f2a4032a94b5a  linux/LX-40-change-watch.sh
+93f06eab568de456bd9a006d8580aa9d61c4bf4fb5fed5f9178f3b113de8d1e2  linux/LX-40-change-watch.sh
 42a01feadacde7cc9e05b2c8e3061f0782120241141ece6ae7e933da0c961a91  linux/LX-41-session-log.sh
 a1cf51980ac86c442b94d1ad74daac4896af1e14299ca36bb3936dc44e20661c  linux/LX-42-persistence-sweep.sh
 d3cb2938bea231fca3b9be1803ee60d9ee323b42f8a8e2ba76a45b5495992c06  linux/SH-05-linux-enum.sh
