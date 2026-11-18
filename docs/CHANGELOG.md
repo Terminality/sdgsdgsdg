@@ -2,6 +2,15 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Web and database enum rebuilt (SV-01 v2)
+
+- New look, same as the Linux enum: numbered sections with titles, flags shown live (`[!] FIX`, `[*] LOOK`), what was found in green, coloured summary. Run folder `web-enum-N/` with output.txt, a `.txt` table per result and CSVs in `csv/`.
+- Questions: look at everything or pick sections, search file contents, other web folders, log in to the databases. Flags answer each (`--only`, `--fast`/`--deep`, `--webroot`, `--no-db`/`--db`).
+- New **paths** section: which URL path serves which folder or app (web roots, aliases, CGI, `ProxyPass`/`proxy_pass` to apps, PHP/uWSGI handlers, status pages), listed on screen. Flags paths that serve `/`, `/etc`, `/root` or logs, and open server-status pages.
+- New **runtimes** section: languages installed with versions, app servers running, app folders, and unknown programs on web ports. Flags development and debug servers (anyone who reaches them can run code) and app servers running as root.
+- Also: a lint fix in SV-30 left by PR #49.
+- Tested: 49 checks under seven shells and three awks; live on Ubuntu with Apache, nginx configs, PHP 8.3 and a planted WordPress site.
+
 ## 2026-11-18: Scored-service hardening (SV-30, LX-22)
 
 Both scripts ask which box this is (`[s]plunk [w]ebmail [e]comm [o]ther`) and keep the scored checks working.

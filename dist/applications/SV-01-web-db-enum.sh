@@ -1,10 +1,10 @@
 #!/bin/sh
 # =============================================================================
 # ID:       SV-01
-# NAME:     Web and database inventory
+# NAME:     Web and database enum
 # ROLE:     Applications  (wave 1)
 # KIND:     readonly - changes nothing on the host
-# VERSION:  1.0.0
+# VERSION:  2.0.0
 #
 # PURPOSE
 #   One run on a Linux/Unix host answers "what web sites and databases are on
@@ -1388,7 +1388,7 @@ cc_finish() {
 }
 # <<< CCDC-LIB
 
-ALL_SECTIONS="servers sites webroots php apps mysql postgres datastores"
+ALL_SECTIONS="servers sites paths runtimes webroots php apps mysql postgres datastores"
 
 usage() {
     cat <<'USAGE'
@@ -1414,6 +1414,8 @@ list_sections() {
     cat <<'LIST'
 servers      web servers and PHP-FPM pools: version, running, run-as account
 sites        virtual hosts and server blocks: name, port, TLS, web root, listing
+paths        which URL path serves which folder or app (aliases, proxies, PHP, status pages)
+runtimes     languages and app servers: PHP, Python, Node.js, Java, Ruby, .NET, dev servers
 webroots     web root owners and modes, and files that should not be there
 php          risky php.ini settings per PHP install
 apps         WordPress, Joomla, Drupal, phpMyAdmin and others: version, database
@@ -1427,7 +1429,7 @@ LIST
 # Repeatable options collect newline-separated lists (paths may hold spaces).
 NL='
 '
-ONLY=""; SKIP=""; FAST=0; MAXFLAGS=30
+ONLY=""; SKIP=""; FAST=""; MAXFLAGS=30; NODB=""; COLOR=1; ROOTSET=0
 EXTRA_ROOTS=""; APACHE_FILES_GIVEN=""; NGINX_FILES_GIVEN=""; MYSQL_CNF=""
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
@@ -1435,9 +1437,13 @@ while [ $# -gt 0 ]; do
         --only)        [ $# -ge 2 ] || cc_die 2 "--only needs a list of sections"; ONLY=$2; shift 2 ;;
         --skip)        [ $# -ge 2 ] || cc_die 2 "--skip needs a list of sections"; SKIP=$2; shift 2 ;;
         --fast)        FAST=1; shift ;;
+        --deep)        FAST=0; shift ;;
+        --no-db)       NODB=1; shift ;;
+        --db)          NODB=0; shift ;;
+        --no-color|--no-colour) COLOR=0; shift ;;
         --webroot)     [ $# -ge 2 ] || cc_die 2 "--webroot needs a folder"
                        [ -d "$2" ] || cc_die 2 "--webroot: not a folder: $2"
-                       EXTRA_ROOTS="$EXTRA_ROOTS$2$NL"; shift 2 ;;
+                       EXTRA_ROOTS="$EXTRA_ROOTS$2$NL"; ROOTSET=1; shift 2 ;;
         --apache-conf) [ $# -ge 2 ] || cc_die 2 "--apache-conf needs a file"
                        [ -r "$2" ] || cc_die 2 "--apache-conf: cannot read $2"
                        APACHE_FILES_GIVEN="$APACHE_FILES_GIVEN$2$NL"; shift 2 ;;
@@ -1461,6 +1467,51 @@ check_names() {
         case " $ALL_SECTIONS " in *" $_cn "*) ;; *) cc_die 2 "unknown section '$_cn' (see --list)" ;; esac
     done
 }
+# ---- Start ------------------------------------------------------------------
+cc_init "SV-01" "Web and database enum" readonly
+cc_use_numbered_dir web-enum
+# CSV files go in csv/; the run folder gets a readable .txt table per file.
+CC_CSV_DIR="$CC_RUN_DIR/csv"
+mkdir -p "$CC_CSV_DIR" || cc_die 3 "cannot create $CC_CSV_DIR"
+cc_detect_os
+W="$CC_RUN_DIR/.work"          # scratch files; removed at the end
+mkdir -p "$W" || cc_die 3 "cannot create $W"
+
+# ---- Live output (linpeas style, like SH-05) ----------------------------------
+# fd 3 is the real stdout, so a flag raised inside $( ... ) still reaches the
+# screen.  output.txt gets the same lines without colour.
+exec 3>&1
+OUTF="$CC_RUN_DIR/output.txt"
+grep -v '\[NOTE\]\|\[DEBUG\]' "$CC_LOG" >"$OUTF" 2>/dev/null || : >"$OUTF"
+# shellcheck disable=SC2034  # read by the library's log functions
+CC_TEE=$OUTF
+if [ "$COLOR" = 1 ] && [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    C_RED=$(printf '\033[1;31m'); C_YEL=$(printf '\033[1;33m'); C_GRN=$(printf '\033[1;32m')
+    C_CYN=$(printf '\033[1;36m'); C_GRY=$(printf '\033[0;90m'); C_OFF=$(printf '\033[0m')
+else
+    C_RED=""; C_YEL=""; C_GRN=""; C_CYN=""; C_GRY=""; C_OFF=""
+fi
+show() { printf '%s%s%s\n' "$1" "$2" "$C_OFF" >&3; printf '%s\n' "$2" >>"$OUTF"; }
+show "$C_CYN" "SV-01 Web and database enum | host $CC_HOST | results in $CC_RUN_DIR"
+show "" "Legend: ${C_RED}[!] FIX${C_OFF} fix now (HIGH)   ${C_YEL}[*] LOOK${C_OFF} look soon (MED)   ${C_GRN}green${C_OFF} what was found   ${C_GRY}grey${C_OFF} info"
+
+# ---- Questions (Enter takes the answer in capitals) ---------------------------
+show "" ""
+show "$C_CYN" "==========[ setup ]=========="
+if [ -z "$ONLY$SKIP" ]; then
+    if ! cc_ask "Look at everything (web servers, URL paths, languages, web roots, PHP, apps, databases)?" Y "yes, every section" "no, let me pick"; then
+        cc_ask_text "Which sections?" "servers sites paths runtimes webroots" "names separated by spaces, from: $ALL_SECTIONS"
+        ONLY=$(printf '%s' "$CC_ANSWER" | tr ' ' ',')
+    fi
+fi
+[ -n "$FAST" ] || { if cc_ask "Search file contents for web shells and phpinfo pages?" Y "yes, read the files (slower on big sites)" "no, names only (fast)"; then FAST=0; else FAST=1; fi; }
+if [ "$ROOTSET" = 0 ]; then
+    cc_ask_text "Other web folders to look in, besides the ones the web servers use?" "" "folders separated by spaces, like /opt/shop /srv/app"
+    for _w in $CC_ANSWER; do
+        if [ -d "$_w" ]; then EXTRA_ROOTS="$EXTRA_ROOTS$_w$NL"; else show "$C_YEL" "  [!] not a folder, skipped: $_w"; fi
+    done
+fi
+[ -n "$NODB" ] || { if cc_ask "Log in to the databases (read-only) to list accounts, settings and databases?" Y "yes, read-only queries as root through the local socket" "no, config files only"; then NODB=0; else NODB=1; fi; }
 SECTIONS=$ALL_SECTIONS
 if [ -n "$ONLY" ]; then check_names "$ONLY"; SECTIONS=$(printf '%s' "$ONLY" | tr ',' ' '); fi
 if [ -n "$SKIP" ]; then
@@ -1470,12 +1521,11 @@ if [ -n "$SKIP" ]; then
     SECTIONS=$_keep
 fi
 
-# ---- Start ------------------------------------------------------------------
-cc_init "SV-01" "Web and database inventory" readonly
-cc_use_run_dir
-cc_detect_os
-W="$CC_RUN_DIR/.work"          # scratch files; removed at the end
-mkdir -p "$W" || cc_die 3 "cannot create $W"
+if [ "$NODB" = 1 ]; then
+    _keep=""
+    for _s in $SECTIONS; do case "$_s" in mysql|postgres) ;; *) _keep="$_keep $_s" ;; esac; done
+    SECTIONS=$_keep
+fi
 IS_ROOT=0
 cc_is_root && IS_ROOT=1
 [ "$IS_ROOT" = 1 ] || cc_warn "not running as root: configs, database logins and some web root files will be missing"
@@ -1506,12 +1556,19 @@ sec_csv() {
 #   (db_users.csv ...): created by whichever section runs first, then appended
 #   to.  Their rows are counted per engine at the end of each section (ENGINE).
 db_csv() {
-    SEC_CSV="$CC_RUN_DIR/$1.csv"
+    SEC_CSV="$CC_CSV_DIR/$1.csv"
     [ -f "$SEC_CSV" ] || SEC_CSV=$(cc_csv_new "$1" "$2") || SEC_CSV=/dev/null
     SEC_DBFILES="$SEC_DBFILES $SEC_CSV"
 }
 # flag SEVERITY ITEM DETAIL -> cc_flag with the current section filled in.
-flag() { cc_flag "$1" "$SEC" "$2" "$3"; }
+flag() {
+    cc_flag "$1" "$SEC" "$2" "$3"
+    case "$1" in
+        HIGH) show "$C_RED" "  [!] FIX   $2: $3" ;;
+        MED)  show "$C_YEL" "  [*] LOOK  $2: $3" ;;
+    esac
+    return 0
+}
 # emit_flags FILE -> turn lines "SEVERITY|ITEM|DETAIL" into flags.
 emit_flags() {
     [ -s "$1" ] || return 0
@@ -1520,7 +1577,7 @@ emit_flags() {
     done <"$1"
 }
 # say TEXT -> add a line to the summary's key-facts block.
-say() { printf '%s\n' "$*" >>"$W/summary_lines"; }
+say() { printf '%s\n' "$*" >>"$W/summary_lines"; show "$C_GRN" "  $*"; }
 # note TEXT -> a short note on this section's row in the summary table.
 note() { if [ -z "$SEC_NOTE" ]; then SEC_NOTE=$*; else SEC_NOTE="$SEC_NOTE; $*"; fi; }
 # AWK_Q: q() quotes one CSV field, for awk programs that write CSV directly.
@@ -1676,7 +1733,7 @@ detect_web() {
 #   $W/site_flags   "SEVERITY|item|detail"
 #   $W/roots        "server|site|path"  every web root and alias target
 parse_web_configs() {
-    : >"$W/sites"; : >"$W/site_flags"; : >"$W/roots"
+    : >"$W/sites"; : >"$W/site_flags"; : >"$W/roots"; : >"$W/paths"
     # --- Apache: ask Apache which files it reads, else use the usual paths.
     if [ -n "$APACHE_FILES_GIVEN" ]; then
         printf '%s' "$APACHE_FILES_GIVEN" >"$W/apache_files"
@@ -1700,12 +1757,13 @@ parse_web_configs() {
     cc_debug "apache config files: $#"
     if [ $# -gt 0 ]; then
         # sq holds a single quote: "\x27" is not understood by every awk.
-        awk -v sites="$W/sites" -v ff="$W/site_flags" -v roots="$W/roots" -v sq="'" '
+        awk -v sites="$W/sites" -v ff="$W/site_flags" -v roots="$W/roots" -v paths="$W/paths" -v sq="'" '
             function unq(s) { gsub("^[\"" sq "]|[\"" sq "]$", "", s); return s }  # awk, not shell: posix-ok
             function emit(name, listen, tls, root, where) {  # awk, not shell: posix-ok
                 print "apache|" name "|" listen "|" tls "|" root "|" where >> sites
-                if (root != "") print "apache|" name "|" root >> roots
+                if (root != "") { print "apache|" name "|" root >> roots; print "apache|" name "|/|" root "|web root|" where >> paths }
             }
+            function site() { return invh ? (vn != "" ? vn : "(default)") : "(main)" }  # awk, not shell: posix-ok
             {
                 line = $0; sub(/^[ \t]+/, "", line)
                 if (line == "" || line ~ /^#/) next
@@ -1733,6 +1791,18 @@ parse_web_configs() {
                 else if (d == "servertokens") tokens = tolower(w[2])
                 else if ((d == "alias" || d == "scriptalias") && n >= 3) {
                     t = unq(w[3]); if (t !~ /^\/usr\/share\/apache2\//) print "apache|alias " unq(w[2]) "|" t >> roots
+                    print "apache|" site() "|" unq(w[2]) "|" t "|" (d == "scriptalias" ? "scripts (CGI)" : "alias") "|" FILENAME ":" FNR >> paths
+                }
+                else if (d == "proxypass" && n >= 3 && w[3] != "!") print "apache|" site() "|" w[2] "|" w[3] "|proxy to an app|" FILENAME ":" FNR >> paths
+                else if (d ~ /^<location/) { loc = line; sub(/^<[^ \t]+[ \t]+/, "", loc); sub(/>.*/, "", loc); loc = unq(loc); lstat = 0; lreq = 0 }
+                else if (d == "sethandler" && loc != "" && tolower(w[2]) ~ /^server-(status|info)$/) {
+                    lstat = 1; print "apache|" site() "|" loc "|" tolower(w[2]) "|status page|" FILENAME ":" FNR >> paths
+                    lwhere = FILENAME ":" FNR
+                }
+                else if (d == "require" && loc != "" && tolower(line) ~ /require[ \t]+(local|ip|host)/) lreq = 1
+                else if (d == "</location>") {
+                    if (lstat && !lreq) print "MED|" lwhere "|" loc " shows the server status (who is connected, what they ask for) to anyone: add Require local" >> ff
+                    loc = ""
                 }
             }
             END {
@@ -1757,7 +1827,8 @@ EOF
         done
     fi
     if [ -s "$W/nginx_all" ]; then
-        awk -v sites="$W/sites" -v ff="$W/site_flags" -v roots="$W/roots" -v users="$W/webusers" '
+        awk -v sites="$W/sites" -v ff="$W/site_flags" -v roots="$W/roots" -v users="$W/webusers" -v paths="$W/paths" '
+            function sn() { return (nm != "" && nm != "_") ? nm : "(default)" }  # awk, not shell: posix-ok
             /^# configuration file .*:$/ { file = $0; sub(/^# configuration file /, "", file); sub(/:$/, "", file); ln = 0; next }
             {
                 ln++; line = $0; sub(/#.*/, "", line); t = line; gsub(/^[ \t]+|[ \t]+$/, "", t)
@@ -1765,6 +1836,11 @@ EOF
                 if (!insrv && t ~ /^server[ \t]*\{/) {
                     insrv = 1; sdepth = depth; li = ""; nm = ""; rt = ""; tls = "no"; where = file ":" ln
                 } else if (insrv) {
+                    if (t ~ /^location[ \t]/) { loc = t; sub(/^location[ \t]+/, "", loc); sub(/[ \t]*\{.*$/, "", loc); ldepth = depth }
+                    if (loc != "" && (d == "proxy_pass" || d == "fastcgi_pass" || d == "uwsgi_pass" || d == "scgi_pass" || d == "grpc_pass"))
+                        print "nginx|" sn() "|" loc "|" v "|" (d == "proxy_pass" ? "proxy to an app" : d == "fastcgi_pass" ? "PHP (FastCGI)" : d == "uwsgi_pass" ? "Python (uWSGI)" : d) "|" file ":" ln >> paths
+                    if (loc != "" && (d == "root" || d == "alias")) print "nginx|" sn() "|" loc "|" v "|" d "|" file ":" ln >> paths
+                    if (loc != "" && d == "stub_status") print "nginx|" sn() "|" loc "|stub_status|status page|" file ":" ln >> paths
                     if (d == "listen") { li = li (li != "" ? " " : "") v; if (v ~ /(^|[ \t])ssl/) tls = "yes" }
                     else if (d == "server_name") nm = v
                     else if (d == "ssl_certificate") tls = "yes"
@@ -1779,7 +1855,9 @@ EOF
                     if (d == "server_tokens") tokens = v
                 }
                 depth += gsub(/\{/, "{", line); depth -= gsub(/\}/, "}", line)
+                if (loc != "" && depth <= ldepth) loc = ""
                 if (insrv && depth <= sdepth) {
+                    if (rt != "") print "nginx|" sn() "|/|" rt "|web root|" where >> paths
                     if (nm == "" || nm == "_") nm = "(default)"
                     print "nginx|" nm "|" li "|" tls "|" rt "|" where >> sites
                     if (rt != "") print "nginx|" nm "|" rt >> roots
@@ -1846,6 +1924,106 @@ s_sites() {
     _n=$(grep -c . "$W/sites")
     [ "$_n" -gt 0 ] && say "Sites: $_n ($(awk -F'|' '{ printf "%s%s %s", (NR > 1 ? ", " : ""), $1, $2 }' "$W/sites" | cut -c1-160))"
     [ "$IS_ROOT" = 1 ] || note "partial: not root"
+}
+
+s_paths() {
+    sec_csv paths "server,site,url_path,serves,kind,config"
+    _F=$SEC_CSV
+    sort -u "$W/paths" >"$W/paths.s"
+    while IFS='|' read -r _sv _si _u _t _k _c; do
+        cc_csv_row "$_F" "$_sv" "$_si" "$_u" "$_t" "$_k" "$_c"
+    done <"$W/paths.s"
+    _np=$(grep -c . "$W/paths.s"); _npx=$(grep -c '|proxy to an app|' "$W/paths.s")
+    [ "$_np" -gt 0 ] && say "URL paths: $_np ($(grep -c '|web root|' "$W/paths.s") web roots, $(grep -c '|alias|' "$W/paths.s") aliases, $_npx proxied to an app, $(grep -c '|PHP (FastCGI)|' "$W/paths.s") PHP handlers)"
+    # What each path leads to, worst first.
+    awk -F'|' '
+        $5 ~ /alias|root/ && $4 ~ /^\/(etc|root|home|boot|proc|var\/log)?\/?$/ { print "HIGH|" $2 " " $3 "|serves " $4 " to the web: system files can be downloaded" }
+        $5 ~ /alias|root/ && $4 ~ /^\/(etc|root|var\/log)\// { print "HIGH|" $2 " " $3 "|serves " $4 " to the web: system files can be downloaded" }
+        $5 == "proxy to an app" { a = $4; sub(/^[a-z]+:\/\//, "", a); print "LOW|" $2 " " $3 "|handed to an app at " a ": that app is part of the site (see runtimes)" }
+        $5 == "scripts (CGI)" { print "LOW|" $2 " " $3 "|runs programs from " $4 ": check every file there" }' "$W/paths.s" >"$W/pf"
+    emit_flags "$W/pf"
+    # On screen: every path, as "site  /url  ->  what serves it".
+    awk -F'|' '{ printf "    %-8s %-26s %-22s -> %s (%s)\n", $1, substr($2, 1, 26), $3, $4, $5 }' "$W/paths.s" | head -n 30 >"$W/pshow"
+    while IFS= read -r _l; do show "" "$_l"; done <"$W/pshow"
+    [ "$_np" -gt 30 ] && show "$C_GRY" "    ... $((_np - 30)) more in paths.txt"
+    [ "$_np" = 0 ] && note "no web server config read"
+    return 0
+}
+
+s_runtimes() {
+    sec_csv runtimes "language,version,kind,detail,user,where"
+    _F=$SEC_CSV
+    : >"$W/rt"
+    # Languages installed (version only).
+    _pv=$(php -v 2>/dev/null | head -n 1 | awk '{ print $2 }')
+    [ -n "$_pv" ] && printf 'PHP|%s|installed|php command|-|%s\n' "$_pv" "$(command -v php)" >>"$W/rt"
+    for _d in /etc/php/*/; do [ -d "$_d" ] && printf 'PHP|%s|installed|configs for this version|-|%s\n' "$(basename "$_d")" "$_d" >>"$W/rt"; done
+    for _l in python3:Python node:Node.js nodejs:Node.js java:Java ruby:Ruby dotnet:.NET go:Go perl:Perl; do
+        _c=${_l%%:*}; _n=${_l#*:}
+        cc_have "$_c" || continue
+        case "$_c" in
+            java) _v=$(java -version 2>&1 | sed -n 's/.*version "\([^"]*\)".*/\1/p' | head -n 1) ;;
+            ruby) _v=$(ruby --version 2>/dev/null | awk '{ print $2 }') ;;
+            go) _v=$(go version 2>/dev/null | awk '{ print $3 }') ;;
+            dotnet) _v=$(dotnet --version 2>/dev/null) ;;
+            perl) _v=$(perl -e 'print $^V' 2>/dev/null) ;;
+            *) _v=$("$_c" --version 2>&1 | head -n 1 | awk '{ print $NF }') ;;
+        esac
+        _v=$(printf '%s' "$_v" | tr -d '|' | cut -c1-40)
+        printf '%s|%s|installed|%s command|-|%s\n' "$_n" "${_v:-?}" "$_c" "$(command -v "$_c")" >>"$W/rt"
+    done
+    # App servers running now, from the full command lines.  Dev servers
+    # (debug consoles, auto reload) let anyone who reaches them run code.
+    awk -v tab="$TAB" '{
+        u = $1; c = $0; sub(/^[^ \t]+[ \t]+/, "", c); l = tolower(c); k = ""; lang = ""; dev = 0
+        if (l ~ /(^|\/)(gunicorn|uwsgi|uvicorn|daphne|hypercorn|waitress-serve)([ \t]|$)/) { lang = "Python"; k = "app server" }
+        else if (l ~ /manage\.py[ \t]+runserver/ || l ~ /flask[ \t]+run/ || l ~ /werkzeug/) { lang = "Python"; k = "DEV server"; dev = 1 }
+        else if (l ~ /(^|\/)python[0-9.]*[ \t].*\.py/ && l !~ /(unattended|networkd|apt|landscape|fail2ban|cloud-init|supervisord|ccdc)/) { lang = "Python"; k = "python program" }
+        else if (l ~ /(^|\/)(node|nodejs)[ \t]/ || l ~ /(^|\/)pm2/) { lang = "Node.js"; k = (l ~ /--inspect/ ? "DEBUG port open" : (l ~ /(npm|yarn)[ \t]+(run[ \t]+)?(dev|start:dev)|nodemon|next[ \t]+dev/ ? "DEV server" : "app")); dev = (k != "app") }
+        else if (l ~ /(npm|yarn)[ \t]+(run[ \t]+)?dev/) { lang = "Node.js"; k = "DEV server"; dev = 1 }
+        else if (l ~ /(^|\/)java[ \t]/ && l !~ /catalina/) { lang = "Java"; k = (l ~ /-jar/ ? "jar app" : "java program"); if (l ~ /-agentlib:jdwp|-xdebug/) { k = "DEBUG port open"; dev = 1 } }
+        else if (l ~ /catalina/) { lang = "Java"; k = "Tomcat" }
+        else if (l ~ /(^|\/)(puma|unicorn|passenger|thin)([ \t:]|$)/) { lang = "Ruby"; k = "app server" }
+        else if (l ~ /rails[ \t]+(s|server)([ \t]|$)/) { lang = "Ruby"; k = "DEV server"; dev = 1 }
+        else if (l ~ /(^|\/)dotnet[ \t]/) { lang = ".NET"; k = "app" }
+        else if (l ~ /(^|\/)php[0-9.]*[ \t]+(-[a-z]+[ \t]+)*-s[ \t]/) { lang = "PHP"; k = "DEV server (php -S)"; dev = 1 }
+        if (lang != "") print lang "|-|" k "|" substr(c, 1, 150) "|" u "|running" (dev ? "|DEV" : "")
+    }' "$W/psargs" >>"$W/rt"
+    # App files in the usual places (not inside node_modules or vendor).
+    for _d in $(cat "$W/webroots") /opt /srv /home; do
+        [ -d "$_d" ] || continue
+        find "$_d" -maxdepth 4 \( -name node_modules -o -name vendor -o -name .git -o -name site-packages \) -prune -o \
+            -type f \( -name manage.py -o -name wsgi.py -o -name requirements.txt -o -name package.json -o -name Gemfile -o -name '*.war' -o -name pom.xml -o -name go.mod -o -name '*.csproj' -o -name composer.json \) -print 2>/dev/null
+    done | sort -u | head -n 200 | while IFS= read -r _f; do
+        case "$(basename "$_f")" in
+            manage.py|wsgi.py|requirements.txt) _n=Python ;; package.json) _n=Node.js ;; Gemfile) _n=Ruby ;;
+            *.war|pom.xml) _n=Java ;; go.mod) _n=Go ;; *.csproj) _n=.NET ;; composer.json) _n=PHP ;;
+        esac
+        printf '%s|-|app files|%s|%s|%s\n' "$_n" "$(basename "$_f")" "$(ls -ld "$_f" 2>/dev/null | awk '{ print $3 }')" "$(dirname "$_f")"
+    done >>"$W/rt"
+    # Programs on web-style ports that are not the known web servers.
+    awk -F'|' '$3 ~ /^(80|443|3000|3001|4000|5000|5173|8000|8008|8080|8081|8443|8888|9000|9090)$/ && $4 !~ /^(apache2|httpd|nginx|lighttpd|caddy|php-fpm.*|haproxy|varnishd|traefik|splunkd|sshd)$/ {
+        print ($4 == "" ? "unknown" : $4) "|-|listening|port " $3 " on " $2 "|-|" $2 ":" $3 "|PORT" }' "$W/listen" >>"$W/rt"
+    _seen_lang=""
+    while IFS='|' read -r _l _v _k _d _u _w _x; do
+        cc_csv_row "$_F" "$_l" "$_v" "$_k" "$_d" "$_u" "$_w"
+        case "$_x" in
+            DEV)  flag HIGH "$_l $_k" "$_d (as $_u): development and debug servers let anyone who reaches them run code - stop it or keep it local" ;;
+            PORT) flag MED "port ${_w##*:}" "$_l is serving web traffic on $_w: what is it? (not a known web server)" ;;
+        esac
+        [ "$_k" = running ] || [ "$_x" = DEV ] || case "$_k" in "app server"|app|"jar app"|Tomcat|"python program")
+            [ "$_u" = root ] && flag MED "$_l $_k" "runs as root: a hole in the app gives root ($_d)" ;; esac
+        case " $_seen_lang " in *" $_l "*) ;; *) _seen_lang="$_seen_lang $_l" ;; esac
+    done <"$W/rt"
+    # On screen: one line per language: versions, then what runs.
+    awk -F'|' '{ k = $1; if ($3 == "installed") v[k] = v[k] (v[k] ? ", " : "") $2; else if ($6 ~ /^running/) r[k] = r[k] (r[k] ? "; " : "") $3 " as " $5; else if ($3 == "app files") a[k]++ }
+        END { for (k in v) n[k] = 1; for (k in r) n[k] = 1; for (k in a) n[k] = 1
+              for (k in n) printf "    %-9s %s%s%s\n", k, (v[k] ? "version " v[k] : "version ?"), (r[k] ? "  | running: " r[k] : ""), (a[k] ? "  | app folders: " a[k] : "") }' "$W/rt" | sort >"$W/rshow"
+    while IFS= read -r _l; do show "" "$_l"; done <"$W/rshow"
+    [ -n "$_seen_lang" ] && say "Languages / runtimes:$(printf '%s' "$_seen_lang" | sed 's/ \{1,\}/, /g; s/^, / /')"
+    _nrun=$(grep -c '|running' "$W/rt")
+    [ "$_nrun" -gt 0 ] && say "App servers running: $_nrun ($(awk -F'|' '$6 ~ /^running/ { print $1 " " $3 }' "$W/rt" | sort -u | tr '\n' ';' | sed 's/;$//; s/;/, /g'))"
+    return 0
 }
 
 s_webroots() {
@@ -2280,15 +2458,25 @@ detect_web
 parse_web_configs
 build_webroots
 
+# sec_title NAME -> the section's line from --list, without the name.
+sec_title() { list_sections | awk -v n="$1" '$1 == n { $1 = ""; sub(/^ +/, ""); print }'; }
+nflags() { [ -f "$CC_CSV_DIR/flags.csv" ] && grep -c "^\"$1\"" "$CC_CSV_DIR/flags.csv" || echo 0; }
 run_section() {
     SEC=$1; SEC_FILES=""; SEC_DBFILES=""; SEC_NOTE=""
     _rs_n=$((_rs_n + 1))
-    cc_info "[$_rs_n/$_rs_total] $SEC"
+    cc_note "[$_rs_n/$_rs_total] $SEC"
+    show "" ""
+    show "$C_CYN" "==========[ $_rs_n/$_rs_total  $SEC: $(sec_title "$SEC") ]=========="
+    _rs_hi0=$(nflags HIGH); _rs_me0=$(nflags MED)
     "s_$SEC"
     _rows=0
     for _f in $SEC_FILES; do [ -f "$_f" ] && _rows=$((_rows + $(wc -l <"$_f") - 1)); done
     # Shared database files: count only this engine's rows.
     for _f in $SEC_DBFILES; do [ -f "$_f" ] && _rows=$((_rows + $(grep -c "^\"$SEC\"," "$_f"))); done
+    [ "$(nflags HIGH)" = "$_rs_hi0" ] && [ "$(nflags MED)" = "$_rs_me0" ] && show "$C_GRN" "  [ok] nothing to fix here"
+    _rs_files=""
+    for _f in $SEC_FILES $SEC_DBFILES; do [ -f "$_f" ] && _rs_files="$_rs_files $(basename "$_f" .csv).txt"; done
+    show "$C_GRY" "  ($_rows rows${_rs_files:+ ->$(printf '%s' "$_rs_files" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ $//')}${SEC_NOTE:+; $SEC_NOTE})"
     printf '%s|%s|%s\n' "$SEC" "$_rows" "$SEC_NOTE" >>"$W/sections"
 }
 
@@ -2297,14 +2485,27 @@ _rs_total=$(printf '%s\n' $SECTIONS | grep -c .)
 _rs_n=0
 for _s in $SECTIONS; do run_section "$_s"; done
 
-_flagsf="$CC_RUN_DIR/flags.csv"
+_flagsf="$CC_CSV_DIR/flags.csv"
 [ -f "$_flagsf" ] || printf 'severity,section,item,detail,time\n' >"$_flagsf"
 # Read by cc_flag_report in the library.
 # shellcheck disable=SC2034
 CC_FLAGS=$_flagsf
+# shellcheck disable=SC2034
+CC_FLAGS_SHOW="$CC_RUN_DIR/flags.txt"
+for _c in "$CC_CSV_DIR"/*.csv; do
+    [ -f "$_c" ] || continue
+    _b=$(basename "$_c" .csv)
+    if [ "$_b" = flags ]; then
+        { head -n 1 "$_c"; for _sv in HIGH MED LOW; do grep "^\"$_sv\"" "$_c"; done; } >"$W/flags_sorted.csv"
+        cc_csv_pretty "$W/flags_sorted.csv" "$CC_RUN_DIR/flags.txt" 200
+    else
+        cc_csv_pretty "$_c" "$CC_RUN_DIR/$_b.txt"
+    fi
+done
 {
-    printf 'SV-01 Web and database inventory | host %s | %s | root: %s\n\n' "$CC_HOST" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$([ "$IS_ROOT" = 1 ] && echo yes || echo NO - partial)"
+    printf 'SV-01 Web and database enum | host %s | %s | root: %s\n\n' "$CC_HOST" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$([ "$IS_ROOT" = 1 ] && echo yes || echo NO - partial)"
     if [ -s "$W/summary_lines" ]; then cat "$W/summary_lines"; else echo "No web server, web root or database found."; fi
+    [ "$NODB" = 1 ] && printf 'Databases: not logged in (you chose config files only)\n'
     printf '\n'
     awk -v sf="$W/sections" "$CC_AWK_CSV"'
         NR > 1 { csvsplit($0, f); c[f[2] "|" f[1]]++ }
@@ -2319,6 +2520,23 @@ CC_FLAGS=$_flagsf
     cc_flag_report "$MAXFLAGS"
     printf '\nAll results: %s\n' "$CC_RUN_DIR"
 } >"$CC_RUN_DIR/summary.txt"
-cat "$CC_RUN_DIR/summary.txt"
+show "" ""
+show "$C_CYN" "==========[ SUMMARY ]=========="
+awk -v R="$C_RED" -v Y="$C_YEL" -v G="$C_GRN" -v C="$C_CYN" -v D="$C_GRY" -v O="$C_OFF" '
+    /^section +rows +high/  { intable = 1; seen_table = 1; print C $0 O; next }
+    intable && /^$/         { intable = 0; print; next }
+    intable { if ($3 + 0 > 0) print R $0 O; else if ($4 + 0 > 0) print Y $0 O; else print G $0 O; next }
+    /^Flags:/               { print C $0 O; next }
+    /^HIGH - /              { mode = "H"; print R $0 O; next }
+    /^MED - /               { mode = "M"; print Y $0 O; next }
+    /^  \[/ && mode == "H"  { print R "  [!] FIX " substr($0, 3) O; next }
+    /^  \[/ && mode == "M"  { print Y "  [*] LOOK" substr($0, 2) O; next }
+    /^All (flags|results)/  { print D $0 O; next }
+    NR <= 1                 { print C $0 O; next }
+    /^$/                    { print; next }
+    !seen_table             { print G $0 O; next }
+                            { print }
+' "$CC_RUN_DIR/summary.txt" >&3
+cat "$CC_RUN_DIR/summary.txt" >>"$OUTF"
 rm -rf "$W"
 cc_finish

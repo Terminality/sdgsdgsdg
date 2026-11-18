@@ -734,7 +734,20 @@ Each change gets one flag: a backdoor port that is HIGH is not also listed as ME
 
 ## 13. Web and database enum, `roles/applications/SV-01-web-db-enum.sh` (SV-01)
 
-Shows what web sites and databases are on a Linux or Unix host and what is wrong with them. Run it on every box that serves a web site or holds a database, right after the Linux enum. It only reads; it never records a password.
+Shows what web sites and databases are on a Linux or Unix host and what is wrong with them: the web servers, every site, **which URL path serves which folder or app**, **which languages and app servers run** (PHP, Python, Node.js, Java, Ruby, .NET), the web roots, PHP settings, web apps and databases. Run it on every box that serves a web site or holds a database, right after the Linux enum. It only reads, and never records a password.
+
+Same look as the Linux enum: numbered sections with flags shown live (`[!] FIX` red, `[*] LOOK` yellow), what was found in green, and a summary at the end.
+
+### The questions
+
+Enter takes the default, and a flag answers each one ahead of time. `--batch` takes all the defaults.
+
+| Question | Default | Flag |
+| --- | --- | --- |
+| Look at everything? (no = pick the sections) | yes | `--only` / `--skip` |
+| Search file contents for web shells and phpinfo pages? | yes | `--fast` (no) / `--deep` (yes) |
+| Other web folders to look in? | none | `--webroot DIR` |
+| Log in to the databases (read-only)? | yes | `--no-db` / `--db` |
 
 ### How to run it
 
@@ -747,7 +760,7 @@ sudo sh SV-01-web-db-enum.sh --only mysql --mysql-cnf /root/my.cnf       # when 
 
 | Option | What it does |
 | --- | --- |
-| `--only` / `--skip` | Run or leave out sections: `servers sites webroots php apps mysql postgres datastores` |
+| `--only` / `--skip` | Run or leave out sections: `servers sites paths runtimes webroots php apps mysql postgres datastores` |
 | `--fast` | Skip reading file contents (the web shell and phpinfo search). Names, owners and settings are still checked |
 | `--webroot DIR` | Also scan this folder as a web root. Repeat for more |
 | `--apache-conf FILE` / `--nginx-conf FILE` | Read these config files directly instead of asking the server which files it uses. For when `apachectl` or `nginx` is missing, broken or replaced |
@@ -759,13 +772,15 @@ Run it as root. As a normal user it still runs, but it cannot read most configs,
 
 ### What it produces
 
-In `<out>/SV-01_<host>_<UTC time>/`:
+In `<out>/web-enum-N/`: `output.txt` (the screen without colour), `summary.txt`, `run.txt`, and a readable `.txt` table for each of these (the CSVs are in `csv/`):
 
 | File | Contents |
 | --- | --- |
 | `summary.txt` | Web servers, sites, web roots, apps, databases; a section table; HIGH and MED flags |
 | `servers.csv`, `fpm_pools.csv` | Each web server and PHP-FPM pool: version, running or not, the account it runs as |
 | `sites.csv` | Each Apache virtual host and nginx server block: name, listen address, TLS, web root, config file and line |
+| `paths.csv` | Each URL path and what serves it: web roots, aliases, CGI folders, proxies to an app (`ProxyPass`, `proxy_pass`), PHP and uWSGI handlers, status pages |
+| `runtimes.csv` | Languages installed (with version), app servers running (gunicorn, uwsgi, Node, Java/Tomcat, puma, dotnet ...), app folders (`package.json`, `manage.py`, `Gemfile`, `.war` ...), and unknown programs on web ports |
 | `webroots.csv` | Each web root: owner, mode, file counts, files owned by the web account, world-writable files |
 | `files.csv` | Every file that should not be in a web root, with its kind (`webshell`, `upload_code`, `dump`, `env`, `vcs`, `phpinfo`, `config_readable`, `backup`) |
 | `php.csv` | The risky settings of each `php.ini`, after its `conf.d` overrides |
@@ -779,8 +794,8 @@ In `<out>/SV-01_<host>_<UTC time>/`:
 
 | Severity | When |
 | --- | --- |
-| HIGH | A file that looks like a web shell; a program file in an upload or media folder; a database dump or `.env` inside a web root; a web server or PHP-FPM pool running entirely as root; `allow_url_include` on; a database account with no password; MySQL root or an admin account allowed from other hosts; a user-defined function (the `lib_mysqludf_sys` backdoor); a PostgreSQL `trust` rule for network logins; logging in to MySQL with no name or password; a Redis or similar store open to the network without a password |
-| MED | Directory listing on; a web root owned by the web account; world-writable files in a web root; `.git` folders, backups and phpinfo pages in a web root; app configs every local account can read; MySQL `secure_file_priv` empty; accounts with the FILE privilege; anonymous MySQL accounts; triggers and scheduled events; extra PostgreSQL superusers; `trust` for local logins; a database or data store listening on a network address |
+| HIGH | A development or debug server running (`manage.py runserver`, `flask run`, `php -S`, `node --inspect`, `npm run dev`, Java debug agent): anyone who reaches it can run code; a URL path that serves `/`, `/etc`, `/root` or logs; a file that looks like a web shell; a program file in an upload or media folder; a database dump or `.env` inside a web root; a web server or PHP-FPM pool running entirely as root; `allow_url_include` on; a database account with no password; MySQL root or an admin account allowed from other hosts; a user-defined function (the `lib_mysqludf_sys` backdoor); a PostgreSQL `trust` rule for network logins; logging in to MySQL with no name or password; a Redis or similar store open to the network without a password |
+| MED | A server-status page open to everyone; an unknown program serving web traffic on a web port; an app server running as root; directory listing on; a web root owned by the web account; world-writable files in a web root; `.git` folders, backups and phpinfo pages in a web root; app configs every local account can read; MySQL `secure_file_priv` empty; accounts with the FILE privilege; anonymous MySQL accounts; triggers and scheduled events; extra PostgreSQL superusers; `trust` for local logins; a database or data store listening on a network address |
 | LOW | Server version shown in headers; PHP `display_errors`, `expose_php` on, `disable_functions` empty; MySQL `local_infile` on; accounts allowed from any address; PostgreSQL `password` (clear text) logins |
 
 ### What to watch for
