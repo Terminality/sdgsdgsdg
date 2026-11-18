@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Service recovery (SV-50, new)
+
+- **SV-50** checks every service on the box (web, php-fpm, database, mail, Splunk, SSH, time) the same way: running, masked or disabled, config test, port held by another program, answers the way scoring tests, firewall drops, tampered configs / systemd overrides / package files; and once for the box: disk, inodes, /tmp, out of memory. Each fix is asked; a service is only started on a config that passes its test.
+- `--watch N --auto-restart --apply` keeps checking and restarts what goes down (at most 3 times in 10 minutes each).
+- One script for all services: the checks are the same, only the names, ports and tests differ (a table in the script).
+- Tested: 29 checks with a real Apache under seven shells and three awks (CCDC_TEST_SVC=1); first real use found all eight services down after a container restart and brought them back.
+
 ## 2026-11-18: Mail password rotation (SV-40, new)
 
 - **SV-40** reads Dovecot's config to find where mail passwords live and changes them there, asking about each user (`[r]andom [s]et [l]ock [k]eep [a]ll`): system accounts that have a mailbox (chpasswd), passwd-file users (new SHA512-CRYPT hash), Postfix sasldb. SQL/LDAP users are listed. Master users, a static passdb and empty passwords are flagged.
