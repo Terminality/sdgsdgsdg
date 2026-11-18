@@ -1,6 +1,6 @@
 # Applications — web + databases
 
-Scripts owned by this role. 7 of 7 are built.
+Scripts owned by this role. 8 of 8 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -12,6 +12,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | SV-20 | Database hardening | wave2 | medium | built | [`roles/applications/SV-20-db-hardening.sh`](../../roles/applications/SV-20-db-hardening.sh) |
 | SV-21 | PHP and web app hardening | wave2 | medium | built | [`roles/applications/SV-21-web-hardening.sh`](../../roles/applications/SV-21-web-hardening.sh) |
 | SV-42 | Database password rotation | wave2 | medium | built | [`roles/applications/SV-42-db-passwords.sh`](../../roles/applications/SV-42-db-passwords.sh) |
+| SV-40 | Mail password rotation | wave2 | medium | built | [`roles/applications/SV-40-mail-passwords.sh`](../../roles/applications/SV-40-mail-passwords.sh) |
 | SV-30 | Service hardening (FTP + legacy) | Hardening: easy | access | built | [`roles/applications/SV-30-service-hardening.sh`](../../roles/applications/SV-30-service-hardening.sh) |
 
 Script files in this folder are named `<ID>-<short-name>.sh` or `.ps1`. What the tiers and risk levels mean, and the rules for each: `docs/PLAN.md`.

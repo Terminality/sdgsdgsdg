@@ -44,6 +44,7 @@ Contents:
 34. Database hardening, `roles/applications/SV-20-db-hardening.sh` (SV-20)
 35. PHP and web app hardening, `roles/applications/SV-21-web-hardening.sh` (SV-21)
 36. Database password rotation, `roles/applications/SV-42-db-passwords.sh` (SV-42)
+37. Mail password rotation, `roles/applications/SV-40-mail-passwords.sh` (SV-40)
 
 ---
 
@@ -2530,3 +2531,62 @@ In `db-passwords-N/` (mode 700): `output.txt`, `accounts.txt`, `plan.txt`, `summ
 | `failed: the new password did not work` | The login test failed (pg_hba, host limits) | Old password is back; check the log |
 | `APPLIED, then PUT BACK` | The site broke | An app uses an account its config check missed: `--exclude` it, or `--webroot DIR` |
 | `no such database account` (exit 2) | A typo in `--users`/`--exclude` | Fix the name |
+
+## 37. Mail password rotation, `roles/applications/SV-40-mail-passwords.sh` (SV-40)
+
+New passwords for the mail users: the IMAP, SMTP and webmail logins. It reads Dovecot's config to find where the passwords live, then changes them there. Each new password is tested with a real IMAP login.
+
+### How to run it
+
+```sh
+sudo sh SV-40-mail-passwords.sh                                  # dry run, asks
+sudo sh SV-40-mail-passwords.sh --protected p.csv --apply        # asks about each user
+sudo sh SV-40-mail-passwords.sh --protected p.csv --apply --batch
+```
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Go through each user one by one? | `[y]` / `[n]` (use the table's defaults) | `--batch` |
+| Each user | `[r]andom` `[s]et` (typed twice, not shown) `[l]ock` `[k]eep` `[a]ll the rest default` | `--users`, `--exclude`, `--passwords` |
+| A protected user | extra `[y]` / `[n]`, default no | protected list |
+| Apply these changes? | `[y]` / `[n]` | `--apply` |
+
+### Where the passwords are
+
+| Dovecot / Postfix uses | What SV-40 does |
+| --- | --- |
+| System accounts (`pam`, `shadow`, `passwd`) | Changes the accounts that have a mailbox (`/var/mail/USER`, `~/Maildir`, `~/mail`) with chpasswd. `--all-accounts` takes every human account. Root is never included (LX-20 changes it). |
+| `passwd-file` (e.g. `/etc/dovecot/users`) | Writes a new `{SHA512-CRYPT}` hash in the user's line, keeps the rest of the line, empties Dovecot's login cache |
+| Postfix Cyrus SASL (`/etc/sasldb2`) | `saslpasswd2` (not tested by login) |
+| `sql`, `ldap` | Listed only: change them where they live |
+
+**Flagged:** Dovecot **master** users (they can open any mailbox), a `static` passdb (one password for everyone), users with no password.
+
+### Safety
+
+- Dry run unless `--apply`. Revert timer (120 s). The old hash of each user is saved in `before/` (root only).
+- Each new password is tested by an IMAP login (993, or 143 with STARTTLS). If the login fails, the old password goes back on the spot.
+- The undo puts every old hash and line back, and renames `passwords.txt` to `passwords-UNDONE-not-valid.txt`.
+- New passwords only go in `passwords.txt` (mode 600).
+
+### What it produces
+
+In `mail-passwords-N/` (mode 700): `output.txt`, `users.txt`, `plan.txt`, `summary.txt`, `passwords.txt`, `before/`, `revert.sh`.
+
+### What to watch for
+
+- **The scored IMAP and webmail checks log in as a mail user.** Put that user on the protected list, or report its new password in the scoring portal.
+- **Webmail (Roundcube)** and Postfix SMTP through Dovecot use these same passwords. Nothing else to change.
+- **System mail users are also Linux logins.** Running LX-20 afterwards would change them again. Use `--exclude` there, or run only one of the two.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `nothing to rotate` | No Dovecot passdb or SASL database | Mail is somewhere else: check `doveconf -n` |
+| `no mail users found` | System accounts have no mailbox yet | `--all-accounts` |
+| `failed: the new password did not log in` | IMAP refused it (wrong passdb order, a deny list) | The old password is back; check `doveconf -n` |
+| `login not tested here` | No IMAP on 993/143, or openssl missing | Log in from the webmail yourself |
