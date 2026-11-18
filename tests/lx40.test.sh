@@ -40,7 +40,7 @@ CCDC_SS="$B/ss"; CCDC_SYSTEMCTL="$B/systemctl"; CCDC_PROC="$P"; export CCDC_SS C
 : >"$SS_LISTEN"; : >"$SS_CONN"
 printf '  ssh.service loaded active running OpenSSH\n  auditd.service loaded active running Audit\n  apache2.service loaded active running Apache\n' >"$RUNNING"
 # proc PID USER CMD EXE -> a stand-in /proc/PID (owner shown by ls is the test user)
-proc() { mkdir -p "$P/$1"; printf '%s\000' $3 >"$P/$1/cmdline"; ln -sf "$4" "$P/$1/exe"; }
+proc() { mkdir -p "$P/$1"; printf '%s\n' $3 | tr '\n' '\000' >"$P/$1/cmdline"; ln -sf "$4" "$P/$1/exe"; }
 
 mkdir -p "$R/etc/cron.d" "$R/etc/sudoers.d" "$R/etc/pam.d" "$R/etc/systemd/system" "$R/home/alice/.ssh" "$R/var/www/html" "$R/usr/bin" "$R/root" "$R/opt/app/public"
 printf 'root:x:0:0::/root:/bin/bash\nalice:x:1000:1000::/home/alice:/bin/bash\nsvc:x:998:998::/var/svc:/usr/sbin/nologin\nbob:x:1002:1002::/home/bob:/bin/bash\n' >"$R/etc/passwd"
