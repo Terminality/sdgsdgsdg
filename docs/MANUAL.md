@@ -41,6 +41,7 @@ Contents:
 31. Service hardening (FTP + legacy), `roles/applications/SV-30-service-hardening.sh` (SV-30)
 32. Linux persistence sweep, `roles/linux/LX-42-persistence-sweep.sh` (LX-42)
 33. Site backup and restore, `roles/applications/SV-15-site-backup.sh` (SV-15)
+34. Database hardening, `roles/applications/SV-20-db-hardening.sh` (SV-20)
 
 ---
 
@@ -2332,4 +2333,71 @@ sudo sh SV-15-site-backup.sh --restore --protected p.csv --apply
 | `database ...: could not log in` | root cannot log in through the socket | `--mysql-cnf FILE` with a `[client]` user and password |
 | The backup is too big | Media or caches | `--exclude '*/cache/*'`, or raise `--max-mb` |
 | A site is missing | Its folder is outside the usual places | `--webroot DIR` |
+
+---
+
+## 34. Database hardening, `roles/applications/SV-20-db-hardening.sh` (SV-20)
+
+Locks down MySQL/MariaDB behind the web apps without breaking them. It lists every database account and **which app uses it**, read from the apps' own configs. Then it offers each fix, graded like SV-30. After the changes, the site must still load, or everything is put back.
+
+**Back up first** (SV-15 or SV-14).
+
+### How to run it
+
+```sh
+sudo sh SV-20-db-hardening.sh                                         # dry run, asks
+sudo sh SV-20-db-hardening.sh --protected p.csv --apply --level service
+sudo sh SV-20-db-hardening.sh --protected p.csv --apply --batch --level safe --url http://127.0.0.1/shop/
+```
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| How far should I go? | `[s]afe`, `[v]` service, `[a]ccess` | `--level` |
+| Each fix | `[y]` do it / `[n]` skip it (access-level fixes default to no) | `--only` / `--skip` |
+| Apply these changes? | `[y]` / `[n]` | `--batch` |
+
+### The fixes
+
+| Fix | Level | What it does |
+| --- | --- | --- |
+| `db-anon` | safe | Drops anonymous accounts (`''@host`: anyone gets in) |
+| `db-testdb` | safe | Drops the `test` database, only if it is empty |
+| `db-infile` | safe | `local_infile` off now and after restarts |
+| `db-remoteroot` | service | Drops root accounts allowed from other hosts |
+| `db-emptypw` | service | Locks accounts with **no password** that no app uses |
+| `db-file` | service | Takes the FILE right (read/write any file: a web shell into the web root) from accounts other than root and the server's own admins |
+| `db-apppw` | service | A new random password for each app's database account, written into the app's config in the same step (WordPress, Joomla, PrestaShop, OpenCart, Roundcube, `.env`) |
+| `db-bind` | access | Listens on 127.0.0.1 only, when every app is on this box (restarts the database) |
+| `db-udf` | access | Drops user-defined functions such as `sys_exec` from lib_mysqludf_sys, the classic way to run commands through the database |
+
+**Reported, not changed:** accounts with SUPER/FILE/GRANT, unused accounts allowed from any host with admin rights (red: planted?), triggers and scheduled events, an empty `secure_file_priv`, where the server listens, and PostgreSQL `trust` logins.
+
+### Safety
+
+- **Site check:** before and after the changes it loads `--url` (default `http://127.0.0.1/`). If the site worked before and doesn't now, or a database error appears, everything this run changed is put back on the spot. A site that was broken before and works afterwards counts as fine. PHP rereads its config only every few seconds, so a failure is retried for 10 seconds before it counts.
+- **Undo:** each account is saved before it changes (`before/`, root only, since it holds password hashes). The undo restores dropped accounts and old passwords in both the database and the config, gives rights back, and removes the drop-in config file. The revert timer runs as usual.
+- **Passwords:** new app passwords go only into the app config and `passwords.txt` (mode 600), never the screen or the logs.
+
+### What it produces
+
+In `db-hardening-N/` (mode 700): `output.txt`, `accounts.txt` (every account, how it logs in, its rights, which app uses it), `plan.txt`, `changes.txt`, `summary.txt`, `passwords.txt` (only with `db-apppw`), `before/`, and `revert.sh`.
+
+### What to watch for
+
+- **An app whose config isn't recognised** keeps its password. `db-apppw` only changes accounts it can also write into the app's config.
+- **A scoring check that logs in to the database directly** isn't known to the script. Put that account on the protected list.
+- **Dropping a UDF can't always be undone:** the undo needs the `.so` file, and a planted function is usually broken anyway. Delete the `.so` from the plugin folder by hand.
+- **`db-bind`** says so if another config file still sets `bind-address` after the script's file.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `could not log in` (exit 3) | root can't log in through the socket | `--mysql-cnf FILE` with a `[client]` user and password |
+| `cannot check the site` | No curl/wget, or nothing on `--url` | Give the store's address with `--url`, or install curl |
+| `APPLIED, then PUT BACK` | The site broke after a change | Look at `changes.txt`, then rerun with `--skip` for that fix |
+| An app account is listed `used by: -` | Its config is outside /var/www, /srv, /opt | `--webroot DIR` |
 

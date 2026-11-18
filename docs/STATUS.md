@@ -1,6 +1,6 @@
 # Build status
 
-27 of 33 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+28 of 34 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -8,6 +8,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | --- | --- | --- |
 | Enum (look only) | 6 | 7 |
 | Backup and prep | 5 | 5 |
+| wave2 | 1 | 1 |
 | Hardening: easy | 3 | 3 |
 | Hardening: medium | 2 | 2 |
 | Hardening: hard | 2 | 6 |
@@ -36,6 +37,12 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | SV-14 | Database backup | none | built | `roles/applications/SV-14-db-backup.sh` |
 | SV-15 | Site backup and restore | medium | built | `roles/applications/SV-15-site-backup.sh` |
 | NW-01 | Network config backup and diff | none | built | `roles/network/NW-01-config-backup.sh` |
+
+## wave2
+
+| ID | Script | Risk | Status | File |
+| --- | --- | --- | --- | --- |
+| SV-20 | Database hardening | medium | built | `roles/applications/SV-20-db-hardening.sh` |
 
 ## Hardening: easy
 

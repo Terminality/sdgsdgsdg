@@ -36,7 +36,7 @@ t_eq "$rc" 0 "exit 0"
 t_has "$out" "WordPress, mysql database ccdc_sv15_test" "the app and its database are found"
 t_has "$out" "[+] shop" "the site is backed up"
 B="$O/site-backup-1"
-for f in output.txt summary.txt sites.txt RESTORE.txt run.txt shop/files.tar.gz shop/files.sha256 csv/sites.csv; do t_file "$B/$f" "$f written"; done
+for f in output.txt summary.txt sites.txt RESTORE.txt run.txt shop/files.tar.gz shop/files.sha256; do t_file "$B/$f" "$f written"; done
 t_eq "$(grep -c . "$B/shop/files.sha256")" 5 "every file hashed"
 t_eq "$(ls -ld "$B" | cut -c1-10)" "drwx------" "the backup folder is private"
 t_fail "no password in the output" grep -rq "PlantedSecret55" "$B/output.txt" "$B/summary.txt" "$B/sites.txt"
@@ -55,7 +55,8 @@ t_has "$out" "style.css  - deleted" "deleted file"
 t_has "$out" "[!] new      $S/wp-content/uploads/x.php  - new program file" "web shell is HIGH"
 t_has "$out" "[-] new      $S/img/cat.jpg" "a new image is LOW"
 t_has "$out" ".htaccess changed: can make any file run as PHP" ".htaccess change is HIGH"
-t_ok "changes.csv" grep -q 'x.php' "$(ls -d "$O"/site-check-* | sort -t- -k3 -n | tail -n 1)/csv/changes.csv"
+t_ok "changes.txt lists the web shell" grep -q 'x.php' "$(ls -d "$O"/site-check-* | sort -t- -k3 -n | tail -n 1)/changes.txt"
+t_fail "no CSV files are left" sh -c "find '$O' -name '*.csv' | grep -q ."
 t_eq "$(cat "$S/index.html")" "HACKED" "check changes nothing"
 
 t_start "restore"
