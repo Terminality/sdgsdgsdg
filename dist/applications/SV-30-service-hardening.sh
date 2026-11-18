@@ -4,7 +4,7 @@
 # NAME:     Service hardening (FTP and other cleartext/legacy services)
 # ROLE:     Applications
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.1.0
+# VERSION:  1.2.0
 #
 # PURPOSE
 #   Hardens the insecure services that show up on CCDC Linux boxes - FTP
@@ -1389,7 +1389,7 @@ cc_finish() {
 }
 # <<< CCDC-LIB
 
-ALL_ACTIONS="ftp-anon ftp-accounts ftp-perms ftp-logging ftp-chroot ftp-tls ftp-disable telnet-disable rsh-disable tftp-disable snmp-default snmp-disable legacy-disable"
+ALL_ACTIONS="web-version web-trace web-indexes web-exposed web-exposed-remove mail-banner mail-vrfy mail-relay mail-authdelay mail-helo mail-plaintext ntp-chrony splunk-report ftp-anon ftp-accounts ftp-perms ftp-logging ftp-chroot ftp-tls ftp-disable telnet-disable rsh-disable tftp-disable snmp-default snmp-disable legacy-disable"
 
 usage() {
     cat <<'USAGE'
@@ -1399,6 +1399,7 @@ SV-30 Service hardening - FTP and other cleartext/legacy services
   sudo sh SV-30-service-hardening.sh --apply --level service
 
   --apply            make the changes (without it, dry run only)
+  --box NAME         splunk | webmail | ecomm | other (asked if not given)
   --level L          safe (default) | service | access  (each includes the earlier ones)
   --only a,b         only these actions
   --skip a,b         leave these actions out
@@ -1420,11 +1421,12 @@ USAGE
 }
 
 # ---- Options ----------------------------------------------------------------
-LEVEL=""; ONLY=""; SKIP=""; EXCL=""; FORCE_SCORED=0; TIMER=120; NOTIMER=0; R=""; COLOR=1
+BOX=""; LEVEL=""; ONLY=""; SKIP=""; EXCL=""; FORCE_SCORED=0; TIMER=120; NOTIMER=0; R=""; COLOR=1
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
         --apply)         CC_APPLY=1; shift ;;
+        --box)           [ $# -ge 2 ] || cc_die 2 "--box needs splunk, webmail, ecomm or other"; BOX=$2; shift 2 ;;
         --level)         [ $# -ge 2 ] || cc_die 2 "--level needs safe, service or access"; LEVEL=$2; shift 2 ;;
         --only)          [ $# -ge 2 ] || cc_die 2 "--only needs a list"; ONLY="$ONLY,$2"; shift 2 ;;
         --skip)          [ $# -ge 2 ] || cc_die 2 "--skip needs a list"; SKIP="$SKIP,$2"; shift 2 ;;
@@ -1440,6 +1442,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$LEVEL" in ''|safe|service|access) ;; *) cc_die 2 "--level must be safe, service or access" ;; esac
+case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
 case "$TIMER" in ''|*[!0-9]*) cc_die 2 "--timer needs a whole number of seconds" ;; esac
 # Validate --only/--skip names.
 for _a in $(printf '%s' "$ONLY,$SKIP" | tr ',' ' '); do
@@ -1447,6 +1450,14 @@ for _a in $(printf '%s' "$ONLY,$SKIP" | tr ',' ' '); do
     case " $ALL_ACTIONS " in *" $_a "*) ;; *) cc_die 2 "unknown action '$_a' (see --help for the list)" ;; esac
 done
 
+# Which box: says what is scored here, so nothing scored is turned off.
+if [ -z "$BOX" ]; then
+    BOX=other
+    if _cc_can_ask; then
+        cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "o=other"
+        case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; esac
+    fi
+fi
 # How far to go: asked when --level was not given (Enter = safe).
 if [ -z "$LEVEL" ]; then
     LEVEL=safe
@@ -1483,12 +1494,26 @@ WANT_RANK=$(level_rank "$LEVEL")
 act_risk() {
     case "$1" in
         ftp-anon|ftp-accounts|ftp-perms|ftp-logging|snmp-default) echo safe ;;
-        ftp-chroot|ftp-tls)                           echo service ;;
+        web-version|web-trace|web-exposed|mail-banner|mail-vrfy|mail-relay|mail-authdelay|mail-plaintext|splunk-report) echo safe ;;
+        ftp-chroot|ftp-tls|web-indexes|mail-helo|ntp-chrony) echo service ;;
         *)                                            echo access ;;
     esac
 }
 act_desc() {
     case "$1" in
+        web-version)    echo "hide the web server and PHP version (Server and X-Powered-By headers, error pages)" ;;
+        web-trace)      echo "turn off HTTP TRACE in Apache" ;;
+        web-indexes)    echo "turn off folder listings in /var/www (Apache)" ;;
+        web-exposed)    echo "look for .git folders, backups, dumps, phpinfo pages and the Roundcube installer in the web roots (report)" ;;
+        web-exposed-remove) echo "move those exposed files to quarantine" ;;
+        mail-banner)    echo "hide the mail server names in the SMTP and IMAP greetings" ;;
+        mail-vrfy)      echo "turn off SMTP VRFY (stops checking which usernames exist)" ;;
+        mail-relay)     echo "check Postfix is not an open relay (report)" ;;
+        mail-authdelay) echo "wait 5 seconds after each failed IMAP login (slows password guessing)" ;;
+        mail-helo)      echo "require HELO/EHLO before mail is accepted (drops crude bots)" ;;
+        mail-plaintext) echo "show whether IMAP allows passwords without TLS (report)" ;;
+        ntp-chrony)     echo "check chrony serves time and allow remote control from localhost only" ;;
+        splunk-report)  echo "check the Splunk web UI and accounts (report)" ;;
         ftp-anon)       echo "turn off anonymous FTP login" ;;
         ftp-accounts)   echo "deny root and system accounts FTP" ;;
         ftp-perms)      echo "lock down the FTP config file (chmod 600)" ;;
@@ -1542,10 +1567,38 @@ if [ -n "$FTP_SVC" ] && [ -z "$R" ]; then
     elif cc_have netstat; then netstat -ltn 2>/dev/null | grep -Eq '[:.]21[[:space:]]' && FTP_LISTEN=1; fi
 fi
 
+# Where things are (all relative to /, under --root in tests).
+APACHE_DIR=""; APACHE_SVC=""
+if [ -d "$(P /etc/apache2)" ]; then APACHE_DIR=/etc/apache2; APACHE_SVC=apache2
+elif [ -d "$(P /etc/httpd)" ]; then APACHE_DIR=/etc/httpd; APACHE_SVC=httpd; fi
+# The drop-in loads last (zz-) so it wins over security.conf and friends.
+APACHE_DROP=""
+[ "$APACHE_DIR" = /etc/apache2 ] && [ -d "$(P /etc/apache2/conf-enabled)" ] && APACHE_DROP=/etc/apache2/conf-enabled/zz-ccdc-hardening.conf
+[ "$APACHE_DIR" = /etc/httpd ] && [ -d "$(P /etc/httpd/conf.d)" ] && APACHE_DROP=/etc/httpd/conf.d/zz-ccdc-hardening.conf
+NGINX_DIR=""; [ -f "$(P /etc/nginx/nginx.conf)" ] && NGINX_DIR=/etc/nginx
+PHP_INIS=$( { ls -d "$(P /etc/php)"/*/apache2/php.ini "$(P /etc/php)"/*/fpm/php.ini "$(P /etc/php.ini)" 2>/dev/null; } | sed "s|^$R||")
+POSTFIX_CF=""; [ -f "$(P /etc/postfix/main.cf)" ] && POSTFIX_CF=/etc/postfix/main.cf
+DOVECOT_CF=""; [ -f "$(P /etc/dovecot/dovecot.conf)" ] && DOVECOT_CF=/etc/dovecot/dovecot.conf
+CHRONY_CF=""; for _c in /etc/chrony/chrony.conf /etc/chrony.conf; do [ -f "$(P "$_c")" ] && { CHRONY_CF=$_c; break; }; done
+CHRONY_SVC=chrony; [ -z "$R" ] && [ "$(svc_state chrony)" = missing ] && CHRONY_SVC=chronyd
+SPLUNK_HOME=""; for _d in /opt/splunk /opt/splunkforwarder; do [ -d "$(P "$_d")" ] && { SPLUNK_HOME=$_d; break; }; done
+WEBROOTS=""; for _d in /var/www /srv/www /srv/http /usr/share/nginx/html; do [ -d "$(P "$_d")" ] && WEBROOTS="$WEBROOTS $_d"; done
+ROUNDCUBE=""; for _d in /var/lib/roundcube /usr/share/roundcube /var/www/roundcube /var/www/html/roundcube /var/www/webmail /var/www/html/webmail /srv/www/roundcube; do
+    [ -f "$(P "$_d")/program/include/iniset.php" ] && ROUNDCUBE="$ROUNDCUBE $_d"
+done
+
 # act_applies NAME -> 0 if the service the action targets is present.
 act_applies() {
     case "$1" in
         ftp-*)          [ -n "$FTP_DAEMON" ] ;;
+        web-version)    [ -n "$APACHE_DIR$NGINX_DIR$PHP_INIS" ] ;;
+        web-trace|web-indexes) [ -n "$APACHE_DROP" ] ;;
+        web-exposed|web-exposed-remove) [ -n "$WEBROOTS$ROUNDCUBE" ] ;;
+        mail-banner)    [ -n "$POSTFIX_CF$DOVECOT_CF" ] ;;
+        mail-vrfy|mail-relay|mail-helo) [ -n "$POSTFIX_CF" ] ;;
+        mail-authdelay|mail-plaintext) [ -n "$DOVECOT_CF" ] ;;
+        ntp-chrony)     [ -n "$CHRONY_CF" ] ;;
+        splunk-report)  [ -n "$SPLUNK_HOME" ] ;;
         telnet-disable) [ -n "$R" ] && return 1; _present telnet telnetd inetutils-telnetd ;;
         rsh-disable)    [ -n "$R" ] && return 1; _present rsh.socket rlogin.socket rexec.socket rsh rlogin ;;
         tftp-disable)   [ -n "$R" ] && return 1; _present tftpd-hpa tftp tftpd ;;
@@ -1580,6 +1633,11 @@ done
 cc_show "$C_CYN" "SV-30 Service hardening | host $CC_HOST | level $LEVEL | results in $CC_RUN_DIR"
 cc_show "" "Legend: ${C_GRN}[+] changed${C_OFF}  ${C_YEL}[~] would change  [*] check by hand${C_OFF}  ${C_RED}[x] failed${C_OFF}  ${C_GRN}[ok] already right${C_OFF}"
 [ -n "$R" ] && cc_show "$C_GRY" "Acting on $R as if it were / (service enable/disable is only reported)"
+case "$BOX" in
+    splunk)  cc_show "$C_GRY" "Scored on splunk: chrony (123/udp), management (8089), query, SSH, ping. Only checked and reported here, never turned off." ;;
+    webmail) cc_show "$C_GRY" "Scored on webmail: IMAP, SMTP, webmail login (web), SSH, ping. Each changed service is restarted and must still answer." ;;
+    ecomm)   cc_show "$C_GRY" "Scored on ecomm: the web store (HTTP), ping. The web server is restarted after a change and must give the same page." ;;
+esac
 if [ -n "$FTP_DAEMON" ]; then cc_show "$C_GRY" "FTP: $FTP_DAEMON${FTP_CONF:+ ($FTP_CONF)}"; else cc_show "$C_GRY" "FTP: none detected"; fi
 if [ -z "$CONSIDER" ]; then
     cc_show "$C_GRN" "[ok] nothing to harden at level '$LEVEL' (none of those services are here, or all are excluded)."
@@ -1594,7 +1652,7 @@ CHOSEN=""
 for _a in $CONSIDER; do
     _risk=$(act_risk "$_a")
     # The service each action targets (ftp-* -> the detected FTP daemon).
-    _svc=$FTP_DAEMON; case "$_a" in telnet-*) _svc=telnet ;; rsh-*) _svc=rsh ;; tftp-*) _svc=tftp ;; snmp-*) _svc=snmpd ;; legacy-*) _svc=inetd ;; esac
+    _svc=$FTP_DAEMON; case "$_a" in web-*) _svc=${APACHE_SVC:-nginx} ;; mail-vrfy|mail-relay|mail-helo) _svc=postfix ;; mail-authdelay|mail-plaintext) _svc=dovecot ;; mail-*) _svc=postfix ;; ntp-*) _svc=$CHRONY_SVC ;; splunk-*) _svc=splunk ;; telnet-*) _svc=telnet ;; rsh-*) _svc=rsh ;; tftp-*) _svc=tftp ;; snmp-*) _svc=snmpd ;; legacy-*) _svc=inetd ;; esac
     is_excluded "$_svc" && continue
     # access defaults to no, unless the action was named explicitly in --only.
     _def=Y; [ "$_risk" = access ] && _def=N
@@ -1730,6 +1788,26 @@ _write_line() { printf '%s\n' "$2" >"$1"; }
 
 do_action() {
     case "$1" in
+        web-version)    web_version ;;
+        web-trace)      drop_line web-trace "$APACHE_SVC" "$APACHE_DROP" "TraceEnable Off" "HTTP TRACE off" ;;
+        web-indexes)    drop_line web-indexes "$APACHE_SVC" "$APACHE_DROP" "<Directory /var/www/>
+    Options -Indexes
+</Directory>" "no folder listings under /var/www" ;;
+        web-exposed)    web_exposed 0 ;;
+        web-exposed-remove) web_exposed 1 ;;
+        mail-banner)
+            [ -n "$POSTFIX_CF" ] && ini_kv mail-banner postfix "$POSTFIX_CF" smtpd_banner '$myhostname ESMTP'
+            [ -n "$DOVECOT_CF" ] && ini_kv mail-banner dovecot "$DOVECOT_CF" login_greeting "Mail server ready."
+            return 0 ;;
+        mail-vrfy)      ini_kv mail-vrfy postfix "$POSTFIX_CF" disable_vrfy_command yes ;;
+        mail-helo)      ini_kv mail-helo postfix "$POSTFIX_CF" smtpd_helo_required yes ;;
+        mail-relay)     mail_relay ;;
+        mail-authdelay) ini_kv mail-authdelay dovecot "$DOVECOT_CF" auth_failure_delay "5 secs" ;;
+        mail-plaintext)
+            _pt=$(_ini_get "$(P "$DOVECOT_CF")" disable_plaintext_auth)$(_ini_get "$(P "$DOVECOT_CF")" auth_allow_cleartext)
+            row mail-plaintext dovecot "passwords without TLS" "setting: ${_pt:-default (refused on 143 without STARTTLS, except from localhost)}. Leave as it is if scoring logs in over plain IMAP" "check by hand" ;;
+        ntp-chrony)     chrony_check ;;
+        splunk-report)  splunk_report ;;
         ftp-anon)   ftp_anon ;;
         ftp-logging)
             do_ftp_kv ftp-logging xferlog_enable YES
@@ -1883,6 +1961,275 @@ mode_of() {
         printf "%d%d%d%d", sp,u,g,o }'
 }
 
+# ---- Scored services: web, mail, time, Splunk ------------------------------------
+# Each config change is recorded with the service that reads it
+# ("SERVICE|FILE|created" in $W/touched).  After applying, every touched
+# service that was running is checked (config test), restarted, and must
+# answer on the same ports as before (and the web server must give the same
+# HTTP status for /).  If not, that service's files are put back and it is
+# restarted again - the same idea as the FTP restart check.
+
+# undo_restart SERVICE -> once per service, before its first file is backed
+#   up: undo lines run newest first, so on a revert this restart runs AFTER
+#   the files are put back, and the service picks up its old config.
+undo_restart() {
+    [ "$CC_APPLY" = 1 ] && [ -z "$R" ] || return 0
+    grep -qxF "$1" "$W/undo-restart" 2>/dev/null && return 0
+    printf '%s\n' "$1" >>"$W/undo-restart"
+    [ "$(awk -v s="$1" '$1 == s { print $2 }' "$W/before" 2>/dev/null)" = running ] || return 0  # awk ==: posix-ok
+    cc_undo_add "restart $1 after its config is put back" "$(_svc_reload_cmd "$1")"
+}
+# touch_svc SERVICE FILE [created] -> remember which service reads FILE.
+touch_svc() { [ "$CC_APPLY" = 1 ] && printf '%s|%s|%s\n' "$1" "$2" "${3:-}" >>"$W/touched"; return 0; }
+
+# _ini_get FILE KEY -> the value of the last uncommented "KEY = value" line
+#   at the start of a line, with indented continuation lines (main.cf).
+_ini_get() {
+    awk -v k="$2" '
+        /^[ \t]+[^ \t]/ { if (on) { t = $0; sub(/^[ \t]+/, "", t); sub(/[ \t\r]+$/, "", t); v = v " " t }; next }
+        { on = 0 }
+        /^[#;]/ { next }
+        { split($0, a, "="); kk = a[1]; gsub(/[ \t]/, "", kk) }
+        index($0, "=") && kk == k { v = substr($0, index($0, "=") + 1); sub(/^[ \t]+/, "", v); sub(/[ \t\r]+$/, "", v); on = 1 }
+        END { print v }' "$1" 2>/dev/null
+}
+# _ini_set FILE KEY VALUE -> "KEY = VALUE": the first uncommented line for
+#   KEY is replaced (with its indented continuation lines, as in main.cf),
+#   other uncommented ones are dropped; appended when there is none.
+_ini_set() {
+    awk -v k="$2" -v v="$3" '
+        function key(s,   a) { sub(/^[ \t]+/, "", s); if (s ~ /^[#;]/) return ""; split(s, a, "="); gsub(/[ \t]/, "", a[1]); return (index(s, "=") ? a[1] : "") }
+        skip && /^[ \t]+[^ \t]/ { next }
+        { skip = 0 }
+        key($0) == k && $0 !~ /^[ \t]/ { if (!done) { print k " = " v; done = 1 }; skip = 1; next }
+        { print }
+        END { if (!done) print k " = " v }' "$1" >"$1.ccnew" || { rm -f "$1.ccnew"; return 1; }
+    cat "$1.ccnew" >"$1"; _is=$?; rm -f "$1.ccnew"; return "$_is"
+}
+# ini_kv ACTION SERVICE FILE KEY VALUE [CHECK-VALUE] -> set one setting with backup and undo.
+ini_kv() {
+    _f=$(P "$3"); _want=${6:-$5}
+    _cur=$(_ini_get "$_f" "$4")
+    if [ "$(printf '%s' "$_cur" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$_want" | tr 'A-Z' 'a-z')" ]; then
+        row "$1" "$2" "$4" "already $_cur" "already ok"; return 0
+    fi
+    undo_restart "$2"
+    ensure_backup "$3" || { row "$1" "$2" "$4" "backup failed" failed; return 0; }
+    cc_run "$2: set $4 = $5 in $3" _ini_set "$_f" "$4" "$5"; _kr=$?
+    [ "$_kr" -eq 0 ] && touch_svc "$2" "$3"
+    row "$1" "$2" "$4" "${_cur:-unset} -> $5" "$(result "$_kr")"
+}
+# _drop_add FILE LINE -> add LINE to a drop-in file we own (made if missing).
+_drop_add() {
+    [ -f "$1" ] || printf '# Added by CCDC SV-30 (service hardening). Delete this file to undo.\n' >"$1" || return 1
+    printf '%s\n' "$2" >>"$1"
+}
+# drop_line ACTION SERVICE DROPIN LINE DESC -> one line in our drop-in file.
+drop_line() {
+    _f=$(P "$3")
+    if grep -qxF "$4" "$_f" 2>/dev/null; then row "$1" "$2" "$5" "already set" "already ok"; return 0; fi
+    _new=""; [ -f "$_f" ] || _new=created
+    undo_restart "$2"
+    if [ "$CC_APPLY" = 1 ] && [ "$_new" = created ] && ! grep -qxF "$3" "$W/created" 2>/dev/null; then
+        cc_undo_add "remove $3 (made by SV-30)" "rm -f $(cc_shquote "$_f")"
+        printf '%s\n' "$3" >>"$W/created"
+    fi
+    cc_run "$2: add '$4' to $3" _drop_add "$_f" "$4"; _kr=$?
+    [ "$_kr" -eq 0 ] && touch_svc "$2" "$3" "$_new"
+    row "$1" "$2" "$5" "$(printf '%s' "$4" | tr '\n' ' ')" "$(result "$_kr")"
+}
+
+# web_version -> no version numbers in headers and error pages.
+web_version() {
+    if [ -n "$APACHE_DIR" ]; then
+        if [ -n "$APACHE_DROP" ]; then
+            drop_line web-version "$APACHE_SVC" "$APACHE_DROP" "ServerTokens Prod" "Server header: 'Apache' only, no version or OS"
+            drop_line web-version "$APACHE_SVC" "$APACHE_DROP" "ServerSignature Off" "no version line on error pages"
+        else
+            row web-version "$APACHE_SVC" "ServerTokens Prod, ServerSignature Off" "no conf-enabled or conf.d folder: add them to the main config by hand" "check by hand"
+        fi
+    fi
+    if [ -n "$NGINX_DIR" ]; then
+        _nf=$(grep -rlE '^[[:space:]]*server_tokens[[:space:]]' "$(P "$NGINX_DIR")" 2>/dev/null | head -n 1)
+        if [ -n "$_nf" ]; then
+            _nfr=${_nf#"$R"}
+            if grep -Eq '^[[:space:]]*server_tokens[[:space:]]+off' "$_nf"; then row web-version nginx server_tokens "already off" "already ok"
+            else
+                undo_restart nginx
+                ensure_backup "$_nfr" || { row web-version nginx server_tokens "backup failed" failed; return 0; }
+                cc_run "nginx: server_tokens off in $_nfr" _sed_inplace "$_nf" 's/^\([[:space:]]*server_tokens[[:space:]]\{1,\}\)[^;]*;/\1off;/'; _kr=$?
+                [ "$_kr" -eq 0 ] && touch_svc nginx "$_nfr"
+                row web-version nginx server_tokens "-> off ($_nfr)" "$(result "$_kr")"
+            fi
+        elif grep -Eq 'include[[:space:]]+[^;]*conf\.d/\*\.conf' "$(P "$NGINX_DIR/nginx.conf")" 2>/dev/null; then
+            drop_line web-version nginx "$NGINX_DIR/conf.d/zz-ccdc-hardening.conf" "server_tokens off;" "Server header: 'nginx' only, no version"
+        else
+            row web-version nginx server_tokens "add 'server_tokens off;' inside the http { } block" "check by hand"
+        fi
+    fi
+    for _pi in $PHP_INIS; do
+        _psvc=$APACHE_SVC
+        case "$_pi" in */fpm/*) _psvc=$(printf '%s' "$_pi" | sed -n 's|^/etc/php/\([^/]*\)/fpm/.*|php\1-fpm|p') ;; esac
+        [ -n "$_psvc" ] || _psvc=php-fpm
+        ini_kv web-version "$_psvc" "$_pi" expose_php Off
+    done
+    [ -z "$APACHE_DIR$NGINX_DIR$PHP_INIS" ] && row web-version web "Apache, nginx, PHP" "none found" "already ok"
+    return 0
+}
+_sed_inplace() { sed "$2" "$1" >"$1.ccnew" && cat "$1.ccnew" >"$1"; _si=$?; rm -f "$1.ccnew"; return "$_si"; }
+
+# web_exposed REMOVE -> files the red team looks for first: .git folders,
+#   backups and dumps, phpinfo pages, Roundcube's installer.  0 = report,
+#   1 = move them to quarantine (access level).
+web_exposed() {
+    _act=web-exposed; [ "$1" = 1 ] && _act=web-exposed-remove
+    : >"$W/exposed"
+    for _wr in $WEBROOTS; do
+        find "$(P "$_wr")" -xdev \( -type d -name .git -prune -print \) -o \( -type f \( -name '*.bak' -o -name '*.old' -o -name '*.orig' -o -name '*.save' -o -name '*~' \
+            -o -name '*.sql' -o -name '*.sql.gz' -o -name '*.tar' -o -name '*.tar.gz' -o -name '*.tgz' -o -name '*.zip' -o -name '.env' \
+            -o -name 'phpinfo.php' -o -name 'info.php' \) -print \) 2>/dev/null | sed "s|^$R||" >>"$W/exposed"
+    done
+    for _rc in $ROUNDCUBE; do
+        [ -d "$(P "$_rc")/installer" ] && printf '%s/installer\n' "$_rc" >>"$W/exposed"
+        _rv=$(sed -n "s/.*RCMAIL_VERSION'*[ ,]*'\([0-9][0-9.]*\)'.*/\1/p" "$(P "$_rc")/program/include/iniset.php" 2>/dev/null | head -n 1)
+        [ "$1" = 0 ] && row web-exposed roundcube "$_rc" "Roundcube ${_rv:-version unknown}: check it is the newest 1.6.x (older ones have known holes)" "check by hand"
+    done
+    if [ ! -s "$W/exposed" ]; then row "$_act" web "web roots" "no .git, backups, dumps, phpinfo or installer found" "already ok"; return 0; fi
+    sort -u "$W/exposed" | while IFS= read -r _x; do
+        if [ "$1" = 0 ]; then
+            row web-exposed web "$_x" "can be downloaded by anyone: move it out of the web root" "check by hand"
+        else
+            cc_run "move $_x to quarantine" cc_quarantine "$(P "$_x")"; _kr=$?
+            row web-exposed-remove web "$_x" "moved to quarantine" "$(result "$_kr")"
+        fi
+    done
+}
+
+# mail_relay -> report settings that make Postfix an open relay.
+mail_relay() {
+    _mf=$(P "$POSTFIX_CF")
+    _rr=$(_ini_get "$_mf" smtpd_relay_restrictions); _rc=$(_ini_get "$_mf" smtpd_recipient_restrictions); _mn=$(_ini_get "$_mf" mynetworks)
+    case " $_mn " in *0.0.0.0/0*|*::/0*) row mail-relay postfix mynetworks "$_mn: EVERYONE may relay mail through this box" "check by hand" ;; esac
+    if [ -n "$_rr$_rc" ] && ! printf "%s %s" "$_rr" "$_rc" | grep -Eq "(reject|defer)_unauth_destination"; then
+        row mail-relay postfix "relay restrictions" "no reject_unauth_destination: may be an open relay" "check by hand"
+    else
+        row mail-relay postfix "relay restrictions" "reject_unauth_destination in place (or the safe default)" "already ok"
+    fi
+}
+
+# chrony_check -> serves time to the scoring engine, remote control off.
+chrony_check() {
+    _cf=$(P "$CHRONY_CF")
+    _al=$(grep -E '^[[:space:]]*allow([[:space:]]|$)' "$_cf" 2>/dev/null | tr '\n' ';')
+    if [ -z "$_al" ]; then
+        row ntp-chrony chrony allow "no 'allow' line: chrony answers nobody. If time is scored here, add 'allow <scoring network>' (e.g. allow 10.0.0.0/8)" "check by hand"
+    else
+        row ntp-chrony chrony allow "serves time to: $_al" "already ok"
+    fi
+    if grep -Eq '^[[:space:]]*cmdallow' "$_cf" 2>/dev/null; then
+        undo_restart "$CHRONY_SVC"
+        ensure_backup "$CHRONY_CF" || { row ntp-chrony chrony cmdallow "backup failed" failed; return 0; }
+        cc_run "chrony: comment out cmdallow (remote control)" _sed_inplace "$_cf" 's/^\([[:space:]]*cmdallow\)/#ccdc \1/'; _kr=$?
+        [ "$_kr" -eq 0 ] && touch_svc "$CHRONY_SVC" "$CHRONY_CF"
+        row ntp-chrony chrony cmdallow "remote control of chrony -> off (localhost only)" "$(result "$_kr")"
+    else
+        row ntp-chrony chrony cmdallow "remote control already local only" "already ok"
+    fi
+}
+
+# splunk_report -> things to check on the Splunk box (nothing is changed:
+#   the scoring query logs in with Splunk's own accounts).
+splunk_report() {
+    _sh=$(P "$SPLUNK_HOME")
+    _ssl=$(awk -F= 'tolower($1) ~ /enablesplunkwebssl/ { gsub(/[ \r]/, "", $2); v = $2 } END { print v }' "$_sh/etc/system/local/web.conf" 2>/dev/null)
+    case "$_ssl" in true|1|True) row splunk-report splunk "web UI" "HTTPS" "already ok" ;;
+        *) row splunk-report splunk "web UI (8000)" "plain HTTP: logins can be sniffed. Turn on HTTPS only if the scoring query still works" "check by hand" ;; esac
+    row splunk-report splunk admin "change the admin password only together with whoever runs the scoring query (splunk-query logs in)" "check by hand"
+    [ -f "$_sh/etc/passwd" ] && row splunk-report splunk "local accounts" "$(cut -d: -f2 "$_sh/etc/passwd" 2>/dev/null | grep . | tr '\n' ' ')- remove any you did not make" "check by hand"
+    return 0
+}
+
+# ---- Restart and verify each touched service ------------------------------------
+# svc_ports SERVICE -> the ports it should answer on (checked only if they
+#   were listening before).
+svc_ports() {
+    case "$1" in
+        apache2|httpd|nginx|php*) echo "tcp/80 tcp/443" ;;
+        postfix) echo "tcp/25 tcp/465 tcp/587" ;;
+        dovecot) echo "tcp/143 tcp/993 tcp/110 tcp/995" ;;
+        chrony|chronyd) echo "udp/123" ;;
+        vsftpd|proftpd|pure-ftpd) echo "tcp/21" ;;
+    esac
+}
+# listening PROTO PORT -> true if something listens there now.
+listening() {
+    if cc_have ss; then ss -ln"$(printf '%s' "$1" | cut -c1)" 2>/dev/null | awk -v p="$2" '{ n = $4; sub(/.*:/, "", n); if (n == p) f = 1 } END { exit !f }'
+    elif cc_have netstat; then netstat -ln"$(printf '%s' "$1" | cut -c1)" 2>/dev/null | awk -v p="$2" '{ n = $4; sub(/.*:/, "", n); if (n == p) f = 1 } END { exit !f }'
+    else return 0; fi
+}
+http_status() {
+    if cc_have curl; then curl -s -o /dev/null -m 5 -w '%{http_code}' http://127.0.0.1/ 2>/dev/null
+    elif cc_have wget; then wget -q -S -O /dev/null -T 5 http://127.0.0.1/ 2>&1 | awk '/HTTP\// { c = $2 } END { print c }'
+    fi
+}
+# config_test SERVICE -> the service's own syntax check, where it has one.
+config_test() {
+    case "$1" in
+        apache2) cc_have apache2ctl && apache2ctl -t ;;
+        httpd)   cc_have httpd && httpd -t ;;
+        nginx)   cc_have nginx && nginx -t ;;
+        postfix) cc_have postfix && postfix check ;;
+        dovecot) cc_have doveconf && doveconf -n >/dev/null ;;
+        *) return 0 ;;
+    esac
+}
+# Before anything changes: what is running and listening, and the web status.
+: >"$W/before"
+if [ -z "$R" ]; then
+    for _s in $APACHE_SVC nginx postfix dovecot $CHRONY_SVC $(for _pi in $PHP_INIS; do case "$_pi" in */fpm/*) printf '%s\n' "$_pi" | sed -n 's|^/etc/php/\([^/]*\)/fpm/.*|php\1-fpm|p' ;; esac; done); do
+        printf '%s %s %s\n' "$_s" "$(svc_state "$_s")" "$(for _p in $(svc_ports "$_s"); do listening "${_p%/*}" "${_p#*/}" && printf '%s ' "$_p"; done)" >>"$W/before"
+    done
+    HTTP_BEFORE=$(http_status)
+fi
+# restart_checks -> after applying: test, restart, verify; put back on failure.
+restart_checks() {
+    [ "$CC_APPLY" = 1 ] && [ -z "$R" ] && [ -s "$W/touched" ] || return 0
+    header "RESTART CHECK (each changed service must still answer)"
+    for _s in $(cut -d'|' -f1 "$W/touched" | sort -u); do
+        _was=$(awk -v s="$_s" '$1 == s { print $2 }' "$W/before")
+        _ports=$(awk -v s="$_s" '$1 == s { $1 = ""; $2 = ""; sub(/^ +/, ""); sub(/ +$/, ""); print }' "$W/before")
+        if [ "$_was" != running ]; then
+            row restart "$_s" restart "was not running, so it was not started; the change applies when it starts" "check by hand"; continue
+        fi
+        _ok=1; _why=""
+        config_test "$_s" >>"$CC_LOG" 2>&1 || { _ok=0; _why="its config test failed"; }
+        if [ "$_ok" = 1 ]; then
+            _svc_reload "$_s" >>"$CC_LOG" 2>&1; sleep 2
+            [ "$(svc_state "$_s")" = running ] || { _ok=0; _why="it did not start"; }
+        fi
+        if [ "$_ok" = 1 ]; then
+            for _p in $_ports; do listening "${_p%/*}" "${_p#*/}" || { sleep 2; listening "${_p%/*}" "${_p#*/}" || { _ok=0; _why="nothing answers on $_p any more"; }; }; done
+        fi
+        case "$_s" in apache2|httpd|nginx|php*)
+            if [ "$_ok" = 1 ] && [ -n "$HTTP_BEFORE" ]; then
+                _hn=$(http_status); [ "$_hn" = "$HTTP_BEFORE" ] || { _ok=0; _why="the web page answers $_hn now, was $HTTP_BEFORE"; }
+            fi ;;
+        esac
+        if [ "$_ok" = 1 ]; then
+            cc_show "$C_GRN" "  [+] $_s restarted and answering$([ -n "$_ports" ] && echo " on $_ports"): the changes are live"
+            cc_csv_row "$CSV" restart "$_s" restart "answering after the change" changed
+            continue
+        fi
+        cc_err "$_s: $_why - putting its config back"
+        awk -F'|' -v s="$_s" '$1 == s { print $2 "|" $3 }' "$W/touched" | sort -u | while IFS='|' read -r _f _c; do
+            if [ "$_c" = created ]; then rm -f "$(P "$_f")"
+            else _rb="$CC_BACKUP_DIR$(cc_abspath "$(P "$_f")")"; [ -f "$_rb" ] && cat "$_rb" >"$(P "$_f")"; fi
+        done
+        _svc_reload "$_s" >>"$CC_LOG" 2>&1; sleep 1
+        row restart "$_s" restart "$_why; its config was put back and it is $(svc_state "$_s") again" failed
+    done
+}
+
 # ---- Plan, then apply -------------------------------------------------------
 run_all() {
     _ra_q=$CC_QUIET; CC_QUIET=1        # the coloured row lines replace WOULD/DO lines
@@ -1923,6 +2270,7 @@ else
         header "APPLYING"
         run_all
         ftp_restart_check
+        restart_checks
         cc_csv_pretty "$CSV" "$CC_RUN_DIR/changes.txt" 90
     else
         cc_show "$C_GRY" "Not applied. The plan is in $CC_RUN_DIR/plan.txt"

@@ -2,6 +2,16 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Scored-service hardening (SV-30, LX-22)
+
+Both scripts ask which box this is (`[s]plunk [w]ebmail [e]comm [o]ther`) and keep the scored checks working.
+- **SV-30 web** (`ecomm-http`, `webmail-interactive`): hides the Apache, nginx and PHP versions (`ServerTokens Prod`, `ServerSignature Off`, `server_tokens off`, `expose_php Off`), turns off TRACE, and at the service level folder listings. Reports `.git`, backups, dumps, phpinfo pages and the Roundcube installer and version; moves them to quarantine at the access level.
+- **SV-30 mail** (`webmail-smtp`, `webmail-imap`): Postfix greeting without name/OS, VRFY off (no username checking), HELO required (service level), open-relay check; Dovecot greeting without name, 5-second delay after a failed login; plaintext IMAP only reported.
+- **SV-30 time and Splunk** (`splunk-chrony`, `splunk-mgmt`, `splunk-query`): chrony remote control limited to localhost, and a warning if chrony serves time to nobody; Splunk web UI and accounts reported, never changed.
+- **Every changed service** is config-tested, restarted, and must answer on the same ports (and the website with the same status). If not, its files are put back. A revert also restarts each service.
+- **LX-22**: says when SSH is scored on the box; `MaxStartups 10:30:60`; `DebianBanner no` (hides the Ubuntu build); replaces `/etc/issue`, `/etc/issue.net` with a plain warning shown before SSH login and turns off the update-motd scripts.
+- Tested: fake root under seven shells and three awks; live with real Apache, Postfix, Dovecot and chrony: banners hidden, every service still answering, a failed Apache config test put back, and a revert restoring the old banners.
+
 ## 2026-11-18: Clearer questions in every script
 
 Every question now says what each answer does, in the password-rotation style, with the default in capitals:
