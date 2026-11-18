@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Database password rotation (SV-42, new)
+
+- **SV-42** gives every MySQL/MariaDB and PostgreSQL account that has a password a new one, asking about each account (`[r]andom [s]et [l]ock [k]eep [a]ll`). App accounts get the new password in their config in the same step. A unix_socket login is kept, and the account the script logs in with is changed last.
+- Each new password is tested by logging in; a failure puts the old one back. The site must still load afterwards, or every old password comes back. Undo restores old (even empty) passwords and unlocks locked accounts.
+- Found while testing: an account with no password needs `IDENTIFIED BY ''` in its undo; a lock needs `ACCOUNT UNLOCK`.
+- Tested: 31 checks with a real MariaDB and PostgreSQL under seven shells and three awks; live with a page using a hard-coded password (put back automatically).
+
 ## 2026-11-18: PHP and web app hardening (SV-21, new)
 
 - **SV-21** finds the web apps and offers fixes by level: safe (allow_url_include, display_errors, expose_php, app config files root:www-data 640, WordPress DISALLOW_FILE_EDIT), service (no PHP in upload folders, block .git/.env/backups/dumps, block xmlrpc.php, new WordPress admins kept or demoted), access (disable_functions for web shell functions, code read-only for the web server). nginx lines are written to a file to include by hand.

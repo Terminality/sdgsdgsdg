@@ -43,6 +43,7 @@ Contents:
 33. Site backup and restore, `roles/applications/SV-15-site-backup.sh` (SV-15)
 34. Database hardening, `roles/applications/SV-20-db-hardening.sh` (SV-20)
 35. PHP and web app hardening, `roles/applications/SV-21-web-hardening.sh` (SV-21)
+36. Database password rotation, `roles/applications/SV-42-db-passwords.sh` (SV-42)
 
 ---
 
@@ -2471,3 +2472,61 @@ In `web-hardening-N/`: `output.txt`, `apps.txt`, `plan.txt`, `changes.txt`, `sum
 | `could not read wp_users` | WordPress not set up, or root can't log in | `--mysql-cnf FILE` |
 | `APPLIED, then PUT BACK` | The site broke after a change | Look at `changes.txt`, rerun with `--skip` for that fix |
 | A web shell in uploads still runs on nginx | nginx is not edited | Include `nginx-ccdc.conf` in the server block, `nginx -t`, reload |
+
+## 36. Database password rotation, `roles/applications/SV-42-db-passwords.sh` (SV-42)
+
+New passwords for every MySQL/MariaDB and PostgreSQL account that logs in with one. If an app uses the account, its config gets the new password in the same step, so the store keeps working. Each new password is tested by logging in with it.
+
+### How to run it
+
+```sh
+sudo sh SV-42-db-passwords.sh                                    # dry run, asks
+sudo sh SV-42-db-passwords.sh --protected p.csv --apply          # asks about each account
+sudo sh SV-42-db-passwords.sh --protected p.csv --apply --batch --url http://127.0.0.1/shop/
+```
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Go through each account one by one? | `[y]` / `[n]` (use the table's defaults) | `--batch` |
+| Each account | `[r]andom` `[s]et` (typed twice, not shown) `[l]ock` `[k]eep` `[a]ll the rest default` | `--users`, `--exclude`, `--passwords` |
+| A protected account | extra `[y]` / `[n]`, default no | protected list |
+| Apply these changes? | `[y]` / `[n]` | `--apply` |
+
+### What it does
+
+- **Lists every account:** where it can log in from, how it logs in, which app uses it. HIGH: no password, a PostgreSQL superuser that isn't `postgres`, `trust` lines in pg_hba.conf.
+- **Leaves alone** accounts that log in by OS account only (unix_socket, peer), locked accounts and roles that can't log in. Root on Debian/Ubuntu MariaDB is one of these.
+- **App accounts:** new password in the database and in the config: WordPress, Joomla, PrestaShop, OpenCart (both configs), Roundcube, `.env`, and `[client]` files like `/root/.my.cnf`.
+- **Keeps a unix_socket login** when an account has both.
+- **The account it logs in with** is changed last.
+- **Tests each new password** by logging in. If that fails, the old one goes back on the spot. An account allowed only from another host is marked "not tested".
+- **Site check:** `--url` (default the home page and each app folder) must still load afterwards. If not, every old password comes back.
+
+### Safety
+
+- Dry run unless `--apply`. Revert timer (120 s). Every account is saved first in `before/` (root only, it holds the hashes).
+- The undo puts back the old password (even an empty one), unlocks what was locked, restores the configs, and renames `passwords.txt` to `passwords-UNDONE-not-valid.txt`.
+- New passwords only go in `passwords.txt` (mode 600), never on screen or in the logs.
+
+### What it produces
+
+In `db-passwords-N/` (mode 700): `output.txt`, `accounts.txt`, `plan.txt`, `summary.txt`, `passwords.txt`, `before/`, `revert.sh`.
+
+### What to watch for
+
+- **The scoring engine may log in to the database itself.** Put that account on the protected list, or report the new password in the scoring portal.
+- **"used by: -"** means no config names the account. A hard-coded password in a PHP file isn't found, but the site check catches it and puts everything back.
+- **PostgreSQL apps:** only `.env` configs are updated.
+- **`trust` in pg_hba.conf** lets anyone in without any password. Fix that first.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `nothing to rotate` | Can't log in to either database | Run as root, or `--mysql-cnf FILE` |
+| `failed: the new password did not work` | The login test failed (pg_hba, host limits) | Old password is back; check the log |
+| `APPLIED, then PUT BACK` | The site broke | An app uses an account its config check missed: `--exclude` it, or `--webroot DIR` |
+| `no such database account` (exit 2) | A typo in `--users`/`--exclude` | Fix the name |
