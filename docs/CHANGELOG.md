@@ -2,6 +2,15 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Brute-force banning rebuilt (SV-26 v2)
+
+- Questions: failure limit, web limit, ban length, services to watch, never-ban addresses (team and scoring engine), seconds between checks. Flags answer each; `--batch` does one check; answers saved as next defaults.
+- New look: 4 sections (setup; logs, firewall and never-ban list with reasons; checks; summary), colours, `[!] BANNED` / `[*] WOULD BAN` / `[*] NOT BANNED` with the reason / `[*] SPAM?` / `[-] watching`, accounts tried under each ban.
+- New: `--services` (ssh ftp mail web pam), `--team` (same as `--ignore`), `--unban-all`, `--list` shows why each address was banned; warns when no team or scoring address was given.
+- Run folder `banning-N/` with output.txt, bans.txt, offenders.txt, summary.txt and CSVs; history stays in `ban-<host>/`.
+- A dry loop now reads each line once (its counts live in the run folder, the real state is untouched).
+- Tested: 66 checks under seven shells and three awks (sample logs, stand-in firewalls, questions on a terminal); live in a network namespace with real nftables: ban, list, unban-all.
+
 ## 2026-11-17: Linux change watch rebuilt (LX-40 v2)
 
 - New look: sections, colours, `[!] [*] [-]` markers, two lines per alert (what changed, then what it means), summary at the end (also on Ctrl-C).
