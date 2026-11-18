@@ -2,6 +2,17 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-17: Linux change watch rebuilt (LX-40 v2)
+
+- New look: sections, colours, `[!] [*] [-]` markers, two lines per alert (what changed, then what it means), summary at the end (also on Ctrl-C).
+- Questions: keep or retake the baseline, how often to check, watch connections, team addresses, extra web folders, SUID scan. Flags answer each; `--batch` does one check. Answers are saved as the next defaults.
+- New: **connections**. New outgoing connections with the program, user and command line behind them (a shell, interpreter or /tmp program calling out is HIGH: reverse shell), new addresses on SSH/RDP/database/SMB ports. Team addresses, loopback and web visitors are never alerted; each connection is reported once.
+- New: **running services**. A service stopping is MED ("if it is scored, it is down"); auditd, rsyslog, splunk, wazuh and similar stopping is HIGH.
+- New listeners show their pid, user and command line; a shell or /tmp program listening is HIGH.
+- Plainer alerts: says who was added to sudo, flags an empty password, a service account given a shell, what each config file controls.
+- Each run gets `changewatch-N/` with output.txt, alerts.txt, connections.txt, summary.txt and CSVs; the baseline stays in `watch-<host>/`. A web folder added later joins the baseline quietly.
+- Tested: fake root with stand-in ss/systemctl/proc, 74 checks under seven shells and three awks; live in a network namespace (a listener and two outgoing connections caught with their processes).
+
 ## 2026-11-17: Persistence sweep (LX-42) and SSH hardening rebuilt (LX-22 v2)
 
 **LX-42 persistence sweep (new)**

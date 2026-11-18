@@ -1317,79 +1317,81 @@ Dropped packets are logged with the prefix `CCDC-DROP` (`journalctl -k | grep CC
 
 ## 19. Linux change watch, `roles/linux/LX-40-change-watch.sh` (LX-40)
 
-Takes a quick baseline of every place a red team uses to keep access, then checks again, once or every minute, and raises one alert per change. Start it once the box is hardened, and send the alerts off the box.
+Takes a baseline of every place a red team uses to get back in, then checks again (once, or every minute) and prints one alert per change in plain words, worst first. New in 2.0: it also watches **connections**, so a reverse shell calling out shows up with the program, user and command line behind it.
 
-It changes nothing on the host. A check takes about a second (a few seconds with the SUID scan on a big disk).
+It changes nothing on the host. Start it once the box is hardened.
 
 ### How to run it
 
 ```sh
-sudo sh LX-40-change-watch.sh --out /root/ccdc-out --baseline      # after hardening
-sudo sh LX-40-change-watch.sh --out /root/ccdc-out                 # one check
-# keep it running, alerts copied to the admin workstation:
-nohup sudo sh LX-40-change-watch.sh --out /root/ccdc-out --loop 60 \
+sudo sh LX-40-change-watch.sh                      # asks, then watches
+sudo sh LX-40-change-watch.sh --batch              # one check, defaults
+sudo sh LX-40-change-watch.sh --loop 60 --team 10.0.0.0/24
+# keep it running, alerts copied off the box:
+nohup sudo sh LX-40-change-watch.sh --batch --loop 60 \
     --alert-cmd "ssh admin@10.0.0.5 'cat >>/srv/alerts/web01.log'" >/root/ccdc-out/watch.out 2>&1 &
-sudo sh LX-40-change-watch.sh --out /root/ccdc-out --accept        # after changing things on purpose
+sudo sh LX-40-change-watch.sh --accept             # after changing things on purpose
 ```
 
-| Option | What it does |
-| --- | --- |
-| `--baseline` / `--accept` | Take a new baseline from the current state. Use `--accept` after reviewing changes the team made |
-| `--loop N` | Check every N seconds (at least 10) until stopped |
-| `--count N` | With `--loop`: stop after N checks |
-| `--webroot DIR` | Also watch DIR (the usual web roots are watched already) |
-| `--no-suid` | Skip the SUID/SGID scan, which reads the whole root file system |
-| `--suid-every N` | With `--loop`: run that scan only on every Nth check (default 10). A new SUID file is then reported up to N checks late; the other sections are checked every time |
-| `--alert-cmd CMD` | After a check that found changes, run CMD with the new alert lines on its stdin (`ssh ... 'cat >>file'`, `logger -t ccdc`, `mail ...`) |
-| `--state DIR` | Where the baseline lives (default `<out>/watch-<host>`) |
+### The questions
 
-The first check with no baseline takes one.
+Enter takes the default. A flag answers each one ahead of time; `--batch` (or no terminal) takes the defaults and does **one** check.
+
+| Question | Default | Flag |
+| --- | --- | --- |
+| Use the existing baseline? (No = take a new one) | Yes | `--use-baseline` / `--baseline` |
+| Seconds between checks (0 = once) | 60 | `--loop N` / `--once` |
+| Watch connections too? | Yes | `--conns` / `--no-conns` |
+| Your team's addresses (never alerted) | last answer | `--team "10.0.0.5 10.0.0.0/24"` |
+| Other web folders to watch | none | `--webroot DIR` |
+| Scan the disk for new SUID programs? | Yes | `--suid` / `--no-suid` |
+
+Your answers are saved and become the next run's defaults. With no baseline yet, the first run just takes one.
+
+Other options: `--count N` (stop after N checks), `--suid-every N` (in a loop, the SUID scan runs every Nth check, default 10), `--alert-cmd CMD` (new alert lines go to CMD's stdin), `--state DIR`, `--no-color`.
 
 ### What it watches
 
 | Section | What | Severity |
 | --- | --- | --- |
-| users | Accounts added, removed, or changed (an account turned into UID 0 is HIGH) | added HIGH |
-| passwords | A password changed: compared as a short checksum of the shadow field, never the hash | MED |
-| groups | Members of every group; `sudo`, `wheel`, `admin`, `root`, `adm`, `docker`, `lxd`, `disk`, `shadow` changes are HIGH | HIGH / LOW |
-| files | sudoers, PAM, `/etc/security`, `ld.so.preload` and `ld.so.conf`, profile and shell startup files, `/etc/environment`, hosts, resolv.conf, nsswitch, sshd config, sysctl files | HIGH for sudo/PAM/preload or any new file, else MED |
-| cron | `/etc/crontab`, cron folders, user crontabs, at and anacron spools, systemd timers | added or changed HIGH |
-| units | systemd unit files, init.d scripts, `rc.local` | added HIGH, changed MED |
-| keys | Every account's `authorized_keys` (hash and key count) | added or changed HIGH |
-| ports | Listening TCP/UDP ports and their programs | backdoor-style port HIGH, else MED; a port that stopped is MED (a scored service may be down) |
-| suid | SUID/SGID programs | added HIGH |
-| web | Files in web roots by size and time | new program file HIGH, new or removed file MED, changed LOW/MED |
-| modules | Loaded kernel modules | added HIGH |
+| users | New accounts, UID 0, a service account given a login shell | HIGH |
+| passwords | Changed (MED), removed/empty (HIGH), unlocked (MED). Only a checksum is kept, never the hash | |
+| groups | Says who was added: admin groups (sudo, wheel, docker ...) HIGH, others LOW | |
+| files | sudoers, PAM, ld.so.preload, login scripts, hosts, DNS, sshd_config, sysctl, each with what it controls | HIGH for sudo/PAM/preload or new |
+| cron | Cron files, at/anacron spools, systemd timers | HIGH |
+| units | Boot service files | added HIGH |
+| running | A running service stopping (MED, "if it is scored, it is down"); auditd/rsyslog/splunk/wazuh stopping HIGH | |
+| keys | authorized_keys added or changed | HIGH |
+| ports | New listener with its pid, user and command line. A shell, interpreter, nc, or a program from /tmp listening is HIGH; so is a known backdoor port | |
+| connections | New outgoing connection with the program behind it: a shell/interpreter/temp-folder program or attacker port is HIGH (reverse shell), the web server account calling out is HIGH, package updates LOW, anything else MED. New address on SSH, RDP, database or SMB ports is MED (who got in). Team addresses, loopback and web visitors are never alerted | |
+| suid | New SUID/SGID program | HIGH |
+| web | Files in the web roots: new program file HIGH | |
+| modules | Kernel module loaded | HIGH |
 
 ### What it produces
 
-In the state folder (`<out>/watch-<host>/`):
+Each run gets `<out>/changewatch-N/`: `output.txt` (the screen without colour), `alerts.txt` and `connections.txt` (tables; CSVs in `csv/`), `summary.txt`, `run.txt`.
 
-| File | Contents |
-| --- | --- |
-| `alerts.log` | Every alert ever raised: `time SEVERITY section change item - detail`, HIGH first within each check |
-| `changes-since-baseline.txt` | Everything that differs from the baseline now |
-| `baseline/`, `last/` | The snapshots, one plain-text file per section, no secrets |
-
-Each check alerts only on what changed since the previous check, so one change is reported once; `changes-since-baseline.txt` keeps the running total.
+The state stays in `<out>/watch-<host>/`: `baseline/` and `last/` snapshots, `alerts.log` (every alert ever, one line each), `changes-since-baseline.txt`, `conns-seen`, `settings`.
 
 ### What to watch for
 
-- **Your own changes show up too.** After the team changes something on purpose, run `--accept`.
-- **Send alerts off the box.** A red team with root can stop this script or edit its files. `--alert-cmd` is the way out.
-- **Web files are compared by size and time**, not content, to stay fast. A careful attacker can keep both the same; the backup's hash list (LX-31) catches that: `sha256sum -c files.sha256`.
-- **"stopped listening" on a scored port** means the service is down: check it first.
-- **Package updates** change unit files and programs. Check the package log before treating those as an attack.
+- **Your own changes show up too.** Run `--accept` after the team changes something on purpose.
+- **Connections are sampled at each check.** One that opens and closes between checks is missed; a reverse shell stays open, so it is caught.
+- **Run it as root**, or it cannot see passwords, other accounts' keys or which program owns a connection.
+- **Send alerts off the box** with `--alert-cmd`. A red team with root can stop the script.
+- **"stopped listening" or "service stopped" on a scored service** means it is down: fix that first.
+- **A new web folder** added later joins the baseline quietly, so its existing files aren't alerted.
 
 ### Problems and fixes
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| Hundreds of alerts on the first check | The baseline was taken before hardening | `--accept`, then watch |
-| `passwords` and `keys` never change | Not root, so shadow and other homes cannot be read | Run as root |
-| Checks are slow | The SUID scan on a large disk | It already runs only every 10th check in a loop; raise `--suid-every`, or use `--no-suid` |
-| `--alert-cmd failed` warning | The command failed (no SSH key, host down) | Alerts are still in `alerts.log`; test the command by hand: `echo test \| CMD` |
-| The loop stopped when the session closed | Started without `nohup` | Use `nohup ... &`, `tmux` or `screen` |
+| Hundreds of alerts on the first check | Baseline taken before hardening | `--accept`, then watch |
+| Lots of MED outgoing connections | Agents or apps that call out | Add their address to `--team`, or `--accept` (once reported, a connection is not reported again) |
+| `passwords`, `keys`, connection programs empty | Not root | Run with sudo |
+| Checks are slow | SUID scan on a big disk | Raise `--suid-every`, or `--no-suid` |
+| The loop stopped when the session closed | Started without `nohup` | `nohup ... &`, `tmux` or `screen` |
 
 ---
 
