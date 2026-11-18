@@ -2,6 +2,14 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Database hardening (SV-20, new); text files only in SV-15 and SV-20
+
+- **SV-20** lists every MySQL/MariaDB account with the app that uses it, then offers fixes by level: safe (anonymous accounts, empty test database, local_infile), service (remote root, accounts with no password, FILE right, new app passwords written into the app's config), access (bind to 127.0.0.1, drop backdoor UDFs). Reports SUPER/GRANT accounts, planted-looking admin accounts, triggers, events, secure_file_priv, PostgreSQL trust.
+- The site must still load afterwards (retried for PHP's cache); if it got worse, everything is put back on the spot. Undo restores accounts, old passwords (database and config), rights and settings. New passwords only in `passwords.txt` (mode 600).
+- Found live: a password undo must use ALTER USER (CREATE USER fails on an existing account); PHP opcache can keep an old config, so configs are touched after writing and after restoring; a restart undo must be recorded before the config it reverts; the database service name is detected.
+- **No CSV files** in SV-15 and SV-20 output: tables are `.txt` only.
+- Tested: 31 checks with a real MariaDB under seven shells and three awks; live with a PHP page that logs in like the store.
+
 ## 2026-11-18: Site backup and restore (SV-15, new)
 
 - **backup**: every site the web servers serve plus `/var/www`: files (archive + a hash of every file), the site's database read from its app config (WordPress, Joomla, Drupal, PrestaShop, OpenCart, Magento, Roundcube, `.env`), web server and PHP configs. Private `site-backup-N/` folder, optional copy off the box.

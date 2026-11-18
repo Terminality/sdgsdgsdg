@@ -64,13 +64,13 @@
 #
 # OUTPUTS  (under --out)
 #   site-backup-N/     one backup (mode 700: it holds the database dumps)
-#     sites.txt        each site: folder, files, size, database (csv/sites.csv)
+#     sites.txt        each site: folder, files, size, database
 #     <site>/files.tar.gz   the site's files (paths relative to /)
 #     <site>/files.sha256   a hash of every file (what check compares)
 #     <site>/db.sql.gz | db.dump   the site's database (MySQL / PostgreSQL)
 #     config.tar.gz, config.sha256   /etc/apache2|httpd|nginx|php
 #     RESTORE.txt      how to put things back by hand
-#   site-check-N/      changes.txt (csv/changes.csv): site, change, file, why
+#   site-check-N/      changes.txt: site, change, file, why
 #   site-restore-N/    plan.txt, changes.txt, before/ (what was replaced),
 #                      revert.sh
 #   Each folder: output.txt (the screen, no colour), summary.txt, run.txt.
@@ -156,7 +156,7 @@ while [ $# -gt 0 ]; do
         --site)       [ $# -ge 2 ] || cc_die 2 "--site needs a name"; SITES="$SITES $2"; shift 2 ;;
         --webroot)    [ $# -ge 2 ] || cc_die 2 "--webroot needs a folder"; [ -d "$2" ] || cc_die 2 "--webroot: not a folder: $2"
                       WEBROOTS="$WEBROOTS$(cc_abspath "$2")$NL"; shift 2 ;;
-        --from)       [ $# -ge 2 ] || cc_die 2 "--from needs a folder"; [ -f "$2/csv/sites.csv" ] || cc_die 2 "--from: not an SV-15 backup: $2"
+        --from)       [ $# -ge 2 ] || cc_die 2 "--from needs a folder"; [ -f "$2/.sites" ] || cc_die 2 "--from: not an SV-15 backup: $2"
                       FROM=$(cc_abspath "$2"); shift 2 ;;
         --db)         DB=1; shift ;;
         --no-db)      DB=0; shift ;;
@@ -189,7 +189,7 @@ header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
 # newest_backup -> the newest site-backup-N folder in --out with a sites list.
 newest_backup() {
     for _d in "$CC_OUT"/site-backup-*; do
-        [ -f "$_d/csv/sites.csv" ] || continue
+        [ -f "$_d/.sites" ] || continue
         printf '%s %s\n' "${_d##*-}" "$_d"
     done | sort -n | tail -n 1 | cut -d' ' -f2-
 }
@@ -211,14 +211,14 @@ fi
 
 cc_use_numbered_dir "site-$MODE"
 chmod 700 "$CC_RUN_DIR" 2>/dev/null
-CC_CSV_DIR="$CC_RUN_DIR/csv"
-mkdir -p "$CC_CSV_DIR" || cc_die 3 "cannot create $CC_CSV_DIR"
 rmdir "$CC_RUN_DIR/raw" 2>/dev/null
 OUTF="$CC_RUN_DIR/output.txt"
 grep -v '\[NOTE\]\|\[DEBUG\]' "$CC_LOG" >"$OUTF" 2>/dev/null || : >"$OUTF"
 # shellcheck disable=SC2034  # CC_TEE is read by the library's log functions
 CC_TEE=$OUTF
 W="$CC_RUN_DIR/.work"; mkdir -p "$W"
+# Tables are kept as .txt only; their CSV source is scratch data in .work.
+CC_CSV_DIR="$W/csv"; mkdir -p "$CC_CSV_DIR"
 
 cc_show "$C_CYN" "SV-15 Site backup and restore | host $CC_HOST | mode $MODE | results in $CC_RUN_DIR"
 [ "$MODE" != backup ] && cc_show "$C_CYN" "Comparing with $FROM ($(cat "$FROM/.taken" 2>/dev/null))"
@@ -404,7 +404,7 @@ header "1/3  sites"
 find_sites
 if [ "$MODE" != backup ]; then
     # Compare the sites that are in the backup (they may since have vanished).
-    awk "$CC_AWK_CSV"'NR > 1 { csvsplit($0, f); print f[1] "|" f[2] "|" f[3] }' "$FROM/csv/sites.csv" >"$W/sites"
+    cp "$FROM/.sites" "$W/sites"
     if [ -n "$SITES" ]; then awk -F'|' -v want=" $SITES " 'index(want, " " $1 " ")' "$W/sites" >"$W/sites.f"; mv "$W/sites.f" "$W/sites"; fi
 fi
 if [ ! -s "$W/sites" ]; then
@@ -489,6 +489,8 @@ if [ "$MODE" = backup ]; then
             cc_show "$C_GRN" "  [+] web server and PHP configs ($(grep -c . "$CC_RUN_DIR/config.sha256") files)"
     fi
     date -u +%Y-%m-%dT%H:%M:%SZ >"$CC_RUN_DIR/.taken"
+    # The site list check and restore read back (name|folder|config).
+    cp "$W/sites" "$CC_RUN_DIR/.sites"
     cat >"$CC_RUN_DIR/RESTORE.txt" <<EOF
 Restoring from $CC_RUN_DIR (made on $CC_HOST at $(cat "$CC_RUN_DIR/.taken") by SV-15)
 
