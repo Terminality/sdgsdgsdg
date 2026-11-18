@@ -440,7 +440,7 @@ ftp_anon() {
             # Debian layout: one file per setting.
             _pd=$(P /etc/pure-ftpd/conf)
             if [ ! -d "$_pd" ]; then row ftp-anon pure-ftpd "anonymous login" "set NoAnonymous yes in the pure-ftpd config" "check by hand"
-            elif [ "$(tr -d ' \r\n' <"$_pd/NoAnonymous" 2>/dev/null | tr 'A-Z' 'a-z')" = yes ]; then row ftp-anon pure-ftpd NoAnonymous "already yes" "already ok"
+            elif [ "$(tr -d ' \r\n' 2>/dev/null <"$_pd/NoAnonymous" | tr 'A-Z' 'a-z')" = yes ]; then row ftp-anon pure-ftpd NoAnonymous "already yes" "already ok"
             else
                 _pe=0; [ -f "$_pd/NoAnonymous" ] && _pe=1
                 ensure_backup /etc/pure-ftpd/conf/NoAnonymous || { row ftp-anon pure-ftpd NoAnonymous "backup failed" failed; return 0; }

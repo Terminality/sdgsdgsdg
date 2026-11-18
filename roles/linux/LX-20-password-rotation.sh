@@ -406,7 +406,8 @@ awk -F'|' '!($5 == "k" && $4 != "set" && $4 != "empty" && $7 == "") { print }' "
 cp "$W/plan" "$W/plan.all"; cp "$W/loud" "$W/plan"
 show_table
 cp "$W/plan.all" "$W/plan"
-[ -s "$W/quiet" ] && cc_show "$C_GRY" "  [-] $(grep -c . "$W/quiet") system accounts with no password are kept: $(cut -d'|' -f1 "$W/quiet" | tr '\n' ' ')"
+_nq=$(grep -c . "$W/quiet")
+[ -s "$W/quiet" ] && cc_show "$C_GRY" "  [-] $_nq system accounts with no password are kept: $(cut -d'|' -f1 "$W/quiet" | head -n 15 | tr '\n' ' ')$([ "$_nq" -gt 15 ] && echo "+$((_nq - 15)) more")"
 if [ -s "$W/notes" ]; then
     while IFS='|' read -r _lv _tx; do
         case "$_lv" in HIGH) cc_show "$C_RED" "  [!] $_tx" ;; *) cc_show "$C_YEL" "  [*] $_tx" ;; esac
@@ -618,7 +619,9 @@ if [ "$N_LOCK" -gt 0 ] && [ "$TOOLS" = shadow ] && [ -z "$USERMOD" ]; then
     printf 'NOTE|usermod not found: accounts were locked with "passwd -l" only, which does NOT stop SSH key logins - remove their keys (LX-22)\n' >>"$W/notes"
 fi
 if [ -z "$KEEP" ]; then
-    awk -F'|' -v m="$UID_MIN" '($2 >= m && $2 < 60000) && $4 != "none" && $5 != "d" { print $1 }' "$W/plan" >"$W/humans"
+    # Only accounts someone can log in to: a usable (or empty) password.
+    # Locked build accounts (nixbld1..32 and the like) are not worth a note.
+    awk -F'|' -v m="$UID_MIN" '($2 >= m && $2 < 60000) && ($4 == "set" || $4 == "empty") && $5 != "d" { print $1 }' "$W/plan" >"$W/humans"
     [ -s "$W/humans" ] && printf 'NOTE|human accounts not disabled: %s (check each one is the team'"'"'s)\n' "$(tr '\n' ' ' <"$W/humans")" >>"$W/notes"
 fi
 

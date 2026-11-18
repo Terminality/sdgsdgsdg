@@ -1428,6 +1428,16 @@ if [ -z "$R" ] && [ -n "$SSHD" ] && [ -z "${CCDC_SSHD:-}" ]; then
     [ -n "$_ver" ] && cc_show "" "  sshd:     $_ver"
 fi
 [ -f "$CONF" ] || cc_show "$C_YEL" "  No $CONF: the SSH server is not installed here (or configured elsewhere)."
+# rootword VALUE -> the PermitRootLogin value in plain words.
+rootword() {
+    case "$1" in
+        prohibit-password|without-password) echo "key-only ($1)" ;;
+        forced-commands-only) echo "key-only, forced commands ($1)" ;;
+        yes) echo "yes (password or key)" ;;
+        no) echo "no (root cannot log in by SSH)" ;;
+        *) echo "$1" ;;
+    esac
+}
 cur() {  # cur KEY DEFAULT -> the value in effect now
     _k=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
     _v=$(awk -v k="$_k" '$1 == k { $1 = ""; sub(/^ /, ""); print; exit }' "$W/eff")
@@ -1435,7 +1445,7 @@ cur() {  # cur KEY DEFAULT -> the value in effect now
     printf '%s' "${_v:-$2}" | tr 'A-Z' 'a-z'
 }
 _ports=$(cur port 22 | tr '\n' ' ')
-cc_show "" "  Port(s):  $_ports    Root login: $(cur permitrootlogin prohibit-password)    Password logins: $(cur passwordauthentication yes)"
+cc_show "" "  Port(s):  $_ports    Root login: $(rootword "$(cur permitrootlogin prohibit-password)")    Password logins: $(cur passwordauthentication yes)"
 if [ -z "$R" ] && cc_have ss; then
     _l=$(ss -ltnp 2>/dev/null | awk '/"sshd"/ { print $4 }' | tr '\n' ' ')
     if [ -n "$_l" ]; then cc_show "" "  Listening: $_l"; else cc_show "$C_YEL" "  sshd is not listening right now."; fi
@@ -1568,11 +1578,11 @@ fi
 _rnow=$(cur permitrootlogin prohibit-password)
 _rpw=$(awk -F: '$1 == "root" { print ($2 == "" || $2 ~ /^[!*]/) ? "no" : "yes" }' "$R/etc/shadow" 2>/dev/null)
 if cc_is_protected account root && [ "$CC_FORCE_SCORED" != 1 ]; then
-    ROOTMODE=leave; cc_show "$C_GRY" "  Root login: left as it is ($_rnow): root is on the protected list."
+    ROOTMODE=leave; cc_show "$C_GRY" "  Root login: left as it is ($(rootword "$_rnow")): root is on the protected list."
 elif [ -z "$ROOTMODE" ]; then
     # Never default to locking root out of SSH: key-only only when root keeps a key.
     if [ "$_rootkeys" -gt 0 ] || [ "$_rpw" = no ]; then _rd=key-only; else _rd=leave; fi
-    cc_show "" "  Root login is now: $_rnow. no = root cannot log in over SSH at all; key-only = only with a key; leave = no change."
+    cc_show "" "  Root login is now: $(rootword "$_rnow"). no = root cannot log in over SSH at all; key-only = only with a key; leave = no change."
     [ "$_rd" = leave ] && cc_show "$C_YEL" "  root has a password and no SSH key that stays, so key-only would lock root out of SSH: the default is leave."
     cc_ask_text "Root login over SSH: no, key-only or leave?" "$_rd"
     case "$CC_ANSWER" in no|key-only|leave) ROOTMODE=$CC_ANSWER ;; *) cc_die 2 "not an answer: '$CC_ANSWER' (no, key-only or leave)" ;; esac

@@ -94,7 +94,7 @@ ESTAB  0      0      10.0.0.2:22        203.0.113.66:5123 users:(("sshd",pid=1,f
 ESTAB  0      0      10.0.0.2:80        198.51.100.8:40001 users:(("apache2",pid=2,fd=8))
 ESTAB  0      0      [::ffff:10.0.0.2]:43214 [::ffff:203.0.113.11]:8080 users:(("python3",pid=37,fd=3))
 EOF
-out=$(run --batch --alert-cmd "cat >'$T_TMP/sent.txt'" 2>&1)
+out=$(run --batch --team 10.0.0.48/29 --alert-cmd "cat >'$T_TMP/sent.txt'" 2>&1)
 t_has "$out" "[!] HIGH users       added   mallory" "new account HIGH"
 t_has "$out" "new account: uid 1001, home /home/mallory, shell /bin/bash" "new account explained"
 t_has "$out" "now has UID 0 - a second root account (was uid 1000)" "account made UID 0"

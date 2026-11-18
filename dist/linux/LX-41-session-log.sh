@@ -1562,7 +1562,7 @@ show() { printf '%s%s%s\n' "$1" "$2" "${C_OFF:-}"; }
 # rollover FILE -> move it aside if it passed --max-mb.
 rollover() {
     [ -f "$1" ] || return 0
-    _sz=$(wc -c <"$1" 2>/dev/null); case "$_sz" in ''|*[!0-9]*) return 0 ;; esac
+    _sz=$(wc -c 2>/dev/null <"$1"); case "$_sz" in ''|*[!0-9]*) return 0 ;; esac
     [ "$_sz" -ge "$MAXBYTES" ] && mv "$1" "$1.old"
     return 0
 }
@@ -1574,7 +1574,7 @@ rollover() {
 new_lines() {
     _nl_k="$STATE/.cur/$1"; _nl_f="$2"
     [ -r "$_nl_f" ] || return 0
-    _nl_tot=$(wc -l <"$_nl_f" 2>/dev/null); case "$_nl_tot" in ''|*[!0-9]*) _nl_tot=0 ;; esac
+    _nl_tot=$(wc -l 2>/dev/null <"$_nl_f"); case "$_nl_tot" in ''|*[!0-9]*) _nl_tot=0 ;; esac
     if [ -f "$_nl_k" ]; then
         _nl_seen=$(cat "$_nl_k" 2>/dev/null); case "$_nl_seen" in ''|*[!0-9]*) _nl_seen=0 ;; esac
     else

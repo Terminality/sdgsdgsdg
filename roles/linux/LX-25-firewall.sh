@@ -429,7 +429,7 @@ proc_info() {
     [ -n "$1" ] && [ -d "$PROCROOT/$1" ] || return 0
     # shellcheck disable=SC2012  # ls: the owner of /proc/PID is the account
     PR_USER=$(ls -ld "$PROCROOT/$1" 2>/dev/null | awk '{ print $3 }')
-    PR_CMD=$(tr '\000' ' ' <"$PROCROOT/$1/cmdline" 2>/dev/null | tr '|\n\r\t' '/   ' | sed 's/ *$//' | cut -c1-160)
+    PR_CMD=$(tr '\000' ' ' 2>/dev/null <"$PROCROOT/$1/cmdline" | tr '|\n\r\t' '/   ' | sed 's/ *$//' | cut -c1-160)
     PR_EXE=$(readlink "$PROCROOT/$1/exe" 2>/dev/null) || PR_EXE=""
 }
 

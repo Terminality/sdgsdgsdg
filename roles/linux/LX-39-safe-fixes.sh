@@ -752,7 +752,8 @@ else
                 # Show what it found first, so you know what you are answering.
                 case "$_f" in uid0) uid0_list >"$W/found" ;; emptypw) emptypw_list >"$W/found" ;; suid) suid_list >"$W/found" ;; esac
                 if [ ! -s "$W/found" ]; then cc_show "$C_GRY" "    $_f: nothing found ($(fix_desc "$_f"))"; continue; fi
-                cc_show "$C_YEL" "    $_f found: $(tr '\n' ' ' <"$W/found")"
+                _nf=$(grep -c . "$W/found")
+                cc_show "$C_YEL" "    $_f found: $(head -n 6 "$W/found" | tr '\n' ' ')$([ "$_nf" -gt 6 ] && echo "+$((_nf - 6)) more (all in the plan below)")"
                 cc_ask "$(fix_desc "$_f")? ($_f)" Y && _keep="$_keep $_f" ;;
             *)     cc_ask "$(fix_desc "$_f")? ($_f)" Y && _keep="$_keep $_f" ;;
         esac
