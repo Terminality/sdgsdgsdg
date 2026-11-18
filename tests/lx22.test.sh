@@ -170,10 +170,10 @@ t_has "$out" "root is on the protected list" "and it says so"
 if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&1; then
     t_start "questions in a terminal"
     plant
-    # keys #1-#4: Enter, n (evil), Enter, Enter (www: default no); rc file: Enter (yes); root login: no
-    # x11: n; agent, maxauth, grace, alive, loglevel: Enter; passwords: Enter; forwarding: y;
+    # box: Enter (other); keys #1-#4: Enter, n (evil), Enter, Enter (www: default no); rc file: Enter (yes); root login: no
+    # x11: n; agent, maxauth, grace, alive, maxstartups, loglevel: Enter; passwords: Enter; forwarding: y;
     # crypto: Enter; allowusers: Enter; apply: Enter.  (emptypw, rhosts, userenv are already right.)
-    printf '\nn\n\n\n\nno\nn\n\n\n\n\n\n\ny\n\n\n\n' >"$T_TMP/ans"
+    printf '\n\nn\n\n\n\nno\nn\n\n\n\n\n\n\n\ny\n\n\n\n' >"$T_TMP/ans"
     CCDC_NO_TTY=0 script -qc "$SH $C --out $O --root $R --no-color --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
     tt=$(cat "$T_TMP/tty.out")
     t_has "$tt" "Apply these" "asks before applying"
@@ -191,10 +191,37 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     t_hasnt "$(cat "$R/home/alice/.ssh/authorized_keys")" "$(cut -d' ' -f2 "$K/evil.pub")" "'n' to a key removes it"
     # A wrong answer is asked again; a letter works.  Root question: zz, then k.
     plant
-    printf '\n\n\n\n\nzz\nk\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n' >"$T_TMP/ans2"
+    printf '\n\n\n\n\n\nzz\nk\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n' >"$T_TMP/ans2"
     CCDC_NO_TTY=0 script -qc "$SH $C --out $O --root $R --no-color --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans2" >"$T_TMP/tty2.out" 2>&1
     t_has "$(cat "$T_TMP/tty2.out")" '"zz" is not an answer here: type one of [y/n/K/l]' "a wrong answer is refused and asked again"
     cp "$T_TMP/tty2.out" /tmp/claude-0/-home-claude/3ffb2eda-5138-5d3e-9f99-6d28bba8f70e/scratchpad/tty2.out
     t_has "$(blk)" "PermitRootLogin prohibit-password" "'k' means key-only"
 fi
+t_start "scored boxes, banners, MaxStartups, DebianBanner"
+plant
+printf 'Ubuntu 24.04.1 LTS \\n \\l\n' >"$R/etc/issue"; printf 'Ubuntu 24.04.1 LTS\n' >"$R/etc/issue.net"
+mkdir -p "$R/etc/update-motd.d"; printf '#!/bin/sh\nuname -a\n' >"$R/etc/update-motd.d/00-header"; chmod 755 "$R/etc/update-motd.d/00-header"
+: >"$R/etc/debian_version"
+_u0=$(cat "$O"/undo-*.log 2>/dev/null | grep -c .)
+out=$(run --out "$O" --root "$R" --no-protected --apply --batch --no-color --no-timer --box webmail 2>&1)
+t_has "$out" "SSH is SCORED on webmail (webmail-ssh)" "a scored box says so"
+t_has "$out" "Turn OFF password logins (key only)? (now: yes) [y/N] n (default): no, keep password logins" "password logins stay on by default"
+t_has "$out" "include the one the scoring engine logs in with" "and the account limit warns"
+t_hasnt "$(blk)" "PasswordAuthentication no" "password logins stay on by default"
+t_has "$(blk)" "MaxStartups 10:30:60" "MaxStartups set"
+t_has "$(blk)" "DebianBanner no" "DebianBanner off on a Debian-family box"
+t_has "$(blk)" "Banner /etc/issue.net" "SSH shows the plain banner before login"
+t_eq "$(cat "$R/etc/issue.net")" "Authorized use only. All activity on this system is monitored and logged." "issue.net replaced"
+t_hasnt "$(cat "$R/etc/issue")" "Ubuntu" "issue no longer names the OS"
+t_fail "update-motd script turned off" test -x "$R/etc/update-motd.d/00-header"
+# Replay this run's undo lines, newest first.
+cat "$O"/undo-*.log | awk -F'\t' -v n="$_u0" 'NR > n { l[NR] = $4 } END { for (i = NR; i > n; i--) print l[i] }' >"$T_TMP/undo2.sh"
+sh "$T_TMP/undo2.sh" >/dev/null 2>&1
+t_has "$(cat "$R/etc/issue")" "Ubuntu" "revert puts the banner back"
+t_ok "revert turns the motd script back on" test -x "$R/etc/update-motd.d/00-header"
+rm -f "$R/etc/debian_version"
+out=$(run --out "$O" --root "$R" --no-protected --batch --no-color --box ecomm --no-banners 2>&1)
+t_hasnt "$out" "SSH is SCORED" "ecomm: SSH not scored"
+t_hasnt "$out" "DebianBanner" "DebianBanner is not offered off Debian"
+
 t_done

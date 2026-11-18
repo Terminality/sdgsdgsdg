@@ -110,12 +110,58 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     t_start "asks how far to go when --level is not given"
     mkvsftpd
     # level (service), then Enter for each action, in a terminal.
-    printf 'service\n\n\n\n\n\n\n\n' >"$T_TMP/ans"
+    printf '\nservice\n\n\n\n\n\n\n\n' >"$T_TMP/ans"
     CCDC_NO_TTY=0 script -qc "$SH $C --root $R --out $O --no-color" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
     t_has "$(cat "$T_TMP/tty.out")" "How far should I go?" "asks for the level"
     t_has "$(cat "$T_TMP/tty.out")" "chroot_local_user" "the typed level (service) is used"
     t_has "$(cat "$T_TMP/tty.out")" "[safe] turn off anonymous FTP login?" "then asks about each action with its risk"
 fi
+
+t_start "web, mail and time services (webmail box)"
+rm -rf "$R"; mkdir -p "$R/etc/apache2/conf-enabled" "$R/etc/nginx/conf.d" "$R/etc/php/8.3/apache2" "$R/etc/postfix" "$R/etc/dovecot" "$R/etc/chrony" \
+    "$R/var/www/html/.git" "$R/var/lib/roundcube/program/include" "$R/var/lib/roundcube/installer"
+printf 'include /etc/nginx/conf.d/*.conf;\n' >"$R/etc/nginx/nginx.conf"
+printf '[PHP]\nexpose_php = On\n' >"$R/etc/php/8.3/apache2/php.ini"
+printf 'smtpd_banner = $myhostname ESMTP $mail_name (Ubuntu)\nsmtpd_relay_restrictions = permit_mynetworks\n    defer_unauth_destination\nmynetworks = 0.0.0.0/0\n' >"$R/etc/postfix/main.cf"
+printf '#login_greeting = Dovecot ready.\n!include conf.d/*.conf\n' >"$R/etc/dovecot/dovecot.conf"
+printf 'pool x iburst\ncmdallow 10.0.0.0/8\n' >"$R/etc/chrony/chrony.conf"
+echo '<?php phpinfo();' >"$R/var/www/html/info.php"; echo x >"$R/var/www/html/site.sql"
+echo "define('RCMAIL_VERSION', '1.5.2');" >"$R/var/lib/roundcube/program/include/iniset.php"
+_u0=$(cat "$O"/undo-*.log 2>/dev/null | grep -c .)
+out=$($SH "$C" --root "$R" --out "$O" --no-color --batch --apply --no-protected --level service --box webmail 2>&1)
+t_has "$out" "Scored on webmail: IMAP, SMTP, webmail login" "the box says what is scored"
+t_eq "$(cat "$R/etc/apache2/conf-enabled/zz-ccdc-hardening.conf" | grep -v '^#' | tr '\n' ' ')" "ServerTokens Prod ServerSignature Off TraceEnable Off <Directory /var/www/>     Options -Indexes </Directory> " "Apache drop-in: versions hidden, TRACE and listings off"
+t_has "$(cat "$R/etc/nginx/conf.d/zz-ccdc-hardening.conf")" "server_tokens off;" "nginx version hidden"
+t_has "$(cat "$R/etc/php/8.3/apache2/php.ini")" "expose_php = Off" "PHP X-Powered-By off"
+mc=$(cat "$R/etc/postfix/main.cf")
+t_has "$mc" 'smtpd_banner = $myhostname ESMTP' "Postfix greeting without the name"
+t_hasnt "$mc" "(Ubuntu)" "no OS in the greeting"
+t_has "$mc" "disable_vrfy_command = yes" "VRFY off"
+t_has "$mc" "smtpd_helo_required = yes" "HELO required (service level)"
+t_has "$mc" "    defer_unauth_destination" "continuation lines left alone"
+t_has "$out" "EVERYONE may relay mail" "open relay (mynetworks 0.0.0.0/0) reported"
+dc=$(cat "$R/etc/dovecot/dovecot.conf")
+t_has "$dc" "login_greeting = Mail server ready." "IMAP greeting without the name"
+t_has "$dc" "auth_failure_delay = 5 secs" "slower failed IMAP logins"
+t_has "$(cat "$R/etc/chrony/chrony.conf")" "#ccdc cmdallow 10.0.0.0/8" "chrony remote control off"
+t_has "$out" "no 'allow' line: chrony answers nobody" "chrony not serving time is reported"
+t_has "$out" "/var/www/html/.git: can be downloaded by anyone" ".git in the web root reported"
+t_has "$out" "/var/www/html/info.php" "phpinfo page reported"
+t_has "$out" "Roundcube 1.5.2" "Roundcube version reported"
+t_has "$out" "/var/lib/roundcube/installer" "Roundcube installer reported"
+t_ok "exposed files are only reported below access level" test -f "$R/var/www/html/info.php"
+out=$($SH "$C" --root "$R" --out "$O" --no-color --batch --apply --no-protected --level service --box webmail 2>&1)
+t_has "$out" "Nothing to change" "a second run changes nothing"
+cat "$O"/undo-*.log | awk -F'\t' -v n="$_u0" 'NR > n { l[NR] = $4 } END { for (i = NR; i > n; i--) print l[i] }' >"$T_TMP/undo30.sh"
+sh "$T_TMP/undo30.sh" >/dev/null 2>&1
+t_has "$(cat "$R/etc/postfix/main.cf")" '$mail_name (Ubuntu)' "undo puts the Postfix greeting back"
+t_fail "undo removes the Apache drop-in" test -f "$R/etc/apache2/conf-enabled/zz-ccdc-hardening.conf"
+t_has "$(cat "$R/etc/php/8.3/apache2/php.ini")" "expose_php = On" "undo puts php.ini back"
+out=$($SH "$C" --root "$R" --out "$O" --no-color --batch --apply --no-protected --level access --only web-exposed-remove 2>&1)
+t_fail "access level: info.php moved to quarantine" test -f "$R/var/www/html/info.php"
+t_fail "access level: Roundcube installer moved" test -d "$R/var/lib/roundcube/installer"
+$SH "$C" --box mars >/dev/null 2>&1; t_eq "$?" 2 "a bad --box exits 2"
+rm -rf "$R"; mkdir -p "$R/etc"
 
 t_start "nothing to do when no service is present"
 rm -f "$R/etc/vsftpd.conf" "$R/etc/ftpusers"

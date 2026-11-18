@@ -1386,6 +1386,8 @@ LX-22 SSH hardening and key cleanup - see every key and setting, keep or change 
 
   --allow-keys FILE    team keys/fingerprints: every other key is removed
   --remove-all-keys    remove every key        --keep-all-keys   keep every key
+  --box NAME           splunk | webmail | ecomm | other (asked; SSH is scored on splunk and webmail)
+  --banners / --no-banners   replace the login banners that show the OS (default yes)
   --root-login MODE    yes | no | key-only | leave
   --no-passwords       password logins OFF (key only) - careful, scoring uses passwords
   --no-forwarding      TCP forwarding and tunnels off
@@ -1405,7 +1407,7 @@ USAGE
 }
 
 # ---- Options ----------------------------------------------------------------
-ALLOWKEYS=""; KEYMODE=""; ROOTMODE=""; NOPW=""; NOFWD=""; STRONG=""; ALLOWUSERS=""; AUSET=0; BANNER=""
+BOX=""; BANNERS=""; ALLOWKEYS=""; KEYMODE=""; ROOTMODE=""; NOPW=""; NOFWD=""; STRONG=""; ALLOWUSERS=""; AUSET=0; BANNER=""
 SETS=""; TIMER=120; NOTIMER=0; NORELOAD=0; R=""; COLOR=1
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
@@ -1413,6 +1415,9 @@ while [ $# -gt 0 ]; do
         --allow-keys)      [ $# -ge 2 ] || cc_die 2 "--allow-keys needs a file"; [ -r "$2" ] || cc_die 2 "--allow-keys: cannot read $2"; ALLOWKEYS=$2; KEYMODE=allow; shift 2 ;;
         --remove-all-keys) [ "$KEYMODE" = allow ] && cc_die 2 "use --allow-keys or --remove-all-keys, not both"; KEYMODE=all; shift ;;
         --keep-all-keys)   KEYMODE=keep; shift ;;
+        --box)             [ $# -ge 2 ] || cc_die 2 "--box needs splunk, webmail, ecomm or other"; BOX=$2; shift 2 ;;
+        --banners)         BANNERS=Y; shift ;;
+        --no-banners)      BANNERS=N; shift ;;
         --root-login)      [ $# -ge 2 ] || cc_die 2 "--root-login needs yes, no, key-only or leave"; ROOTMODE=$2; shift 2 ;;
         --no-root-login)   ROOTMODE=no; shift ;;
         --root-key-only)   ROOTMODE=key-only; shift ;;
@@ -1433,6 +1438,7 @@ while [ $# -gt 0 ]; do
         *)                 cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
+case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
 case "$ROOTMODE" in y|yes) ROOTMODE=yes ;; n|no) ROOTMODE=no ;; k|key-only) ROOTMODE=key-only ;; l|leave) ROOTMODE=leave ;; '') ;; *) cc_die 2 "--root-login must be yes, no, key-only or leave" ;; esac
 case "$TIMER" in ''|*[!0-9]*) cc_die 2 "--timer needs a whole number of seconds" ;; esac
 for _s in $SETS; do
@@ -1611,6 +1617,15 @@ yn() {
     cc_choose "$1" "$2" "y=$3" "n=$4"
     [ "$CC_CHOICE" = y ]
 }
+if [ -z "$BOX" ]; then
+    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "o=other"
+    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
+fi
+SCORED=0
+case "$BOX" in splunk|webmail)
+    SCORED=1
+    cc_show "$C_YEL" "  SSH is SCORED on $BOX ($BOX-ssh): the scoring engine logs in, probably with a password. Password logins stay on and nothing here blocks it unless you say so." ;;
+esac
 # Keys, one by one, unless a flag already decided.
 : >"$W/keydec"
 while IFS='|' read -r _n _u _uid _f _ln _t _b _c _o _fp _v _why _d _act; do
@@ -1677,12 +1692,16 @@ q maxauth  MaxAuthTries 4 6 Y "Limit password/key tries per connection to 4?" "S
 q grace    LoginGraceTime 30 120 Y "Drop connections that have not logged in after 30 seconds?" "Stops half-open connections piling up. A person typing a password has plenty of time."
 q alive    ClientAliveInterval 300 0 Y "Check idle sessions every 5 minutes and drop dead ones?" "Cleans up abandoned sessions (ClientAliveInterval 300, ClientAliveCountMax 2). Open sessions you use stay up."
 grep -q '^ClientAliveInterval' "$W/lines" && printf 'ClientAliveCountMax 2\n' >>"$W/lines"
+q maxstart MaxStartups 10:30:60 10:30:100 Y "Drop floods of half-open logins (MaxStartups 10:30:60)?" "Logins still typing a password beyond 10 are dropped at random, all at 60. Slows brute force; normal logins are not affected."
+if [ -f "$R/etc/debian_version" ]; then
+    q debbanner DebianBanner no yes Y "Hide the OS version in the SSH greeting (DebianBanner no)?" "The greeting now says which Ubuntu/Debian build this is. The OpenSSH version itself stays: it cannot be hidden without rebuilding sshd."
+fi
 q loglevel LogLevel VERBOSE info Y "Log the fingerprint of the key used at every login (LogLevel VERBOSE)?" "Then the auth log (and LX-41) shows which key got in. Only adds log lines."
 # The ones that can break something are asked with default no.
 _pw=$(cur passwordauthentication yes)
 if [ "$_pw" = yes ]; then
     cc_show "$C_GRY" "        Key-only logins stop password guessing completely, but scoring engines usually log in with a PASSWORD: that check would fail."
-    if [ "$NOPW" = Y ] || { [ -z "$NOPW" ] && yn "Turn OFF password logins (key only)? (now: yes)" N "yes, keys only (a scoring check that logs in with a password will FAIL)" "no, keep password logins"; }; then
+    if [ "$NOPW" = Y ] || { [ -z "$NOPW" ] && yn "Turn OFF password logins (key only)? (now: yes)" N "yes, keys only ($([ "$SCORED" = 1 ] && echo "the scored SSH check on $BOX WILL FAIL" || echo "a scoring check that logs in with a password will FAIL"))" "no, keep password logins"; }; then
         printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' >>"$W/lines"
         awk -F'|' '$11 == "keep" && $12 != 0' "$W/keydec" | grep -q . || cc_show "$C_RED" "  [!] No account except root keeps a key: after this, only root can log in (with a key)."
     fi
@@ -1699,6 +1718,7 @@ if [ "$STRONG" = Y ] || { [ -z "$STRONG" ] && yn "Allow only modern ciphers, key
     printf 'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr\n' >>"$W/lines"
     printf 'MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256\n' >>"$W/lines"
 fi
+[ "$SCORED" = 1 ] && [ "$AUSET" = 0 ] && cc_show "$C_YEL" "        SSH is scored here: if you limit accounts, include the one the scoring engine logs in with."
 if [ "$AUSET" = 0 ]; then
     cc_show "$C_GRY" "        AllowUsers: ONLY the accounts listed may log in by SSH. Strong, but easy to lock out the scoring engine or yourself."
     cc_ask_text "Only these accounts may log in by SSH? Type the names separated by spaces, or press Enter for no limit" ""
@@ -1713,6 +1733,19 @@ if [ -n "$ALLOWUSERS" ]; then
     fi
     printf 'AllowUsers %s\n' "$_au" >>"$W/lines"
 fi
+# Login banners: /etc/issue and /etc/issue.net name the OS and version, and
+# the update-motd scripts print more after login.  Replaced with a plain
+# warning; the SSH pre-login banner shows the same text.
+BANNER_TEXT="Authorized use only. All activity on this system is monitored and logged."
+_issue_os=$(cat "$R/etc/issue" "$R/etc/issue.net" 2>/dev/null | grep -iE 'ubuntu|debian|centos|red hat|fedora|alpine|rocky|alma|suse|kernel|\\[rmsvn]' | head -n 1)
+_motd_x=$(find "$R/etc/update-motd.d" -type f -perm -u+x 2>/dev/null | grep -c .)
+if [ -z "$BANNERS" ]; then
+    if [ -n "$_issue_os$(grep -c . "$R/etc/issue" 2>/dev/null | grep -v '^0$')" ] || [ "$_motd_x" -gt 0 ]; then
+        cc_show "$C_GRY" "        The login banners tell the red team the OS and version${_issue_os:+ (now: $_issue_os)}."
+        if yn "Replace the login banners with a plain warning?" Y "yes, replace /etc/issue, /etc/issue.net, show it before SSH login, and turn off the update-motd scripts" "no, leave them"; then BANNERS=Y; else BANNERS=N; fi
+    else BANNERS=N; fi
+fi
+[ "$BANNERS" = Y ] && [ -z "$BANNER" ] && printf 'Banner /etc/issue.net\n' >>"$W/lines"
 case "$ROOTMODE" in yes) printf 'PermitRootLogin yes\n' >>"$W/lines" ;; no) printf 'PermitRootLogin no\n' >>"$W/lines" ;; key-only) printf 'PermitRootLogin prohibit-password\n' >>"$W/lines" ;; esac
 [ -n "$BANNER" ] && printf 'Banner %s\n' "$BANNER" >>"$W/lines"
 
@@ -1733,6 +1766,14 @@ NRM=$(awk -F'|' '$11 == "remove"' "$W/keydec" | grep -c .)
 NKEEP=$(awk -F'|' '$11 == "keep"' "$W/keydec" | grep -c .)
 [ "$NRM" -gt 0 ] && awk -F'|' '$11 == "remove" { printf "  [~] remove key #%s (%s, %s, %s) from %s\n", $1, $2, $6, ($7 == "" ? "no comment" : $7), $3 }' "$W/keydec" >"$W/rmshow" && while IFS= read -r _l; do cc_show "$C_YEL" "$_l"; done <"$W/rmshow"
 [ -s "$W/rcq" ] && while IFS= read -r _f; do cc_show "$C_YEL" "  [~] move $_f to quarantine"; done <"$W/rcq"
+NBAN=0
+if [ "$BANNERS" = Y ]; then
+    for _f in /etc/issue /etc/issue.net; do
+        [ "$(cat "$R$_f" 2>/dev/null)" = "$BANNER_TEXT" ] && continue
+        NBAN=$((NBAN + 1)); cc_show "$C_YEL" "  [~] $_f -> \"$BANNER_TEXT\""
+    done
+    if [ "$_motd_x" -gt 0 ]; then NBAN=$((NBAN + 1)); cc_show "$C_YEL" "  [~] turn off $_motd_x update-motd script(s) (chmod -x; they print the OS after login)"; fi
+fi
 cc_show "" "  Keys: $NKEEP kept, $NRM removed.  Password logins: $(grep -q '^PasswordAuthentication no' "$W/lines" && echo 'turned OFF' || echo 'left on')."
 KCSV=$(cc_csv_new keys "number,user,file,type,fingerprint,comment,options,verdict,why,action")
 while IFS='|' read -r _n _u _f _ln _t _fp _c _o _v _why _act _uid; do
@@ -1760,7 +1801,7 @@ fi
 header "5/5  apply"
 [ "$_cfg_status" = "already in place" ] && NSET=0
 NRC=$(grep -c . "$W/rcq" 2>/dev/null); case "$NRC" in ''|*[!0-9]*) NRC=0 ;; esac
-NCH=$((NSET + NRM + NRC))
+NCH=$((NSET + NRM + NRC + NBAN))
 APPLIED=0; TIMER_ON=0; _reload="not needed"
 result() { if [ "$1" -eq 0 ]; then echo changed; else echo failed; fi; }
 sshd_listening() {
@@ -1803,6 +1844,20 @@ else
         cc_quarantine "$R$_f"; _rc=$?
         if [ "$_rc" -eq 0 ]; then cc_show "$C_GRN" "  [+] moved $_f to quarantine"; elif [ "$_rc" -eq 4 ]; then cc_show "$C_YEL" "  [-] $_f is protected: left alone"; else cc_show "$C_RED" "  [x] could not move $_f"; fi
     done <"$W/rcq"
+    if [ "$BANNERS" = Y ] && [ "$NBAN" -gt 0 ]; then
+        for _f in /etc/issue /etc/issue.net; do
+            [ "$(cat "$R$_f" 2>/dev/null)" = "$BANNER_TEXT" ] && continue
+            if [ -f "$R$_f" ]; then cc_backup_file "$R$_f" || continue
+            else cc_undo_add "remove $_f (made by LX-22)" "rm -f $(cc_shquote "$R$_f")"; fi
+            if cc_run "write the plain banner to $_f" sh -c 'printf "%s\n" "$1" >"$2"' sh "$BANNER_TEXT" "$R$_f"; then cc_show "$C_GRN" "  [+] $_f: plain warning, no OS name"
+            else cc_show "$C_RED" "  [x] could not write $_f"; fi
+        done
+        find "$R/etc/update-motd.d" -type f -perm -u+x 2>/dev/null | while IFS= read -r _m; do
+            cc_undo_add "turn $_m back on" "chmod +x $(cc_shquote "$_m")"
+            cc_run "turn off $_m" chmod -x "$_m" || cc_show "$C_RED" "  [x] could not change $_m"
+        done
+        [ "$_motd_x" -gt 0 ] && cc_show "$C_GRN" "  [+] $_motd_x update-motd script(s) turned off (chmod -x)"
+    fi
     # sshd_config: installed only if it passed sshd -t.
     case "$_cfg_status" in
         "ready"*)
