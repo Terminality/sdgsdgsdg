@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Site backup and restore (SV-15, new)
+
+- **backup**: every site the web servers serve plus `/var/www`: files (archive + a hash of every file), the site's database read from its app config (WordPress, Joomla, Drupal, PrestaShop, OpenCart, Magento, Roundcube, `.env`), web server and PHP configs. Private `site-backup-N/` folder, optional copy off the box.
+- **check**: what changed since the backup: changed (defaced pages, edited code, `.htaccess` HIGH), deleted, new (program files HIGH: web shell?), and changed web server configs. Changes nothing.
+- **restore**: per site `[a]` all back, `[f]` files only, `[q]` quarantine new files, `[n]` nothing, plus the database if you say so. Only what changed is touched; the current state is saved first; revert timer; checks the site matches afterwards. A wiped site folder is rebuilt.
+- Tested: 46 checks under seven shells and three awks (plus the database with real MariaDB: changed, restored, reverted). Found on the way: in ksh/mksh an unquoted `|` in `${x%%|*}` is a pattern "or".
+
 ## 2026-11-18: Web and database enum rebuilt (SV-01 v2)
 
 - New look, same as the Linux enum: numbered sections with titles, flags shown live (`[!] FIX`, `[*] LOOK`), what was found in green, coloured summary. Run folder `web-enum-N/` with output.txt, a `.txt` table per result and CSVs in `csv/`.

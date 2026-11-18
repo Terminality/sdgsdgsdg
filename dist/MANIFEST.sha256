@@ -1,6 +1,7 @@
 987f58b91cedc3f9d69554878972e718dd60878f6777f7b2e5a942b6e6ed48a6  README.md
 e21f0b653aa9b2b212be22e235080b29dd4dcb193d277a04e47032fc7641883c  applications/SV-01-web-db-enum.sh
 c64336bcfeedf2356e58336ab2103b3978c20f97dab83a46af7cdae7f6637ffa  applications/SV-14-db-backup.sh
+5583903338a4d4164ab260c2e8b81832d92758c088737375f41e3b2d0b6cd3a3  applications/SV-15-site-backup.sh
 ed6ef3ddc83a88d64f2b484ebfd36534c70ed77c79d24ea0d65773ba8d1c0a8d  applications/SV-30-service-hardening.sh
 deee97cd0b7b41c2739f99f3a73b1db65d77e7a627f3b097dfc5ebb375db35ad  linux/LX-20-password-rotation.sh
 df56e0db4682630f76223a9deb9743cb5c8086aeaf7e5981afc7718441b6eb70  linux/LX-22-ssh-hardening.sh

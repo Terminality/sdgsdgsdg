@@ -40,6 +40,7 @@ Contents:
 30. Linux session & command logging, `roles/linux/LX-41-session-log.sh` (LX-41)
 31. Service hardening (FTP + legacy), `roles/applications/SV-30-service-hardening.sh` (SV-30)
 32. Linux persistence sweep, `roles/linux/LX-42-persistence-sweep.sh` (LX-42)
+33. Site backup and restore, `roles/applications/SV-15-site-backup.sh` (SV-15)
 
 ---
 
@@ -2273,4 +2274,62 @@ With `--apply` it asks about each HIGH and MED finding that can be removed. File
 ### Outputs
 
 In `persistence-N/`: `output.txt`, `summary.txt` (counts per area, HIGH and MED list), `findings.txt` (every finding, numbered), `csv/`, `quarantine/`, `revert.sh`. No password hash is ever written.
+
+---
+
+## 33. Site backup and restore, `roles/applications/SV-15-site-backup.sh` (SV-15)
+
+Keeps every web site restorable. It backs up each site's files and database, checks a site against the backup at any time, and puts back **only what changed** when the red team defaces a page, deletes files, plants a web shell or wipes the database. Your own fixes elsewhere stay put.
+
+**Back up after cleaning.** A web shell that is already there goes into the backup and looks normal to the check. Run SV-01 first.
+
+### How to run it
+
+```sh
+sudo sh SV-15-site-backup.sh                                   # asks what to do
+sudo sh SV-15-site-backup.sh --backup --batch                  # back up every site
+sudo sh SV-15-site-backup.sh --check --batch                   # what changed? (changes nothing)
+sudo sh SV-15-site-backup.sh --restore                         # dry run: shows what it would put back
+sudo sh SV-15-site-backup.sh --restore --protected p.csv --apply
+```
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| What do you want to do? | `[b]` back up, `[c]` check, `[r]` restore (default: back up if there is no backup yet, else check) | `--backup` / `--check` / `--restore` |
+| Which sites? (backup) | all, or names | `--site NAME` |
+| Back up each site's database too? | yes / no | `--db` / `--no-db` |
+| Copy the backup off the box? | an scp destination | `--copy-to DEST` |
+| Per site (restore) | `[a]` all back to the backup, `[f]` files only, `[q]` quarantine new files only, `[n]` nothing | `--what all/files/new/none` |
+| Put the database back too? (restore) | yes / no (default no) | `--restore-db` / `--no-restore-db` |
+
+### What it does
+
+- **Finds the sites** from the Apache and nginx configs, every folder in `/var/www`, and `--webroot DIR`.
+- **Finds each site's database** in the app's own config: WordPress, Joomla, Drupal, PrestaShop, OpenCart, Magento, Roundcube or `.env`. MySQL/MariaDB and PostgreSQL are dumped. SQLite files are already in the file archive. A database on another host is reported, not dumped.
+- **Backup** writes `site-backup-N/`. For each site: `files.tar.gz`, a hash of every file (`files.sha256`) and the database dump. Once per box: the Apache, nginx and PHP configs. The folder is mode 700, because it holds dumps and passwords.
+- **Check** compares each site with the newest backup (or `--from DIR`):
+  - **CHANGED** files: a page means "defaced?", code means "backdoor added?", and a changed `.htaccess` is HIGH
+  - **DELETED** files
+  - **NEW** files: a new `.php`/`.jsp`/`.asp`/`.sh` is HIGH ("web shell?"), anything else LOW
+  - changed web server and PHP config files
+- **Restore** does the same comparison, then for each site puts back changed and deleted files (owners and modes kept), moves new files to quarantine, and loads the database if you said so. The current files and database are saved first, and a revert timer runs. Afterwards it checks again that the site matches. A site whose files are unchanged is still offered a database restore.
+
+### What to watch for
+
+- **Real uploads since the backup show as NEW.** They are moved to quarantine, not deleted, so look before saying `[a]`, or use `[f]`.
+- **Database restore loses everything since the backup**, including real orders or mail. The current database is saved in `before/` and the revert puts it back.
+- **Web server configs are reported, not restored,** because a bad config breaks the site on restart. `RESTORE.txt` in the backup shows how to put one back and test it.
+- **Permissions are not compared,** only content. LX-40 watches for permission changes.
+- **Back up again after big fixes,** so the check compares against the clean state. `--keep N` drops old backups.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `no site backup found` (exit 3) | No `--backup` yet in this `--out` | Run `--backup` first, or `--from DIR` |
+| `database ...: could not log in` | root cannot log in through the socket | `--mysql-cnf FILE` with a `[client]` user and password |
+| The backup is too big | Media or caches | `--exclude '*/cache/*'`, or raise `--max-mb` |
+| A site is missing | Its folder is outside the usual places | `--webroot DIR` |
 
