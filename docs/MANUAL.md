@@ -56,6 +56,7 @@ Contents:
 46. Rootkit and malware scan, `roles/linux/LX-45-rootkit-scan.sh` (LX-45)
 47. AppArmor confinement, `roles/linux/LX-44-apparmor.sh` (LX-44)
 48. Safe security updates, `roles/linux/LX-46-safe-updates.sh` (LX-46)
+49. TLS certificate check, `roles/applications/SV-32-tls-check.sh` (SV-32)
 
 ---
 
@@ -3223,3 +3224,53 @@ In `updates-N/`: `output.txt`, `sources.txt`, `updates.txt`, `versions-before.tx
 - **The check sees ports, the web page and the database, not every feature.** Click through the site after the web or PHP group.
 - **Updates restart services.** A scoring check in those seconds fails. Do it early, one group at a time.
 - **Not yet tried on a real Red Hat box** (the dnf path) or with a real update and rollback; the tests use stand-ins.
+
+## 49. TLS certificate check, `roles/applications/SV-32-tls-check.sh` (SV-32)
+
+HTTPS, IMAPS and SMTP all hang on a certificate and its private key. Red team swaps the certificate, steals a key anyone can read, or turns old TLS back on. This checks the files, what each port really serves, and whether anything changed.
+
+### How to run it
+
+```sh
+sudo sh SV-32-tls-check.sh                                  # look, dry run
+sudo sh SV-32-tls-check.sh --protected p.csv --apply        # asks each fix
+sudo sh SV-32-tls-check.sh --protected p.csv --apply --batch
+```
+
+Run it once early: the first run saves the fingerprints as the baseline (`tls-baseline-HOST.txt` in `--out`). Later runs flag a certificate that changed.
+
+### What it checks
+
+| Where | Found |
+| --- | --- |
+| Certificate files (Apache, nginx, Dovecot, Postfix, vsftpd, MariaDB configs) | Missing; expired `[!]` or ending within `--days` (14); not matching its key `[!]`; self-signed; key under 2048 bits; SHA-1/MD5 signature |
+| Key files | Readable by every user `[!]`; readable by an odd group; not owned by root; needs a passphrase |
+| Ports (443, 8443, 993, 995, 465; STARTTLS on 25, 587, 143, 110, 21, 3306; `--port`) | The certificate really served, and which file it is; TLS 1.0/1.1 accepted; weak ciphers (RC4, 3DES, NULL, anonymous) accepted; IMAP, POP3 or FTP with no TLS at all (passwords in clear text) |
+| Baseline | A certificate whose fingerprint changed since the first run `[!]` |
+
+### The questions
+
+| Finding | Answers | Flag |
+| --- | --- | --- |
+| A certificate with problems (all of them in one question) | `[n]ew self-signed` / `[l]eave`; default new only if it was self-signed already, so a CA-signed one is never replaced on its own | `--batch` |
+| A key others can read | `[f]ix` (default: 600, or 640 when its group is a service group such as ssl-cert or mysql) / `[l]eave` | `--batch` |
+| A port with old TLS or weak ciphers | `[f]ix the config` (default) / `[l]eave` | `--batch` |
+| Changed since the baseline | `[k]eep flagging` (default) / `[u]se as the new baseline` | `--batch` |
+| Apply? | `[y]` / `[n]` | `--apply` |
+
+### What it changes
+
+Only with `--apply`. Every change has an undo line (the old files are backed up first).
+
+- **New self-signed**: same name (CN), RSA 2048, SHA-256, one year; the services using it are reloaded.
+- **TLS config**: Apache `SSLProtocol all -SSLv3 -TLSv1 -TLSv1.1` + `SSLCipherSuite HIGH:!aNULL:!MD5:!3DES:!RC4`; nginx `ssl_protocols TLSv1.2 TLSv1.3`; Dovecot `ssl_min_protocol = TLSv1.2`; Postfix `smtpd_tls_protocols` / `smtpd_tls_mandatory_protocols` without TLS 1.0/1.1 and `smtpd_tls_exclude_ciphers`. Checked with the service's own config test, reloaded, then a TLS 1.2 connection: if the port stops answering, the old config is put back.
+
+### What it produces
+
+In `tls-N/`: `output.txt`, `certs.txt` (each certificate), `served.txt` (each port), `findings.txt`, `summary.txt`. The baseline holds fingerprints only, never a key.
+
+### What to watch for
+
+- **A new self-signed certificate makes browsers warn**, and a scoring check that verifies certificates fails. Tell the team before you replace a CA-signed one.
+- **Old TLS off can lock out a very old client.** Rare, but check the scoring results after.
+- A port served by a program the script does not know (not Apache, nginx, Dovecot, Postfix): pass `--port PORT:tls:SERVICE` to say whose config it is, or fix it by hand.
