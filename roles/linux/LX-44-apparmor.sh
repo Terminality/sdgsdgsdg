@@ -412,7 +412,7 @@ back_off() {
 # svc_restart_cmd UNITS -> a shell line that restarts the running one (for the undo)
 svc_restart_cmd() {
     [ -z "$R" ] || { printf ':'; return; }
-    printf 'for u in %s; do if command -v systemctl >/dev/null 2>&1; then systemctl try-restart "$u" 2>/dev/null; elif [ -x "/etc/init.d/$u" ]; then service "$u" restart; fi; done' "$1"
+    printf 'for u in %s; do if [ -d /run/systemd/system ]; then systemctl try-restart "$u" 2>/dev/null; elif [ -x "/etc/init.d/$u" ]; then service "$u" restart; fi; done' "$1"
 }
 NOK=0; NBAD=0; APPLIED=0; TIMER_ON=0
 if [ "$NCH" -eq 0 ]; then :
