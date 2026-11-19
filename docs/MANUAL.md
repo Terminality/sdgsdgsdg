@@ -59,6 +59,7 @@ Contents:
 49. TLS certificate check, `roles/applications/SV-32-tls-check.sh` (SV-32)
 50. Device accounts and sessions, `roles/network/NW-12-device-sessions.sh` (NW-12)
 51. Network device hardening, `roles/network/NW-21-device-hardening.sh` (NW-21)
+52. Firewall ruleset, `roles/network/NW-20-firewall-ruleset.sh` (NW-20)
 
 ---
 
@@ -3386,3 +3387,88 @@ In `device-hardening-N/`: `output.txt`, `findings.txt`, `plan.txt`, `summary.txt
 - **The management limit locks out anyone outside `--team`**, including a scoring engine that logs in to the device. Put its address in `--team`, or the device on the protected list.
 - **The confirm countdown only expires by itself in shells with `read -t`** (bash, ksh, mksh, yash, busybox); in dash it waits for an answer.
 - **If this script is killed during the countdown**, the open session dies with it and the changes stay (Cisco and VyOS: unsaved, a reload undoes them).
+
+## 52. Firewall ruleset, `roles/network/NW-20-firewall-ruleset.sh` (NW-20)
+
+Puts a short set of named `bt-` rules at the TOP of the network firewall, so from outside only the scored services can be reached. The old rules stay where they were (below), nothing is deleted, and everything can be taken out again.
+
+### How to run it
+
+```sh
+sh SH-03-netscan.sh --hosts config/hosts.csv                                     # first: the ports to offer
+BT_NET_PASS='pw' sh NW-20-firewall-ruleset.sh --device fw1,10.0.0.1,paloalto --team 10.0.0.0/24            # look, dry run
+BT_NET_PASS='pw' sh NW-20-firewall-ruleset.sh --device fw1,10.0.0.1,paloalto --team 10.0.0.0/24 --apply    # asks each step
+BT_NET_PASS='pw' sh NW-20-firewall-ruleset.sh --device fw1,10.0.0.1,paloalto --remove --apply              # take it all out
+```
+
+Run NW-01 before (backup) and after. The scored boxes come from `--allow ADDR:PORTS` (repeat), from `--file LIST.txt` (one box per line: `10.0.0.5  80 443 53/udp  # webmail`), from the newest SH-03 scan (offered port by port), or typed in.
+
+### The rules
+
+| Rule | Default | What it does |
+| --- | --- | --- |
+| `bt-team` | on | Your team's addresses (`--team`) may reach anything |
+| `bt-in-ADDR` | on | ANY address to each scored box, its scored ports only (any address, so the scoring engine always gets through) |
+| `bt-ping` | on | Ping in to the scored boxes (every box has a ping check) |
+| `bt-in-block` | on | Everything else coming in from outside: blocked and logged |
+| `bt-out-ADDR` | off | With outgoing limits: the servers may start connections only to DNS (`--dns`), NTP (`--ntp`) and what you list (`--out-allow`) |
+| `bt-out-block` | off | With outgoing limits: anything else the servers start is blocked and logged (stops web-shell callbacks, reverse shells and most exfil) |
+| threat prevention | off | Palo Alto: virus, spyware, vulnerability profiles; FortiGate: IPS and AV, on the scored rules |
+
+Replies to allowed connections always pass, so a scored service still answers when outgoing limits are on.
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Each port from the SH-03 scan: reachable from outside? | `[k]eep` open / `[b]lock` (scored-looking ports default keep) | `--allow`, `--file` |
+| Is this list of scored boxes and ports right? | `[Y/n]` | `--batch` |
+| Your team's addresses | typed | `--team` |
+| Limit what the scored servers can START out? | `[y/N]`, then DNS, NTP, more places | `--restrict-out`, `--dns`, `--ntp`, `--out-allow` |
+| Threat prevention on the scored rules? | `[y/N]` | `--threat` |
+| Each rule, in plain words | `[K/s]` keep / skip | `--batch` |
+| Which zone / interface is outside, which has the servers | picked from the device's list | `--outside`, `--inside` |
+| Nothing answers from here: go on anyway? | `[y/N]` | |
+| Put these rules on DEVICE now? | `[Y/n]` | `--apply` |
+| Check the SCOREBOARD: keep them? | `[Y/n]` within `--timer` seconds (120), else put back | `--batch` keeps |
+| With `--remove`: take NW-20's rules off DEVICE now? | `[Y/n]` | `--apply` |
+
+### Per brand
+
+| Brand | What is sent | Taken out by |
+| --- | --- | --- |
+| Palo Alto | service objects, `bt-` security rules moved to the top, `commit` | deleting the `bt-` rules and services, `commit` |
+| Cisco ASA | access list `BT-IN` bound to the outside interface (it takes the place of the old one); with outgoing limits `BT-OUT` on the inside, ending `permit ip any any`; `write memory` | the old access list bound again, `BT-IN` / `BT-OUT` cleared |
+| FortiGate | address objects `bt-a-ADDR`, services, policies 9101 and up, moved before the first other policy | the policies, then the services, then the addresses deleted |
+| MikroTik | forward-chain rules with comments `bt-...`, placed on top | `/ip firewall filter remove [find comment~"^bt-"]` |
+| Linux router | its own nftables table `inet bt_fw` (forward hook, runs before the others), checked with `nft -c` first | `nft delete table inet bt_fw` |
+| pfSense / OPNsense | the plan as web GUI steps in `plan.txt` | by hand |
+| Cisco IOS / VyOS | the plan in `plan.txt`, not applied | by hand |
+
+NAT: Palo Alto and FortiGate match the OUTSIDE address of a box. Their NAT rules and virtual IPs that lead to a scored box are read, and those names are added to its rules (shown, and listed in `plan.txt`). ASA, MikroTik and Linux match the inside address.
+
+### How the firewall is changed
+
+1. Every scored box:port and ping is tried from this box. If nothing answers, it stops and asks.
+2. One session to the firewall stays open; the rules go in through it.
+3. After `--wait` seconds (Palo Alto: up to `--commit-wait`) the same tries run again. Anything that answered before and no longer does: everything is put back at once, by itself, through the open session. The same happens if the commands failed or a new login fails.
+4. It asks you to check the scoreboard. No answer in time, or `n`: put back.
+
+### Putting it back later
+
+- `sh firewall-ruleset-N/undo/DEVICE.sh` (needs `BT_NET_PASS`), or
+- `sh NW-20-firewall-ruleset.sh --device ... --remove --apply` (uses `nw20-DEVICE.undo` in `--out`, kept between runs).
+
+Running it again replaces the earlier `bt-` rules; the ASA undo still puts the ORIGINAL access list back.
+
+### What it produces
+
+In `firewall-ruleset-N/`: `output.txt`, `scored.txt`, `plan.txt` (every rule in plain words, per device), `commands-DEVICE.txt` (exactly what is sent), `checks.txt` (before and after), `summary.txt`, `undo/DEVICE.sh`.
+
+### What to watch for
+
+- **Not yet run on a real Palo Alto, ASA, FortiGate or MikroTik.** The commands follow each brand's documentation. Run without `--apply`, read `plan.txt` and `commands-DEVICE.txt`, then `--apply` on ONE firewall.
+- **A missed scored port is blocked.** Check the list against the competition packet before saying yes.
+- **The checks run from this box.** If this box is inside, its tries may not cross the firewall: watch the scoreboard during the countdown.
+- **Outgoing limits** stop updates and anything the servers fetch (package mirrors, an outside database). List those with `--out-allow`, or leave the limits off.
+- **The countdown only expires by itself in shells with `read -t`** (bash, ksh, mksh, yash, busybox); dash waits for the answer.

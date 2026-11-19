@@ -2,6 +2,14 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-19: Firewall ruleset (NW-20, new)
+
+- **NW-20** puts named `bt-` rules at the top of the network firewall (Palo Alto, Cisco ASA, FortiGate, MikroTik, a Linux router; pfSense/OPNsense as web GUI steps; Cisco IOS/VyOS as a plan): team allowed, any address to each scored box on its scored ports only, ping in, everything else in blocked and logged. Optional, default no: outgoing limits (servers may only start connections to DNS, NTP and listed places) and threat prevention.
+- Scored boxes from `--allow`, a plain `.txt` list (`--file`), the newest SH-03 scan (offered port by port) or typed in. No CSV needed.
+- Asks about the list, the team, each rule, the outside and inside zones, and each firewall. Every scored service is tried before and after; one that stops answering puts everything back at once. Then you confirm against the scoreboard within `--timer` seconds, else put back. Undo script per device and `--remove`.
+- Palo Alto and FortiGate: NAT rules and virtual IPs leading to a scored box are read and added to its rules.
+- Tested: 105 checks with a stand-in firewall for every brand (one that breaks a scored service, so the put-back is real) under seven shells and three awks; the real `nft` accepts the Linux ruleset; live on a Linux router. Not yet on real firewalls.
+
 ## 2026-11-19: Network device hardening (NW-21, new)
 
 - **NW-21** reads each firewall, router and switch (Cisco IOS and ASA, Palo Alto, FortiGate, VyOS, MikroTik) and checks: telnet and plain HTTP management, management open to any address, SSH version 1, idle timeout, default SNMP communities (others reported, value never shown), MikroTik MAC telnet/WinBox, log server (`--log-host`), time server (`--ntp`), login banner, Cisco password encryption.
