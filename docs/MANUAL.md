@@ -45,6 +45,7 @@ Contents:
 35. PHP and web app hardening, `roles/applications/SV-21-web-hardening.sh` (SV-21)
 36. Database password rotation, `roles/applications/SV-42-db-passwords.sh` (SV-42)
 37. Mail password rotation, `roles/applications/SV-40-mail-passwords.sh` (SV-40)
+38. Service recovery, `roles/applications/SV-50-service-recovery.sh` (SV-50)
 
 ---
 
@@ -2590,3 +2591,73 @@ In `mail-passwords-N/` (mode 700): `output.txt`, `users.txt`, `plan.txt`, `summa
 | `no mail users found` | System accounts have no mailbox yet | `--all-accounts` |
 | `failed: the new password did not log in` | IMAP refused it (wrong passdb order, a deny list) | The old password is back; check `doveconf -n` |
 | `login not tested here` | No IMAP on 993/143, or openssl missing | Log in from the webmail yourself |
+
+## 38. Service recovery, `roles/applications/SV-50-service-recovery.sh` (SV-50)
+
+Run this when a scored service goes red. It checks every service on the box the same way, finds **why** it's down, and offers the fix. A plain restart often fails because red team broke something underneath.
+
+Services: web (apache2, httpd, nginx), php-fpm, database (mariadb, mysql, postgresql), mail (dovecot, postfix), splunk, ssh, time (chrony, ntp). Only the ones installed are checked. With two web servers, only the one in use counts.
+
+### How to run it
+
+```sh
+sudo sh SV-50-service-recovery.sh                                    # check everything, dry run
+sudo sh SV-50-service-recovery.sh --protected p.csv --apply          # check and fix (asks each fix)
+sudo sh SV-50-service-recovery.sh --protected p.csv --apply --batch --services web,mysql
+sudo sh SV-50-service-recovery.sh --protected p.csv --watch 30 --auto-restart --apply   # keep it running
+```
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Check which services? | `[a]ll` found / `[s]` only the scored ones for this box | `--services` |
+| Each fix | `[y]` / `[n]` | `--fix KINDS` answers yes for those kinds |
+
+### What it checks, per service
+
+| Check | Found | Fix offered |
+| --- | --- | --- |
+| Running? | stopped, failed | start / restart (**only if the config test passes**) |
+| Masked / disabled at boot? | masked, or disabled when scored | unmask, enable |
+| Config loads? | `apache2ctl -t`, `nginx -t`, `php-fpm -t`, `postfix check`, `doveconf`, `sshd -t` | none: error lines shown, never restarted on a broken config |
+| Port | another program holds it | stop it (default yes if it runs from /tmp, /dev/shm or a deleted file) |
+| Answers? | HTTP status (5xx with a DB error points at the database), IMAP/SMTP/SSH banners, DB ping, chronyc | restart if running but not answering |
+| Firewall | iptables DROP/REJECT on the port; nftables shown | remove the rule |
+| Tampered | config changed in the last 2 hours, systemd override (`ExecStart=/bin/true`), package files changed (`dpkg -V`) | shown with what to do (SV-15 restore, `apt-get install --reinstall`) |
+
+**For the whole box:** disk or inodes full, `/tmp` not writable or wrong mode, programs killed for lack of memory.
+
+Fixes run in order: unmask, firewall, kill, enable, start. Each fixed service is tested again (up to 10 s).
+
+### Watch mode (the automation)
+
+`--watch 30` checks every 30 seconds and prints a line the moment a service goes down or comes back, with the reason. Everything is also logged to `watch.txt`.
+
+Adding `--auto-restart --apply` restarts what goes down, but only if its config test passes. It stops after 3 restarts in 10 minutes and tells you, so a crash loop isn't hidden. Run it in a spare terminal or `tmux` for the whole competition.
+
+### Safety
+
+- Dry run unless `--apply`. A protected list is needed like every change script (`--no-protected` to skip).
+- **No revert timer**: these fixes bring services up, and undoing them would take them down again. Unmask, enable and firewall changes still have undo lines (`revert.sh`).
+- A config error is never "fixed" by guessing: it's shown so you can fix it, or restore it with SV-15.
+
+### What it produces
+
+In `recovery-N/`: `output.txt`, `status.txt` (every check for every service), `summary.txt`, `watch.txt` (with `--watch`), `revert.sh`.
+
+### What to watch for
+
+- **Up here, down on the scoreboard:** the box answers but something in between doesn't. Check the network firewall (NW scripts) and that the scoring IP isn't banned (`SV-26 --unban-all`).
+- **A defaced or wiped site still answers 200.** Use `SV-15 --check`.
+- **A program on the port that is yours** (a second web server, a proxy): answer `n` to stopping it.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `config test FAILS` | A bad config line (red team, or a hardening script) | Fix the line shown, or `SV-15 --restore`, then run again |
+| `still DOWN` after start | Something the checks don't cover | The log lines under it; `journalctl -u NAME` |
+| `HTTP 500 ... database error` | The database is down or its password changed | Fix mysql first (this script), or SV-42's undo |
+| `restarted 3 times in 10 minutes` | It crashes right after starting | Run without `--watch` to see why |

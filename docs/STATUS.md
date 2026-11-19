@@ -1,6 +1,6 @@
 # Build status
 
-31 of 37 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+32 of 38 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -9,6 +9,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | Enum (look only) | 6 | 7 |
 | Backup and prep | 5 | 5 |
 | wave2 | 4 | 4 |
+| any | 1 | 1 |
 | Hardening: easy | 3 | 3 |
 | Hardening: medium | 2 | 2 |
 | Hardening: hard | 2 | 6 |
@@ -46,6 +47,12 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | SV-21 | PHP and web app hardening | medium | built | `roles/applications/SV-21-web-hardening.sh` |
 | SV-42 | Database password rotation | medium | built | `roles/applications/SV-42-db-passwords.sh` |
 | SV-40 | Mail password rotation | medium | built | `roles/applications/SV-40-mail-passwords.sh` |
+
+## any
+
+| ID | Script | Risk | Status | File |
+| --- | --- | --- | --- | --- |
+| SV-50 | Service recovery | medium | built | `roles/applications/SV-50-service-recovery.sh` |
 
 ## Hardening: easy
 
