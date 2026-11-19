@@ -44,6 +44,7 @@ check "brace ranges {1..5} are bash only"                           '\{[0-9]+\.\
 check "\$RANDOM is not in POSIX sh; read /dev/urandom"              '\$\{?RANDOM'
 check "'set -o pipefail' is not in POSIX sh"                        'pipefail'
 check "'head -c' is missing on Solaris; use dd bs=1 count=N"        'head[[:space:]]+-c'
+check 'ksh reads a bare | inside ${x%%|*} as "or": quote it, ${x%%"|"*}'  '\$\{[A-Za-z_][A-Za-z0-9_]*(%%?|##?)[^}"]*\|'
 check "'grep -P' is GNU only"                                       'grep[[:space:]]+-[A-Za-z]*P'
 check "'sed -i' differs between GNU and BSD; write to a temp file"  'sed[[:space:]]+-i'
 check "'readlink -f' is GNU only; use cc_abspath"                   'readlink[[:space:]]+-f'

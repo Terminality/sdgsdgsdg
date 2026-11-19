@@ -1,6 +1,6 @@
 # Build status
 
-34 of 40 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+35 of 40 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -12,7 +12,8 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | any | 1 | 1 |
 | Hardening: easy | 3 | 3 |
 | Hardening: medium | 2 | 2 |
-| Hardening: hard | 2 | 6 |
+| Hardening: hard | 2 | 5 |
+| wave1 | 1 | 1 |
 | Management | 3 | 3 |
 | Alerts | 3 | 4 |
 | Kit | 3 | 3 |
@@ -80,7 +81,12 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | WN-27 | Windows remote access lockdown | access | planned |  |
 | LX-26 | Linux remote access lockdown | access | planned |  |
 | WN-23 | Account lockdown (Windows / AD) | access | planned |  |
-| LX-21 | Account lockdown (Linux) | access | planned |  |
+
+## wave1
+
+| ID | Script | Risk | Status | File |
+| --- | --- | --- | --- | --- |
+| LX-21 | Account lockdown (Linux) | medium | built | `roles/linux/LX-21-account-lockdown.sh` |
 
 ## Management
 

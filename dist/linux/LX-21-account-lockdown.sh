@@ -1,0 +1,1706 @@
+#!/bin/sh
+# =============================================================================
+# ID:       LX-21
+# NAME:     Account lockdown (Linux)
+# ROLE:     Linux  (wave 1, right after the passwords; again after red team)
+# KIND:     changes - dry run unless --apply
+# VERSION:  1.0.0
+#
+# PURPOSE
+#   After the web shells, red team's way back in is an account: one they
+#   made, a second root, a key in someone's authorized_keys, a sudo rule, a
+#   service account with a shell.  This goes through every account, one by
+#   one, shows what it can do, and asks what to do with it:
+#
+#     every account     UID, shell, password (set / empty / locked / in
+#                       /etc/passwd), admin groups (sudo wheel admin docker
+#                       lxd disk shadow ...), its sudo lines (NOPASSWD), SSH
+#                       keys (and key options), when its password last changed
+#     HIGH              a second UID 0; an empty password; a hash in
+#                       /etc/passwd; a service account (www-data, mysql ...)
+#                       that can log in with a password or a key
+#     MED               an admin that is not on the protected list; NOPASSWD;
+#                       a password changed in the last 2 days; a service
+#                       account with a login shell
+#     sudo rules        lines that give everyone root (ALL ALL, %users ...),
+#                       NOPASSWD: ALL, rules for users that do not exist
+#
+#   For each account worth a decision (Enter = the default in capitals):
+#     [k] keep   [l] lock (no password or key logins; files stay)
+#     [d] take admin away (admin groups and its sudo lines)
+#     [r] remove its SSH keys (to quarantine)   [b] both d and r
+#     [n] no-login shell (service accounts)     [a] all the rest default
+#   Accounts on the protected list, root and the account you are using are
+#   never locked; the protected ones need an extra yes for anything.
+#   For each dangerous sudo line: comment it out, yes or no.
+#   Every sudoers change is checked with visudo -c first.
+#
+#   QUESTIONS (a flag answers each):
+#     which box                                --box NAME
+#     go through each account?                 --batch = no, defaults
+#     each account / each sudo line            --batch takes the defaults
+#     apply?                                   --apply
+#
+# USAGE
+#   sudo sh LX-21-account-lockdown.sh                             look + dry run
+#   sudo sh LX-21-account-lockdown.sh --protected p.csv --apply   asks about each
+#   sudo sh LX-21-account-lockdown.sh --protected p.csv --apply --batch
+#
+# OPTIONS
+#   --apply            make the changes (without it, dry run only)
+#   --box NAME         splunk | webmail | ecomm | other (asked)
+#   --all              ask about every account, not only those flagged
+#   --days N           "changed lately" = the last N days (default 2)
+#   --timer SECONDS    revert countdown (default 120); --no-timer
+#   --root DIR         treat DIR as / (tests): files edited directly
+#   --no-color         no colours
+#   --help             this text plus the common options
+#
+# OUTPUTS  (under --out, in accounts-N/)
+#   output.txt   everything shown on screen, no colour
+#   accounts.txt every account and what it can do
+#   plan.txt, changes.txt, summary.txt, run.txt, revert.sh
+#   before/      each account's lines as they were (root only)
+#
+# WHAT IT CHANGES  (only with --apply)
+#   /etc/shadow (lock + expire), /etc/passwd (login shell), /etc/group and
+#   /etc/gshadow (admin group membership), sudoers lines (commented out with
+#   "# LX-21: "), authorized_keys files (moved to quarantine).  The undo puts
+#   each account's saved lines back.  Passwords: LX-20.  Finding planted
+#   cron jobs, PAM and the rest: LX-42.
+#
+# DEPENDS ON
+#   usermod, gpasswd, visudo when present (with --root: plain file edits).
+#
+# TESTED ON
+#   Ubuntu 24.04 (fake root, and a live throwaway account), under dash,
+#   bash, busybox sh, ksh93, mksh and yash with gawk, mawk and busybox awk.
+#
+# KNOWN LIMITS / WHAT TO WATCH FOR
+#   - Lock = usermod -L and an expired account, so SSH keys stop too.  An
+#     already logged-in session stays: LX-40 shows it, kill it by hand.
+#   - LDAP / AD accounts (sssd, winbind) are not in /etc/passwd: not seen.
+#   - The scoring engine logs in to SSH as some account: protected list.
+# =============================================================================
+
+# >>> CCDC-LIB  (lib/lib.sh 0.2.1 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# =============================================================================
+# ID:       LB-01
+# NAME:     Shell library (lib.sh)
+# ROLE:     Automation  (wave 0, foundation)
+# VERSION:  0.2.1
+#
+# PURPOSE
+#   The jobs every Unix script in this kit repeats, written once:
+#     1. common command-line flags          cc_common_flag
+#     2. dry-run by default / apply mode    cc_run, cc_run_quiet
+#     3. log naming and log lines           cc_init, cc_log, cc_info, ...
+#     4. backup + one undo log per host     cc_backup_file, cc_undo_add
+#     5. the protected-list refusal         cc_is_protected, cc_guard
+#     6. meaningful exit codes              cc_die, cc_finish
+#   plus small helpers the rules call for: tool detection, OS detection,
+#   password generation, quarantine, SHA-256, CSV output, findings files,
+#   and for inventory scripts: flags (cc_flag), a per-run folder
+#   (cc_use_run_dir) and raw command capture (cc_save).
+#
+# HOW A SCRIPT USES IT
+#   Start every new script from templates/script-template.sh.  During
+#   development a script sources this file through the marker block below.  tools/build.sh replaces that block with the contents of this file
+#   so every built script in dist/ is one standalone file.
+#
+#       # >>> CCDC-LIB
+#       ...the loader lines from templates/script-template.sh...
+#       # <<< CCDC-LIB
+#
+#       while [ $# -gt 0 ]; do
+#           if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
+#           case "$1" in
+#               --my-option) MY_OPT=$2; shift 2 ;;
+#               *) cc_die 2 "unknown option: $1" ;;
+#           esac
+#       done
+#       cc_init "LX-99" "Example script" changes     # or: readonly
+#       cc_run "stop telnet" service telnet stop
+#       cc_finish
+#
+# LANGUAGE RULES (why this file looks old-fashioned)
+#   Plain POSIX sh only, so it runs on dash, busybox ash, ksh, bash, and the
+#   /bin/sh of FreeBSD and Solaris.  That means:
+#     - no 'local'  -> every function uses its own _cc_<function>_ prefix for
+#                      temporary variables so nested calls can't collide
+#     - no arrays, no [[ ]], no 'function' keyword, no 'echo -n' (use printf)
+#     - no 'set -e' -> a hardening script must keep going after one failed
+#                      step and report it; errors are counted, not fatal
+#   tests/lint-posix.sh checks these rules mechanically.
+#
+# DEBUGGING
+#   --debug or CC_DEBUG=1   print DEBUG lines (tool choices, paths, decisions)
+#   sh -x script.sh ...     trace every command the shell runs
+#   Every run writes  <out>/<ID>_<host>_<UTC time>.log  with everything that
+#   was printed plus the full output of every command run through cc_run.
+#
+# EXIT CODES (the same for every script in the kit)
+#   0  finished; nothing failed
+#   1  unexpected error
+#   2  usage error (bad flag, missing argument)
+#   3  missing requirement (not root, tool not found, no protected list)
+#   4  refused: the only thing asked for is on the protected list
+#   5  finished, but at least one change failed (see the log)
+#   130 interrupted (Ctrl-C)
+#
+# KNOWN LIMITS
+#   - cc_genpass needs /dev/urandom and a 'tr' that understands ranges such as
+#     A-Z without brackets (true of GNU, busybox and BSD tr; on Solaris put
+#     /usr/xpg4/bin first in PATH).
+#   - cc_verify_self can only check a script that was started from a file; a
+#     script piped into sh has no file to hash, so the check is skipped.
+# =============================================================================
+
+# The variables below are read by the scripts that source this file.  The
+# linter cannot see that, so its 'unused variable' warning is turned off.
+# shellcheck disable=SC2034
+CC_LIB_VERSION="0.2.1"
+
+# State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
+# in the environment) and only fills in a default when the variable is empty.
+: "${CC_APPLY:=0}"          # 0 = dry run (default), 1 = make changes
+: "${CC_DEBUG:=0}"          # 1 = print DEBUG lines
+: "${CC_QUIET:=0}"          # 1 = print only WARN and ERROR on screen
+: "${CC_FORCE_SCORED:=0}"   # 1 = allowed to touch a protected *account*
+: "${CC_NO_PROTECTED:=0}"   # 1 = operator accepted running with no list
+: "${CC_OUT:=${CCDC_OUT:-}}"              # output folder (operator-chosen)
+: "${CC_PROTECTED:=${CCDC_PROTECTED:-}}"  # protected-list CSV
+CC_ID="${CC_ID:-CC-00}"
+CC_LOG=""                   # set by cc_init; empty means "log file not open"
+CC_N_DONE=0                 # changes made
+CC_N_WOULD=0                # changes a dry run would make
+CC_N_FAIL=0                 # changes that failed
+CC_N_REFUSED=0              # changes refused by the protected list
+CC_N_FIND=0                 # findings written by cc_finding
+CC_N_FLAG=0                 # flags written by cc_flag (this shell only; the
+                            # report counts from the file, see cc_flag_report)
+CC_CSV_DIR=""               # when set, CSV files go here instead of CC_OUT
+CC_RUN_DIR=""               # per-run folder, set by cc_use_run_dir
+CC_FLAGS=""                 # path of this run's flags.csv, once one is written
+CC_TEE=""                   # copy of screen lines, when a script sets it
+: "${CC_BATCH:=0}"          # 1 = never ask: take every default (--batch)
+CC_RUN_UNDO=""              # this run's undo lines, for the revert timer
+CC_TIMER_DIR=""             # folder holding revert.sh, KEEP, REVERTED
+CC_TIMER_DEADLINE=0         # epoch second when the revert timer fires
+CC_SHIFT=1                  # how many arguments cc_common_flag consumed
+
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+
+# cc_log LEVEL MESSAGE...
+#   One line to the screen (stderr) and to the log file.  Log lines go to
+#   stderr so a script's real output (tables, CSV on stdout) stays clean when
+#   piped.  Before cc_init has opened the log file, lines go to the screen only.
+#   NEVER pass a password to this function: the log file is shared.
+cc_log() {
+    _cc_log_level=$1
+    shift
+    _cc_log_line="$(date -u +%H:%M:%SZ) [$_cc_log_level] $CC_ID: $*"
+    _cc_log_show=0
+    case "$_cc_log_level" in
+        DEBUG) [ "$CC_DEBUG" = 1 ] && _cc_log_show=1 ;;
+        WARN|ERROR|REFUSED) _cc_log_show=1 ;;
+        NOTE) ;;            # log file only: detail that would flood the screen
+        *) [ "$CC_QUIET" = 1 ] || _cc_log_show=1 ;;
+    esac
+    if [ "$_cc_log_show" = 1 ]; then
+        printf '%s\n' "$_cc_log_line" >&2
+        # CC_TEE: a file that keeps a copy of everything shown on screen
+        # (SH-05 sets it to its output.txt).
+        [ -n "$CC_TEE" ] && printf '%s\n' "$_cc_log_line" >>"$CC_TEE" 2>/dev/null
+    fi
+    if [ -n "$CC_LOG" ]; then
+        printf '%s\n' "$_cc_log_line" >>"$CC_LOG" 2>/dev/null
+    fi
+    return 0
+}
+cc_info()  { cc_log INFO "$@"; }
+cc_note()  { cc_log NOTE "$@"; }
+cc_warn()  { cc_log WARN "$@"; }
+cc_err()   { cc_log ERROR "$@"; }
+cc_debug() { cc_log DEBUG "$@"; }
+
+# cc_die CODE MESSAGE...
+#   Log an error and stop the script with CODE (see EXIT CODES above).
+cc_die() {
+    _cc_die_code=$1
+    shift
+    cc_log ERROR "$*"
+    exit "$_cc_die_code"
+}
+
+# -----------------------------------------------------------------------------
+# Small helpers
+# -----------------------------------------------------------------------------
+
+# cc_have TOOL        -> returns 0 if TOOL is on PATH.
+cc_have() { command -v "$1" >/dev/null 2>&1; }
+
+# cc_need TOOL...     -> stop with exit 3 if any TOOL is missing.
+cc_need() {
+    for _cc_need_t in "$@"; do
+        cc_have "$_cc_need_t" || cc_die 3 "required tool not found: $_cc_need_t"
+    done
+}
+
+# cc_first TOOL...    -> print the first TOOL that exists; return 1 if none do.
+#   Example: LISTEN=$(cc_first ss netstat lsof) || cc_die 3 "no port tool"
+cc_first() {
+    for _cc_first_t in "$@"; do
+        if cc_have "$_cc_first_t"; then
+            printf '%s\n' "$_cc_first_t"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# cc_which NAME -> print the full path of the program NAME, or return 1.
+#   Searches PATH and then the sbin folders (often missing from a normal
+#   account's PATH).  Use it when a script must run the REAL program: busybox
+#   sh runs its own built-in version of tools such as sysctl, chpasswd or find
+#   when called by bare name, but always runs a file given by full path.
+cc_which() {
+    _cc_wh_ifs=$IFS; IFS=:
+    for _cc_wh_d in $PATH /usr/local/sbin /usr/sbin /sbin /usr/local/bin /usr/bin /bin; do
+        IFS=$_cc_wh_ifs
+        [ -n "$_cc_wh_d" ] || continue
+        if [ -f "$_cc_wh_d/$1" ] && [ -x "$_cc_wh_d/$1" ]; then printf '%s\n' "$_cc_wh_d/$1"; return 0; fi
+    done
+    IFS=$_cc_wh_ifs
+    return 1
+}
+
+# cc_shquote STRING   -> print STRING wrapped in single quotes, safe to paste
+#   into a shell.  Used to build the undo commands.
+cc_shquote() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+# cc_abspath PATH     -> print the absolute form of PATH (file or folder).
+#   The parent folder must exist.  No 'realpath' dependency.
+cc_abspath() {
+    case "$1" in
+        /*) _cc_abs_p=$1 ;;
+        *)  _cc_abs_p="$(pwd)/$1" ;;
+    esac
+    if [ -d "$_cc_abs_p" ]; then
+        (cd "$_cc_abs_p" 2>/dev/null && pwd -P) || printf '%s\n' "$_cc_abs_p"
+    else
+        _cc_abs_d=$(dirname "$_cc_abs_p")
+        _cc_abs_b=$(basename "$_cc_abs_p")
+        _cc_abs_d=$( (cd "$_cc_abs_d" 2>/dev/null && pwd -P) || printf '%s' "$_cc_abs_d")
+        printf '%s/%s\n' "${_cc_abs_d%/}" "$_cc_abs_b"
+    fi
+}
+
+# cc_is_root          -> returns 0 when running as root.
+#   'id -u' is missing from the default id on old Solaris, so fall back to
+#   parsing plain 'id'.
+cc_is_root() {
+    _cc_root_uid=$(id -u 2>/dev/null) || _cc_root_uid=$(id | sed 's/^uid=\([0-9]*\).*/\1/')
+    [ "$_cc_root_uid" = 0 ]
+}
+
+# cc_require_root     -> stop with exit 3 unless running as root.
+cc_require_root() {
+    cc_is_root || cc_die 3 "this script must be run as root (try: sudo sh $0 ...)"
+}
+
+# cc_confirm QUESTION -> ask the operator; returns 0 for yes.
+#   Reads from the terminal, not stdin, so it still works when the script was
+#   piped in.  CCDC_ASSUME_YES=1 answers yes without asking (for fan-out).
+cc_confirm() {
+    [ "${CCDC_ASSUME_YES:-0}" = 1 ] && return 0
+    if [ ! -r /dev/tty ]; then
+        cc_warn "no terminal to ask '$1' - treating as NO (set CCDC_ASSUME_YES=1 to skip questions)"
+        return 1
+    fi
+    printf '%s [y/N] ' "$1" >/dev/tty
+    read -r _cc_confirm_a </dev/tty || return 1
+    case "$_cc_confirm_a" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+# -----------------------------------------------------------------------------
+# Common flags
+# -----------------------------------------------------------------------------
+
+# cc_usage_common     -> print the flags every script accepts.
+cc_usage_common() {
+    cat <<'EOF'
+Common options (every script in the kit):
+  --apply            make changes (default is a dry run that changes nothing)
+  --dry-run          show what would change (the default)
+  --out DIR          folder for logs, CSV files, backups and the undo log
+                     (default: $CCDC_OUT, else ~/ccdc-out)
+  --protected FILE   protected-list CSV (default: $CCDC_PROTECTED, else
+                     DIR/protected.csv)
+  --no-protected     allow --apply without a protected list (dangerous)
+  --force-scored     allow changes to accounts on the protected list
+  --batch            never ask questions: take every default (like sqlmap)
+  --quiet            only print warnings and errors
+  --debug            print debugging detail
+  --version          print the library version and exit
+EOF
+}
+
+# cc_common_flag "$@"
+#   Handles ONE common flag at the front of the argument list.
+#   Returns 0 if it consumed something and sets CC_SHIFT to how many arguments
+#   to shift (1 or 2).  Returns 1 if "$1" is not a common flag, so the calling
+#   script can handle its own options.  See the usage example in the header.
+cc_common_flag() {
+    CC_SHIFT=1
+    case "${1:-}" in
+        --apply)        CC_APPLY=1 ;;
+        --dry-run)      CC_APPLY=0 ;;
+        --out)          [ $# -ge 2 ] || cc_die 2 "--out needs a folder"
+                        CC_OUT=$2; CC_SHIFT=2 ;;
+        --out=*)        CC_OUT=${1#--out=} ;;
+        --protected)    [ $# -ge 2 ] || cc_die 2 "--protected needs a file"
+                        CC_PROTECTED=$2; CC_SHIFT=2 ;;
+        --protected=*)  CC_PROTECTED=${1#--protected=} ;;
+        --no-protected) CC_NO_PROTECTED=1 ;;
+        --force-scored) CC_FORCE_SCORED=1 ;;
+        --batch)        CC_BATCH=1 ;;
+        --quiet)        CC_QUIET=1 ;;
+        --debug)        CC_DEBUG=1 ;;
+        --version)      printf 'ccdc kit library %s\n' "$CC_LIB_VERSION"; exit 0 ;;
+        *)              return 1 ;;
+    esac
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# Start-up
+# -----------------------------------------------------------------------------
+
+# cc_init ID NAME KIND
+#   Call once, after the flags are parsed.
+#     ID    the script's ID from docs/catalog.csv, e.g. LX-20
+#     NAME  short name for the log banner
+#     KIND  'readonly' for inventory/detection scripts, 'changes' for scripts
+#           that can modify the system.  A 'changes' script refuses to run
+#           with --apply when there is no protected list (rule 4), unless the
+#           operator passed --no-protected.
+#   Sets: CC_HOST CC_TS CC_OUT CC_LOG CC_UNDO CC_BACKUP_DIR CC_QUAR_DIR
+#         CC_KIT CC_PROTECTED
+cc_init() {
+    CC_ID=${1:-CC-00}
+    CC_NAME=${2:-unnamed}
+    CC_KIND=${3:-readonly}
+
+    # Host name without the domain part, safe for use in a file name.
+    CC_HOST=$(uname -n 2>/dev/null | sed 's/\..*//; s/[^A-Za-z0-9_-]/_/g')
+    [ -n "$CC_HOST" ] || CC_HOST=unknownhost
+    CC_TS=$(date -u +%Y%m%dT%H%M%SZ)
+
+    # Where the running script lives (the "kit").  When the script was piped
+    # into sh, $0 is just "sh" and there is no kit folder.
+    CC_KIT=""
+    if [ -f "$0" ]; then
+        CC_KIT=$(cc_abspath "$(dirname "$0")")
+    fi
+
+    # Output folder: operator-chosen, never inside the kit (rule 11: the kit
+    # may be on read-only media and must stay unchanged so its hash matches).
+    [ -n "$CC_OUT" ] || CC_OUT="${HOME:-/root}/ccdc-out"
+    (umask 077; mkdir -p "$CC_OUT") 2>/dev/null \
+        || cc_die 3 "cannot create output folder: $CC_OUT (pass --out DIR)"
+    CC_OUT=$(cc_abspath "$CC_OUT")
+    if [ -n "$CC_KIT" ]; then
+        case "$CC_OUT/" in
+            "$CC_KIT"/*) cc_die 2 "output folder $CC_OUT is inside the kit folder $CC_KIT; choose another with --out" ;;
+        esac
+    fi
+    [ -w "$CC_OUT" ] || cc_die 3 "output folder is not writable: $CC_OUT"
+
+    CC_LOG="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}.log"
+    CC_UNDO="$CC_OUT/undo-${CC_HOST}.log"
+    CC_BACKUP_DIR="$CC_OUT/backup/${CC_HOST}/${CC_TS}_${CC_ID}"
+    CC_QUAR_DIR="$CC_OUT/quarantine/${CC_HOST}/${CC_TS}_${CC_ID}"
+    CC_FINDINGS=""
+    # Create the log with private permissions without changing the umask for
+    # the rest of the script (a hardening script creates system files too).
+    (umask 077; : >>"$CC_LOG") 2>/dev/null || cc_die 3 "cannot write log file: $CC_LOG"
+
+    # Protected list.
+    [ -n "$CC_PROTECTED" ] || CC_PROTECTED="$CC_OUT/protected.csv"
+    if [ ! -r "$CC_PROTECTED" ]; then
+        if [ "$CC_KIND" = changes ] && [ "$CC_APPLY" = 1 ] && [ "$CC_NO_PROTECTED" != 1 ]; then
+            cc_die 3 "no protected list at $CC_PROTECTED - refusing to change anything. Build one (SH-09), pass --protected FILE, or pass --no-protected to accept the risk"
+        fi
+        cc_debug "no protected list at $CC_PROTECTED (nothing will be refused)"
+        CC_PROTECTED=""
+    fi
+
+    trap 'cc_log ERROR "interrupted"; exit 130' INT TERM
+
+    if [ "$CC_KIND" = readonly ]; then _cc_init_mode="READ-ONLY (changes nothing on this host)"
+    elif [ "$CC_APPLY" = 1 ]; then _cc_init_mode="APPLY (changes will be made)"
+    else _cc_init_mode="DRY RUN (nothing will change)"; fi
+    cc_info "start: $CC_NAME | lib $CC_LIB_VERSION | host $CC_HOST | $_cc_init_mode"
+    cc_debug "out=$CC_OUT log=$CC_LOG protected=${CC_PROTECTED:-none} kit=${CC_KIT:-none} kind=$CC_KIND"
+    cc_verify_self
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# Making changes
+# -----------------------------------------------------------------------------
+
+# cc_run DESCRIPTION COMMAND [ARG...]
+#   The only way a script should change the system.
+#     dry run: logs "WOULD: description [command]" and returns 0
+#     apply:   logs "DO: ...", runs the command with its output appended to
+#              the log file, counts success or failure, returns its exit code
+#   The command line is written to the log.  If any argument is a secret, use
+#   cc_run_quiet instead.
+cc_run() {
+    _cc_run_desc=$1
+    shift
+    if [ "$CC_APPLY" != 1 ]; then
+        cc_log WOULD "$_cc_run_desc  [$*]"
+        CC_N_WOULD=$((CC_N_WOULD + 1))
+        return 0
+    fi
+    cc_timer_fired && { cc_log REFUSED "$_cc_run_desc: the revert timer already ran out, so nothing more is changed"; CC_N_REFUSED=$((CC_N_REFUSED + 1)); return 4; }
+    cc_log DO "$_cc_run_desc  [$*]"
+    "$@" >>"$CC_LOG" 2>&1
+    _cc_run_rc=$?
+    if [ "$_cc_run_rc" -eq 0 ]; then
+        CC_N_DONE=$((CC_N_DONE + 1))
+    else
+        CC_N_FAIL=$((CC_N_FAIL + 1))
+        cc_log ERROR "FAILED (exit $_cc_run_rc): $_cc_run_desc - command output is in $CC_LOG"
+    fi
+    return "$_cc_run_rc"
+}
+
+# cc_run_quiet DESCRIPTION COMMAND [ARG...]
+#   Same as cc_run, but only the description is logged - never the command
+#   line or its output.  Use this when an argument or the output is a secret.
+cc_run_quiet() {
+    _cc_runq_desc=$1
+    shift
+    if [ "$CC_APPLY" != 1 ]; then
+        cc_log WOULD "$_cc_runq_desc"
+        CC_N_WOULD=$((CC_N_WOULD + 1))
+        return 0
+    fi
+    cc_timer_fired && { cc_log REFUSED "$_cc_runq_desc: the revert timer already ran out, so nothing more is changed"; CC_N_REFUSED=$((CC_N_REFUSED + 1)); return 4; }
+    cc_log DO "$_cc_runq_desc"
+    "$@" >/dev/null 2>&1
+    _cc_runq_rc=$?
+    if [ "$_cc_runq_rc" -eq 0 ]; then
+        CC_N_DONE=$((CC_N_DONE + 1))
+    else
+        CC_N_FAIL=$((CC_N_FAIL + 1))
+        cc_log ERROR "FAILED (exit $_cc_runq_rc): $_cc_runq_desc (output hidden because it may hold a secret)"
+    fi
+    return "$_cc_runq_rc"
+}
+
+# cc_undo_add DESCRIPTION COMMAND
+#   Append one line to this host's undo log.  Fields are tab-separated:
+#       UTC time <TAB> script ID <TAB> description <TAB> command to undo
+#   Newest entries are at the bottom; to roll back, run the commands from the
+#   bottom up (SH-12, the undo walker, automates that).  Does nothing in a dry
+#   run, because nothing was changed.
+cc_undo_add() {
+    [ "$CC_APPLY" = 1 ] || return 0
+    [ -f "$CC_UNDO" ] || (umask 077; : >>"$CC_UNDO")
+    printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CC_ID" "$1" "$2" >>"$CC_UNDO"
+    # This run's own copy, which the revert timer replays.
+    [ -n "$CC_RUN_UNDO" ] && printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CC_ID" "$1" "$2" >>"$CC_RUN_UNDO"
+    return 0
+}
+
+# cc_backup_file PATH
+#   Copy PATH (file or folder) into this run's backup folder, keeping its full
+#   path underneath, and record the restore command in the undo log.
+#   Call it BEFORE changing the file.  Sets CC_LAST_BACKUP to the copy.
+#   Returns 0 if backed up (or nothing to back up, or dry run), 1 on failure -
+#   on failure the caller must NOT go on to change the file.
+cc_backup_file() {
+    CC_LAST_BACKUP=""
+    if [ ! -e "$1" ]; then
+        cc_debug "backup: $1 does not exist, nothing to save"
+        return 0
+    fi
+    _cc_bk_src=$(cc_abspath "$1")
+    _cc_bk_dst="$CC_BACKUP_DIR$_cc_bk_src"
+    if [ "$CC_APPLY" != 1 ]; then
+        cc_log WOULD "back up $_cc_bk_src"
+        return 0
+    fi
+    (umask 077; mkdir -p "$(dirname "$_cc_bk_dst")") || { cc_err "backup: cannot create $(dirname "$_cc_bk_dst")"; return 1; }
+    if cp -pR "$_cc_bk_src" "$_cc_bk_dst" 2>>"$CC_LOG"; then
+        CC_LAST_BACKUP=$_cc_bk_dst
+        cc_undo_add "restore $_cc_bk_src" "cp -pR $(cc_shquote "$_cc_bk_dst") $(cc_shquote "$_cc_bk_src")"
+        cc_debug "backup: $_cc_bk_src -> $_cc_bk_dst"
+        return 0
+    fi
+    cc_err "backup FAILED for $_cc_bk_src - do not change this file"
+    return 1
+}
+
+# -----------------------------------------------------------------------------
+# Screen colours, questions and the revert timer
+# -----------------------------------------------------------------------------
+# Scripts that talk to the operator (sqlmap style) use these:
+#   cc_color_init            set C_RED C_YEL C_GRN C_CYN C_GRY C_OFF
+#   cc_show COLOUR TEXT      one line on screen, plain copy in CC_TEE
+#   cc_ask QUESTION Y|N      yes/no question; Enter takes the default
+#   cc_ask_text QUESTION DEF free-text question; answer in CC_ANSWER
+#   cc_timer_start SECONDS   arm a revert that runs even if the session dies
+#   cc_timer_finish          "keep these changes?" - keep, or revert
+# --batch (CC_BATCH=1) or no terminal: every question takes its default.
+
+# cc_now -> seconds since 1970.  'date +%s' is not POSIX; awk's srand() is.
+cc_now() {
+    _cc_now=$(date +%s 2>/dev/null)
+    case "$_cc_now" in ''|*[!0-9]*) awk 'BEGIN { srand(); print srand() }' ;; *) printf '%s\n' "$_cc_now" ;; esac
+}
+
+# cc_color_init -> colours on when stdout is a terminal, NO_COLOR is unset
+#   and the script did not set CC_NOCOLOR=1.
+cc_color_init() {
+    if [ "${CC_NOCOLOR:-0}" != 1 ] && [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+        C_RED=$(printf '\033[1;31m'); C_YEL=$(printf '\033[1;33m'); C_GRN=$(printf '\033[1;32m')
+        C_CYN=$(printf '\033[1;36m'); C_GRY=$(printf '\033[0;90m'); C_OFF=$(printf '\033[0m')
+    else
+        C_RED=""; C_YEL=""; C_GRN=""; C_CYN=""; C_GRY=""; C_OFF=""
+    fi
+}
+
+# cc_show COLOUR TEXT -> TEXT on screen in COLOUR; a plain copy in CC_TEE.
+cc_show() {
+    printf '%s%s%s\n' "$1" "$2" "${C_OFF:-}"
+    [ -n "$CC_TEE" ] && printf '%s\n' "$2" >>"$CC_TEE" 2>/dev/null
+    return 0
+}
+
+# cc_timer_left -> seconds until the revert timer fires (0 when it has, or
+#   when no timer is running).
+cc_timer_left() {
+    [ "$CC_TIMER_DEADLINE" -gt 0 ] || { echo 0; return 0; }
+    _cc_tl=$((CC_TIMER_DEADLINE - $(cc_now)))
+    [ "$_cc_tl" -lt 0 ] && _cc_tl=0
+    echo "$_cc_tl"
+}
+# cc_timer_fired -> true once the revert has run (or is running).
+cc_timer_fired() { [ -n "$CC_TIMER_DIR" ] && { [ -f "$CC_TIMER_DIR/REVERTED" ] || [ -d "$CC_TIMER_DIR/.revert.lock" ]; }; }
+
+# _cc_read VAR -> read one line from the terminal into VAR.  Stops at the
+#   revert deadline when the shell's read has -t (bash, ksh, mksh, busybox);
+#   dash's read has no -t and waits.  Returns 1 if no line was read.
+_cc_read() {
+    _cc_rd_left=$(cc_timer_left)
+    if [ "$_cc_rd_left" -gt 0 ] && [ "${_CC_READ_T:-}" = "" ]; then
+        # A shell without -t fails with status 2 ("illegal option"); one with
+        # it just hits the end of /dev/null (status 1).
+        # shellcheck disable=SC3045
+        if ( read -r -t 1 _x </dev/null ) 2>/dev/null; [ $? -eq 1 ]; then _CC_READ_T=1; else _CC_READ_T=0; fi  # posix-ok
+    fi
+    if [ "$_cc_rd_left" -gt 0 ] && [ "$_CC_READ_T" = 1 ]; then
+        # shellcheck disable=SC3045
+        read -r -t "$_cc_rd_left" "$1" </dev/tty 2>/dev/null  # posix-ok: -t only where the shell has it
+    else
+        read -r "$1" </dev/tty 2>/dev/null
+    fi
+}
+
+# _cc_left_txt -> " (1:42 left)" while the revert timer runs, else nothing.
+_cc_left_txt() {
+    _cc_lt=$(cc_timer_left)
+    [ "$_cc_lt" -gt 0 ] && printf ' (%d:%02d left)' $((_cc_lt / 60)) $((_cc_lt % 60))
+    return 0
+}
+
+# cc_choose QUESTION DEFAULT "l=meaning" "m=meaning" ... -> CC_CHOICE
+#   Every answer is spelled out, in the password-rotation style:
+#     [?] Allow root to log in over SSH? (now: key-only)
+#         [y] yes, with a password or a key
+#         [n] no, never
+#         [k] key-only, root needs an SSH key
+#         [l] leave it as it is
+#         Answer [y/n/K/l]:
+#   Enter takes DEFAULT (a letter, shown in capitals).  The first word of a
+#   meaning works too ("yes", "no", "key-only").  Anything else is refused
+#   and asked again.  With --batch or no terminal the default is taken and
+#   shown with its meaning.
+cc_choose() {
+    _cc_ch_q=$1; _cc_ch_d=$(printf '%s' "$2" | tr 'A-Z' 'a-z'); shift 2
+    _cc_ch_hint=""; _cc_ch_m=""
+    for _cc_ch_o in "$@"; do
+        _cc_ch_l=${_cc_ch_o%%=*}
+        if [ "$_cc_ch_l" = "$_cc_ch_d" ]; then _cc_ch_m=${_cc_ch_o#*=}; _cc_ch_l=$(printf '%s' "$_cc_ch_l" | tr 'a-z' 'A-Z'); fi
+        _cc_ch_hint="$_cc_ch_hint/$_cc_ch_l"
+    done
+    _cc_ch_hint=${_cc_ch_hint#/}
+    if ! _cc_can_ask; then
+        cc_show "${C_CYN:-}" "[?] $_cc_ch_q [$_cc_ch_hint] $_cc_ch_d (default): $_cc_ch_m"
+        CC_CHOICE=$_cc_ch_d
+        return 0
+    fi
+    # The question, then each answer on its own line.
+    printf '%s[?]%s %s\n' "${C_CYN:-}" "${C_OFF:-}" "$_cc_ch_q" >/dev/tty
+    for _cc_ch_o in "$@"; do printf '      [%s] %s\n' "${_cc_ch_o%%=*}" "${_cc_ch_o#*=}" >/dev/tty; done
+    _cc_ch_prompt="      Answer [$_cc_ch_hint]:"
+    while :; do
+        printf '%s%s ' "$_cc_ch_prompt" "$(_cc_left_txt)" >/dev/tty
+        if ! _cc_read _cc_ch_a; then
+            printf '\n' >/dev/tty
+            [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
+            _cc_ch_a=""
+        fi
+        _cc_ch_t=$(printf '%s' "$_cc_ch_a" | tr 'A-Z' 'a-z' | sed 's/^ *//; s/ *$//')
+        [ -z "$_cc_ch_t" ] && _cc_ch_t=$_cc_ch_d
+        # The letter, or the first word of its meaning ("yes", "key-only").
+        _cc_ch_a=""
+        for _cc_ch_o in "$@"; do
+            _cc_ch_w=$(printf '%s' "${_cc_ch_o#*=}" | awk '{ w = tolower($1); sub(/[,.:;]$/, "", w); print w }')
+            if [ "$_cc_ch_t" = "${_cc_ch_o%%=*}" ] || [ "$_cc_ch_t" = "$_cc_ch_w" ]; then _cc_ch_a=${_cc_ch_o%%=*}; fi
+        done
+        [ -n "$_cc_ch_a" ] && break
+        printf '      "%s" is not an answer here: type one of [%s] (Enter = %s).\n' "$_cc_ch_t" "$_cc_ch_hint" "$_cc_ch_d" >/dev/tty
+    done
+    CC_CHOICE=$_cc_ch_a
+    for _cc_ch_o in "$@"; do [ "${_cc_ch_o%%=*}" = "$CC_CHOICE" ] && _cc_ch_m=${_cc_ch_o#*=}; done
+    [ -n "$CC_TEE" ] && printf '[?] %s [%s] %s: %s\n' "$_cc_ch_q" "$_cc_ch_hint" "$CC_CHOICE" "$_cc_ch_m" >>"$CC_TEE"
+    cc_note "asked: $_cc_ch_q -> $CC_CHOICE: $_cc_ch_m"
+    return 0
+}
+
+# _cc_can_ask -> true when there is someone to ask.
+#   CCDC_NO_TTY=1 says there is nobody (the test suite sets it, so tests
+#   never wait for an answer when run from a terminal).
+_cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${CCDC_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
+
+# cc_ask QUESTION DEFAULT [YES-MEANS] [NO-MEANS] -> 0 for yes, 1 for no.
+#   DEFAULT is Y or N.  Shown like cc_choose, with what each answer does:
+#     [?] Back up the web roots?
+#         [y] yes, back them up
+#         [n] no, skip them
+#         Answer [Y/n]:
+#   Without meanings the answers are plain "yes" and "no".  Enter takes the
+#   default.  With --batch or no terminal the default is taken and shown.
+#   If the revert timer runs out while waiting, the script stops (nothing
+#   has been changed while questions are still being asked).
+cc_ask() {
+    case "${2:-N}" in Y|y) _cc_ak_d=y ;; *) _cc_ak_d=n ;; esac
+    cc_choose "$1" "$_cc_ak_d" "y=${3:-yes}" "n=${4:-no}"
+    [ "$CC_CHOICE" = y ]
+}
+
+# cc_ask_text QUESTION DEFAULT [WHAT-TO-TYPE] -> the answer in CC_ANSWER
+#   (DEFAULT on Enter, with --batch, or with no terminal).  WHAT-TO-TYPE is
+#   shown under the question, e.g. "addresses or networks separated by
+#   spaces, like 10.0.0.5 10.0.0.0/24":
+#     [?] Your team's addresses (never blocked)?
+#         type: addresses or networks separated by spaces, like 10.0.0.5 10.0.0.0/24
+#         [Enter = none]:
+cc_ask_text() {
+    CC_ANSWER=$2
+    if ! _cc_can_ask; then
+        cc_show "${C_CYN:-}" "[?] $1 ${2:-(none)} (default)"
+        return 0
+    fi
+    if [ -n "${3:-}" ]; then
+        printf '%s[?]%s %s\n' "${C_CYN:-}" "${C_OFF:-}" "$1" >/dev/tty
+        printf '      type: %s\n' "$3" >/dev/tty
+        printf '      [Enter = %s]:%s ' "${2:-none}" "$(_cc_left_txt)" >/dev/tty
+    else
+        printf '%s[?]%s %s  [Enter = %s]:%s ' "${C_CYN:-}" "${C_OFF:-}" "$1" "${2:-none}" "$(_cc_left_txt)" >/dev/tty
+    fi
+    if ! _cc_read _cc_at_a; then
+        printf '\n' >/dev/tty
+        [ "$CC_TIMER_DEADLINE" -gt 0 ] && [ "$(cc_timer_left)" -eq 0 ] && cc_die 3 "the revert timer ran out while waiting for an answer. Nothing was changed. Run again (--batch or flags skip the questions; --timer SECONDS gives more time)"
+        _cc_at_a=""
+    fi
+    [ -n "$_cc_at_a" ] && CC_ANSWER=$_cc_at_a
+    [ -n "$CC_TEE" ] && printf '[?] %s %s\n' "$1" "${CC_ANSWER:-(none)}" >>"$CC_TEE"
+    cc_note "asked: $1 -> $CC_ANSWER"
+    return 0
+}
+
+# cc_timer_start SECONDS
+#   Arm the revert timer: after SECONDS, every change this run recorded with
+#   cc_undo_add is undone (newest first) unless cc_timer_finish was answered
+#   "keep".  The revert runs outside this shell (a systemd timer, else a
+#   detached background job) so it still happens if the SSH or console
+#   session is killed - which is the point.  Needs CC_RUN_DIR.
+#   Files in the run folder:
+#     undo.txt     this run's undo lines        revert.sh   runs them
+#     KEEP         made by "keep" (or by hand, from another session)
+#     REVERTED     made when the revert has run  revert.log  what it did
+cc_timer_start() {
+    _cc_ts_s=$1
+    [ -n "$CC_RUN_DIR" ] || cc_die 1 "cc_timer_start needs a run folder (cc_use_run_dir first)"
+    CC_TIMER_DIR=$CC_RUN_DIR
+    CC_RUN_UNDO="$CC_TIMER_DIR/undo.txt"
+    (umask 077; : >"$CC_RUN_UNDO")
+    _cc_ts_r="$CC_TIMER_DIR/revert.sh"
+    # The revert script stands alone (no library): it may run after this
+    # script and the kit are gone.  It can also be run by hand at any time.
+    {
+        printf '#!/bin/sh\n'
+        printf '# Undo everything run %s changed, newest first.  Written by %s.\n' "$(basename "$CC_TIMER_DIR")" "$CC_ID"
+        printf '# Run it by hand to revert now:  sh %s\n' "$_cc_ts_r"
+        printf 'D=%s\n' "$(cc_shquote "$CC_TIMER_DIR")"
+        cat <<'REVERT'
+[ -f "$D/KEEP" ] && [ "${1:-}" != --force ] && exit 0
+mkdir "$D/.revert.lock" 2>/dev/null || exit 0
+{
+    echo "revert started $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    awk '{ a[NR] = $0 } END { for (i = NR; i > 0; i--) print a[i] }' "$D/undo.txt" >"$D/.undo.rev"
+    T=$(printf '	')
+    while IFS="$T" read -r _t _id _desc _cmd; do
+        [ -n "$_cmd" ] || continue
+        if sh -c "$_cmd"; then echo "undone: $_desc"; else echo "FAILED to undo: $_desc  [$_cmd]"; fi
+    done <"$D/.undo.rev"
+    rm -f "$D/.undo.rev"
+    echo "revert finished $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} >>"$D/revert.log" 2>&1
+: >"$D/REVERTED"
+REVERT
+    } >"$_cc_ts_r"
+    chmod 700 "$_cc_ts_r"
+    CC_TIMER_DEADLINE=$(( $(cc_now) + _cc_ts_s ))
+    CC_TIMER_HOW=""
+    # 1. A systemd transient timer: survives logout and a killed session.
+    if [ "${CCDC_TIMER_METHOD:-}" != background ] && cc_is_root && [ -d /run/systemd/system ] && cc_have systemd-run; then
+        CC_TIMER_ID="ccdc-revert-$$-$(cc_now)"
+        if systemd-run --quiet --unit "$CC_TIMER_ID" --on-active="${_cc_ts_s}s" --timer-property=AccuracySec=1s /bin/sh "$_cc_ts_r" >>"$CC_LOG" 2>&1; then
+            CC_TIMER_HOW=systemd
+        fi
+    fi
+    # 2. A detached background job: nohup ignores the hang-up a dropped SSH
+    #    session sends; setsid (where present) leaves the session entirely.
+    if [ -z "$CC_TIMER_HOW" ]; then
+        _cc_ts_set=""; cc_have setsid && _cc_ts_set=setsid
+        # The redirections are on the wrapping ( ), not on nohup: yash keeps
+        # a saved copy of the old stdout in the process that waits for a
+        # redirected background job, so whatever read this script's output
+        # ($( ), a pipe) would hang until the timer fired.
+        # shellcheck disable=SC2086
+        ( nohup $_cc_ts_set sh -c 'sleep "$1"; sh "$2"' sh "$_cc_ts_s" "$_cc_ts_r" & echo $! >"$CC_TIMER_DIR/timer.pid" ) >/dev/null 2>&1 </dev/null
+        CC_TIMER_ID=$(cat "$CC_TIMER_DIR/timer.pid" 2>/dev/null)
+        CC_TIMER_HOW=background
+    fi
+    printf 'how=%s\nid=%s\ndeadline=%s\n' "$CC_TIMER_HOW" "$CC_TIMER_ID" "$CC_TIMER_DEADLINE" >"$CC_TIMER_DIR/timer.txt"
+    cc_note "revert timer armed: ${_cc_ts_s}s ($CC_TIMER_HOW $CC_TIMER_ID)"
+    return 0
+}
+
+# cc_timer_cancel -> stop the pending revert (KEEP is what makes it safe;
+#   stopping the job just tidies up).
+cc_timer_cancel() {
+    [ -n "$CC_TIMER_DIR" ] || return 0
+    case "$CC_TIMER_HOW" in
+        systemd)    systemctl stop "$CC_TIMER_ID.timer" "$CC_TIMER_ID.service" >/dev/null 2>&1 ;;
+        background) kill "$CC_TIMER_ID" 2>/dev/null ;;
+    esac
+    CC_TIMER_DEADLINE=0
+    return 0
+}
+
+# cc_timer_finish
+#   Ask "keep these changes?".  y: keep (KEEP file, timer stopped).  n, or no
+#   answer before the timer: revert now.  With --batch: keep.  With no
+#   terminal and no --batch: leave the timer running and say how to keep the
+#   changes from another session.  Returns 0 if the changes were kept.
+cc_timer_finish() {
+    [ -n "$CC_TIMER_DIR" ] || return 0
+    if [ ! -s "$CC_RUN_UNDO" ]; then
+        cc_timer_cancel; : >"$CC_TIMER_DIR/KEEP"
+        return 0
+    fi
+    if cc_timer_fired; then
+        cc_show "${C_RED:-}" "[!] The revert timer already ran out: the changes were undone (see $CC_TIMER_DIR/revert.log)"
+        return 1
+    fi
+    if [ "$CC_BATCH" = 1 ]; then
+        : >"$CC_TIMER_DIR/KEEP"; cc_timer_cancel
+        cc_show "${C_GRN:-}" "[+] Changes kept (--batch). Revert later with: sh $CC_TIMER_DIR/revert.sh --force"
+        return 0
+    fi
+    if ! _cc_can_ask; then
+        cc_show "${C_YEL:-}" "[*] No terminal to ask. The changes are undone in $(cc_timer_left)s unless you run, from any session:"
+        cc_show "${C_YEL:-}" "      touch $CC_TIMER_DIR/KEEP"
+        return 0
+    fi
+    cc_show "${C_YEL:-}" "[*] Check you can still get in: open a NEW SSH or console session and log in now."
+    if cc_ask_keep; then
+        if cc_timer_fired; then
+            cc_show "${C_RED:-}" "[!] Too late: the timer ran out and the changes were undone (see $CC_TIMER_DIR/revert.log)"
+            return 1
+        fi
+        : >"$CC_TIMER_DIR/KEEP"; cc_timer_cancel
+        cc_show "${C_GRN:-}" "[+] Changes kept. Revert later with: sh $CC_TIMER_DIR/revert.sh --force"
+        return 0
+    fi
+    cc_timer_cancel
+    sh "$CC_TIMER_DIR/revert.sh" --force
+    cc_show "${C_RED:-}" "[!] Changes undone. What was done: $CC_TIMER_DIR/revert.log"
+    return 1
+}
+
+# cc_ask_keep -> the keep question.  No answer by the deadline counts as no.
+cc_ask_keep() {
+    printf '%s[?]%s Keep these changes? [y/N]%s ' "${C_CYN:-}" "${C_OFF:-}" "$(_cc_left_txt)" >/dev/tty
+    if ! _cc_read _cc_kp_a; then printf '\n' >/dev/tty; _cc_kp_a=""; fi
+    [ -n "$CC_TEE" ] && printf '[?] Keep these changes? [y/N] %s\n' "${_cc_kp_a:-N}" >>"$CC_TEE"
+    case "$_cc_kp_a" in y|Y|yes|YES|Yes) return 0 ;; *) return 1 ;; esac
+}
+
+# -----------------------------------------------------------------------------
+# Protected list
+# -----------------------------------------------------------------------------
+# File format (CSV with a header line; see config/protected.example.csv):
+#     type,value,note
+#     port,80/tcp,scored web site
+#     service,apache2,scored web site
+#     account,svc-web,used by the scoring engine
+#     path,/var/www/html,scored content
+#   type   one of: port service account path host process
+#   value  compared without regard to upper/lower case.  A port may be written
+#          '80' (both protocols) or '80/tcp'.  Asking about plain '80' matches
+#          '80/tcp' too: when unsure, the answer is "protected".
+#   Lines starting with # and blank lines are ignored.  Windows line endings
+#   and quotes around fields are tolerated because the file is often edited in
+#   a spreadsheet.
+
+# cc_is_protected TYPE VALUE   -> returns 0 if the pair is on the list.
+cc_is_protected() {
+    [ -n "$CC_PROTECTED" ] && [ -r "$CC_PROTECTED" ] || return 1
+    awk -F',' -v want_type="$1" -v want_val="$2" '
+        function clean(s) {    # this is awk, not shell: posix-ok
+            gsub(/\r/, "", s); gsub(/^[ \t"]+|[ \t"]+$/, "", s)
+            return tolower(s)
+        }
+        BEGIN { want_type = clean(want_type); want_val = clean(want_val); hit = 1 }
+        /^[ \t]*#/ || /^[ \t\r]*$/ { next }
+        {
+            t = clean($1); v = clean($2)
+            if (t == "type" || t != want_type) next
+            if (v == want_val) { hit = 0; exit }
+            if (t == "port") {
+                # "80" on either side matches "80/tcp" and "80/udp".
+                a = v; b = want_val
+                sub(/\/.*/, "", a); sub(/\/.*/, "", b)
+                if (a == b && (v !~ /\// || want_val !~ /\//)) { hit = 0; exit }
+            }
+        }
+        END { exit hit }
+    ' "$CC_PROTECTED"
+}
+
+# cc_guard TYPE VALUE   -> returns 0 if it is OK to change this item.
+#   Returns 1 (and logs REFUSED) when the item is protected.  Typical use:
+#       cc_guard port "$p" || continue
+#   Accounts are the one type with an override: --force-scored lets a script
+#   touch a protected account, with a warning in the log (rule 5).
+cc_guard() {
+    if cc_is_protected "$1" "$2"; then
+        if [ "$1" = account ] && [ "$CC_FORCE_SCORED" = 1 ]; then
+            cc_warn "protected account '$2' will be changed because --force-scored was given"
+            return 0
+        fi
+        CC_N_REFUSED=$((CC_N_REFUSED + 1))
+        cc_log REFUSED "$1 '$2' is on the protected list ($CC_PROTECTED) - skipped"
+        return 1
+    fi
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# Operating system detection
+# -----------------------------------------------------------------------------
+
+# cc_detect_os
+#   Sets:
+#     CC_OS_KERNEL   linux | freebsd | openbsd | netbsd | sunos | darwin | ...
+#     CC_OS_FAMILY   debian | rhel | suse | alpine | arch | bsd | solaris | unknown
+#     CC_OS_NAME     e.g. "Debian GNU/Linux 12 (bookworm)"
+#     CC_OS_VERSION  e.g. "12"
+#     CC_INIT        systemd | openrc | sysv | rc | smf | unknown
+#     CC_PKG         apt | dnf | yum | zypper | apk | pacman | pkg | none
+#   /etc/os-release is read as text, never sourced: sourcing would run
+#   whatever a red team wrote into it.
+cc_detect_os() {
+    CC_OS_KERNEL=$(uname -s 2>/dev/null | tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz')
+    CC_OS_FAMILY=unknown; CC_OS_NAME=$(uname -sr 2>/dev/null); CC_OS_VERSION=""
+    _cc_os_id=""; _cc_os_like=""
+    if [ -r /etc/os-release ]; then
+        _cc_os_id=$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"' | head -n 1)
+        _cc_os_like=$(sed -n 's/^ID_LIKE=//p' /etc/os-release | tr -d '"' | head -n 1)
+        _cc_os_pretty=$(sed -n 's/^PRETTY_NAME=//p' /etc/os-release | tr -d '"' | head -n 1)
+        CC_OS_VERSION=$(sed -n 's/^VERSION_ID=//p' /etc/os-release | tr -d '"' | head -n 1)
+        [ -n "$_cc_os_pretty" ] && CC_OS_NAME=$_cc_os_pretty
+    elif [ -r /etc/redhat-release ]; then
+        _cc_os_id=rhel; CC_OS_NAME=$(head -n 1 /etc/redhat-release)
+    elif [ -r /etc/debian_version ]; then
+        _cc_os_id=debian; CC_OS_VERSION=$(head -n 1 /etc/debian_version)
+    fi
+    case " $_cc_os_id $_cc_os_like " in
+        *" debian "*|*" ubuntu "*)                       CC_OS_FAMILY=debian ;;
+        *" rhel "*|*" fedora "*|*" centos "*|*" rocky "*|*" almalinux "*|*" ol "*) CC_OS_FAMILY=rhel ;;
+        *" suse "*|*" sles "*|*" opensuse"*)              CC_OS_FAMILY=suse ;;
+        *" alpine "*)                                    CC_OS_FAMILY=alpine ;;
+        *" arch "*)                                      CC_OS_FAMILY=arch ;;
+    esac
+    case "$CC_OS_KERNEL" in
+        freebsd|openbsd|netbsd|dragonfly) CC_OS_FAMILY=bsd ;;
+        sunos)                            CC_OS_FAMILY=solaris ;;
+    esac
+
+    if [ -d /run/systemd/system ]; then CC_INIT=systemd
+    elif cc_have rc-service;         then CC_INIT=openrc
+    elif cc_have svcadm;             then CC_INIT=smf
+    elif [ -d /etc/rc.d ] && [ "$CC_OS_FAMILY" = bsd ]; then CC_INIT=rc
+    elif [ -d /etc/init.d ];         then CC_INIT=sysv
+    else CC_INIT=unknown
+    fi
+
+    CC_PKG=$(cc_first apt-get dnf yum zypper apk pacman pkg) || CC_PKG=none
+    [ "$CC_PKG" = apt-get ] && CC_PKG=apt
+    cc_debug "os: kernel=$CC_OS_KERNEL family=$CC_OS_FAMILY name='$CC_OS_NAME' version=$CC_OS_VERSION init=$CC_INIT pkg=$CC_PKG"
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# Hashing, passwords, quarantine
+# -----------------------------------------------------------------------------
+
+# cc_sha256 FILE   -> print the SHA-256 of FILE in lower-case hex.
+#   Tries every tool a Unix system might have.  Returns 1 if none exists.
+cc_sha256() {
+    if   cc_have sha256sum; then sha256sum "$1" 2>/dev/null | awk '{print $1}'
+    elif cc_have shasum;    then shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
+    elif cc_have sha256;    then sha256 -q "$1" 2>/dev/null
+    elif cc_have digest;    then digest -a sha256 "$1" 2>/dev/null
+    elif cc_have openssl;   then openssl dgst -sha256 "$1" 2>/dev/null | awk '{print $NF}'
+    else return 1
+    fi
+}
+
+# cc_genpass [LENGTH]   -> print one random password (default 16 characters).
+#   Characters: letters and digits without the look-alikes 0 O 1 l I, plus
+#   '_' and '-'.  Those are accepted by every service we expect to be scored
+#   and survive being typed into a shell, a SQL statement or a URL.  The
+#   result always has an upper-case letter, a lower-case letter and a digit,
+#   and never starts with '-' (which a command could read as an option).
+#   The password is PRINTED ONLY - this function never logs it.  The caller
+#   must send it to the operator's credential file, not to cc_log or cc_run.
+cc_genpass() {
+    _cc_gp_len=${1:-16}
+    [ -r /dev/urandom ] || { cc_err "cc_genpass: /dev/urandom is not readable"; return 3; }
+    _cc_gp_try=0
+    while [ "$_cc_gp_try" -lt 50 ]; do
+        _cc_gp_try=$((_cc_gp_try + 1))
+        _cc_gp=$(LC_ALL=C tr -dc 'A-HJ-NP-Za-km-z2-9_-' </dev/urandom 2>/dev/null | dd bs=1 count="$_cc_gp_len" 2>/dev/null)
+        [ "${#_cc_gp}" -eq "$_cc_gp_len" ] || continue
+        case "$_cc_gp" in -*|_*) continue ;; esac
+        case "$_cc_gp" in *[A-Z]*) ;; *) continue ;; esac
+        case "$_cc_gp" in *[a-z]*) ;; *) continue ;; esac
+        case "$_cc_gp" in *[0-9]*) ;; *) continue ;; esac
+        printf '%s\n' "$_cc_gp"
+        return 0
+    done
+    cc_err "cc_genpass: could not generate a password (is 'tr' the GNU/BSD/busybox kind?)"
+    return 1
+}
+
+# cc_quarantine PATH
+#   Move a suspicious file or folder out of the way without destroying it:
+#   it goes to <out>/quarantine/<host>/<run>/<original full path>, its SHA-256
+#   is logged, and the undo log gets the command that puts it back.
+#   Refuses paths on the protected list.  Returns 0 on success or dry run.
+cc_quarantine() {
+    if [ ! -e "$1" ] && [ ! -h "$1" ]; then
+        cc_debug "quarantine: $1 does not exist"
+        return 0
+    fi
+    _cc_q_src=$(cc_abspath "$1")
+    cc_guard path "$_cc_q_src" || return 4
+    _cc_q_dst="$CC_QUAR_DIR$_cc_q_src"
+    _cc_q_hash=""
+    [ -f "$_cc_q_src" ] && _cc_q_hash=$(cc_sha256 "$_cc_q_src")
+    if [ "$CC_APPLY" != 1 ]; then
+        cc_log WOULD "quarantine $_cc_q_src (sha256 ${_cc_q_hash:-n/a})"
+        CC_N_WOULD=$((CC_N_WOULD + 1))
+        return 0
+    fi
+    (umask 077; mkdir -p "$(dirname "$_cc_q_dst")") || { cc_err "quarantine: cannot create $(dirname "$_cc_q_dst")"; CC_N_FAIL=$((CC_N_FAIL + 1)); return 1; }
+    if mv "$_cc_q_src" "$_cc_q_dst" 2>>"$CC_LOG"; then
+        CC_N_DONE=$((CC_N_DONE + 1))
+        cc_log DO "quarantined $_cc_q_src -> $_cc_q_dst (sha256 ${_cc_q_hash:-n/a})"
+        cc_undo_add "un-quarantine $_cc_q_src" "mv $(cc_shquote "$_cc_q_dst") $(cc_shquote "$_cc_q_src")"
+        return 0
+    fi
+    CC_N_FAIL=$((CC_N_FAIL + 1))
+    cc_err "quarantine FAILED for $_cc_q_src (immutable flag? try: lsattr / chattr -i)"
+    return 1
+}
+
+# -----------------------------------------------------------------------------
+# Output files
+# -----------------------------------------------------------------------------
+
+# cc_csv_new NAME HEADER   -> create a CSV with the given header line and
+#   print its path.  Normally <out>/<ID>_<host>_<time>_<NAME>.csv; after
+#   cc_use_run_dir it is <run folder>/<NAME>.csv.
+#       f=$(cc_csv_new ports "proto,port,process,user")
+#   NOTE: this prints the path, so it is called inside $( ).  Anything it sets
+#   is lost in that subshell, which is why it sets nothing.
+cc_csv_new() {
+    if [ -n "$CC_CSV_DIR" ]; then
+        _cc_csv_f="$CC_CSV_DIR/$1.csv"
+    else
+        _cc_csv_f="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_$1.csv"
+    fi
+    (umask 077; printf '%s\n' "$2" >"$_cc_csv_f") || { cc_err "cannot write $_cc_csv_f"; return 1; }
+    printf '%s\n' "$_cc_csv_f"
+}
+
+# cc_csv_row FILE FIELD...   -> append one row.  Every field is quoted, quotes
+#   inside a field are doubled and line breaks become spaces, so the file
+#   opens cleanly in a spreadsheet whatever the data contains.
+cc_csv_row() {
+    _cc_row_f=$1
+    shift
+    _cc_row_line=""
+    _cc_row_first=1
+    for _cc_row_v in "$@"; do
+        case "$_cc_row_v" in
+            *'"'*|*'
+'*) _cc_row_v=$(printf '%s' "$_cc_row_v" | tr '\n\r' '  ' | sed 's/"/""/g') ;;
+        esac
+        if [ "$_cc_row_first" = 1 ]; then
+            _cc_row_line="\"$_cc_row_v\""; _cc_row_first=0
+        else
+            _cc_row_line="$_cc_row_line,\"$_cc_row_v\""
+        fi
+    done
+    printf '%s\n' "$_cc_row_line" >>"$_cc_row_f"
+}
+
+# cc_finding WEAKNESS FIX_ID CLASS DETAIL [PROTECTED_DEPENDENCY]
+#   Detection scripts never fix anything; they write findings (the "detect,
+#   then fix" rule).  A fix script later reads this file and acts by class:
+#     safe       cannot break a scored service; applied in apply mode
+#     service    might affect a service; skipped unless named explicitly
+#     protected  would touch a protected item; always refused
+#   File: <out>/<ID>_<host>_<time>_findings.csv with columns
+#     host,script,weakness,fix_id,class,protected_dep,detail,time
+cc_finding() {
+    case "$3" in safe|service|protected) ;; *) cc_die 1 "cc_finding: class must be safe, service or protected (got '$3')" ;; esac
+    # Created on first use.  The path is also derivable from the run, so a
+    # finding written inside a subshell still lands in the same file.
+    if [ -z "$CC_FINDINGS" ]; then
+        if [ -n "$CC_CSV_DIR" ]; then _cc_fd_f="$CC_CSV_DIR/findings.csv"; else _cc_fd_f="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_findings.csv"; fi
+        if [ -f "$_cc_fd_f" ]; then CC_FINDINGS=$_cc_fd_f
+        else CC_FINDINGS=$(cc_csv_new findings "host,script,weakness,fix_id,class,protected_dep,detail,time") || return 1
+        fi
+    fi
+    cc_csv_row "$CC_FINDINGS" "$CC_HOST" "$CC_ID" "$1" "$2" "$3" "${5:-}" "$4" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    CC_N_FIND=$((CC_N_FIND + 1))
+    cc_log FINDING "[$3] $1 ($2): $4"
+}
+
+# -----------------------------------------------------------------------------
+# Inventory helpers: run folder, raw capture, flags
+# -----------------------------------------------------------------------------
+# Inventory scripts write many files.  They call cc_use_run_dir once after
+# cc_init so everything for one run sits in one folder:
+#     <out>/<ID>_<host>_<UTC time>/
+#         <section>.csv        one per section       (cc_csv_new)
+#         flags.csv            unusual items         (cc_flag)
+#         raw/<name>.txt       untouched tool output (cc_save)
+# The log file and the undo log stay in <out> itself, beside every other
+# script's, so all logs for a host are in one place.
+
+# cc_use_run_dir   -> create the run folder and send CSV files there.
+#   Sets CC_RUN_DIR and CC_CSV_DIR.
+cc_use_run_dir() {
+    # Two runs in the same second would share one folder and mix their CSVs,
+    # so claim the folder with a plain mkdir (it fails if the folder exists)
+    # and add -2, -3, ... until one is free.  The suffix still sorts after
+    # the plain time, so "newest last" ordering keeps working.
+    CC_RUN_DIR="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}"
+    _cc_rd_n=1
+    while ! (umask 077; mkdir "$CC_RUN_DIR" 2>/dev/null); do
+        [ -d "$CC_RUN_DIR" ] || cc_die 3 "cannot create run folder $CC_RUN_DIR (check that $CC_OUT is writable)"
+        _cc_rd_n=$((_cc_rd_n + 1))
+        [ "$_cc_rd_n" -le 99 ] || cc_die 3 "too many run folders named ${CC_ID}_${CC_HOST}_${CC_TS}-N in $CC_OUT"
+        CC_RUN_DIR="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}-$_cc_rd_n"
+    done
+    (umask 077; mkdir -p "$CC_RUN_DIR/raw") || cc_die 3 "cannot create run folder $CC_RUN_DIR"
+    CC_CSV_DIR=$CC_RUN_DIR
+    cc_debug "run folder: $CC_RUN_DIR"
+}
+
+# cc_use_numbered_dir NAME  -> <out>/NAME-1, NAME-2, ... (next free number)
+#   Same as cc_use_run_dir, but the folder is named by a plain counter so it
+#   is easy to see which run came first.  The ID, host and start time go in
+#   <folder>/run.txt (id=, host=, time=), which SH-04 reads to match runs.
+cc_use_numbered_dir() {
+    _cc_nd_max=0
+    for _cc_nd_d in "$CC_OUT/$1"-*; do
+        [ -d "$_cc_nd_d" ] || continue
+        _cc_nd_x=${_cc_nd_d##*-}
+        case "$_cc_nd_x" in ''|*[!0-9]*) continue ;; esac
+        [ "$_cc_nd_x" -gt "$_cc_nd_max" ] && _cc_nd_max=$_cc_nd_x
+    done
+    # mkdir fails if the folder exists, so two runs started together still
+    # get different numbers.
+    _cc_nd_n=$((_cc_nd_max + 1))
+    while ! (umask 077; mkdir "$CC_OUT/$1-$_cc_nd_n" 2>/dev/null); do
+        [ -d "$CC_OUT/$1-$_cc_nd_n" ] || cc_die 3 "cannot create run folder $CC_OUT/$1-$_cc_nd_n (check that $CC_OUT is writable)"
+        _cc_nd_n=$((_cc_nd_n + 1))
+        [ "$_cc_nd_n" -le $((_cc_nd_max + 99)) ] || cc_die 3 "cannot find a free number for $CC_OUT/$1-N"
+    done
+    CC_RUN_DIR="$CC_OUT/$1-$_cc_nd_n"
+    (umask 077; mkdir -p "$CC_RUN_DIR/raw") || cc_die 3 "cannot create run folder $CC_RUN_DIR"
+    printf 'id=%s\nhost=%s\ntime=%s\n' "$CC_ID" "$CC_HOST" "$CC_TS" >"$CC_RUN_DIR/run.txt"
+    CC_CSV_DIR=$CC_RUN_DIR
+    cc_debug "run folder: $CC_RUN_DIR"
+}
+
+# cc_csv_pretty CSV TXT [WIDTH]
+#   Write CSV as an aligned table people can read in a terminal (cat, less -S):
+#   header in capitals, a dashed line, then one row per line.  Columns wider
+#   than WIDTH (default 60) are cut with "...".  The CSV is not changed.
+cc_csv_pretty() {
+    [ -f "$1" ] || return 0
+    awk -v maxw="${3:-60}" "$CC_AWK_CSV"'
+        function cut(s) { if (length(s) > maxw) s = substr(s, 1, maxw - 3) "..."; return s }  # awk, not shell: posix-ok
+        NR == FNR {
+            n = csvsplit($0, f); if (n > nc) nc = n
+            for (i = 1; i <= n; i++) { v = cut(f[i]); if (length(v) > w[i]) w[i] = length(v) }
+            next
+        }
+        {
+            n = csvsplit($0, f); line = ""
+            for (i = 1; i <= nc; i++) {
+                v = (i <= n) ? cut(f[i]) : ""
+                if (FNR == 1) v = toupper(v)
+                line = line sprintf("%-" w[i] "s", v) (i < nc ? "  " : "")
+            }
+            sub(/ +$/, "", line); print line
+            if (FNR == 1) {
+                line = ""
+                for (i = 1; i <= nc; i++) { d = sprintf("%" w[i] "s", ""); gsub(/ /, "-", d); line = line d (i < nc ? "  " : "") }
+                print line
+            }
+        }
+        END { if (FNR <= 1) print "(nothing found)" }' "$1" "$1" >"$2"
+}
+
+# cc_save NAME COMMAND [ARG...]
+#   Run a READ-ONLY command and keep its untouched output in
+#   <run folder>/raw/NAME.txt (or <out>/<ID>_<host>_<time>_NAME.txt without a
+#   run folder).  The first line records the command.  Use it for output that
+#   is worth keeping but too varied to turn into CSV (iptables-save, sshd -T).
+#   This does NOT honour dry-run: never pass it a command that changes things.
+#   Returns the command's exit code; sets CC_LAST_SAVE to the file.
+cc_save() {
+    _cc_sv_name=$1
+    shift
+    if [ -n "$CC_RUN_DIR" ]; then CC_LAST_SAVE="$CC_RUN_DIR/raw/$_cc_sv_name.txt"
+    else CC_LAST_SAVE="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_$_cc_sv_name.txt"
+    fi
+    printf '# command: %s\n# time: %s\n' "$*" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$CC_LAST_SAVE"
+    "$@" >>"$CC_LAST_SAVE" 2>&1
+    _cc_sv_rc=$?
+    cc_debug "saved '$*' to $CC_LAST_SAVE (exit $_cc_sv_rc)"
+    return "$_cc_sv_rc"
+}
+
+# cc_flag SEVERITY SECTION ITEM DETAIL
+#   Record something unusual that an operator should look at.  Inventory
+#   scripts never act on what they see; a flag only says "look here".
+#     SEVERITY  HIGH  likely red team activity or an open door - look now
+#               MED   risky or unusual - look soon
+#               LOW   worth knowing - kept in the file, not shown on screen
+#     SECTION   which part of the script found it (users, ports, ...)
+#     ITEM      the thing itself, short (an account, a port, a path)
+#     DETAIL    one sentence: what is wrong and why it matters
+#   Written to flags.csv (columns: severity,section,item,detail,time) and to
+#   the log file.  Not printed while the script runs; cc_flag_report prints
+#   the HIGH and MED ones at the end, worst first (rule 17).
+#   Safe to call from a subshell: the file is the record, not a variable.
+#   Never put a password or other secret in ITEM or DETAIL.
+cc_flag() {
+    case "$1" in HIGH|MED|LOW) ;; *) cc_die 1 "cc_flag: severity must be HIGH, MED or LOW (got '$1')" ;; esac
+    if [ -z "$CC_FLAGS" ]; then
+        if [ -n "$CC_CSV_DIR" ]; then CC_FLAGS="$CC_CSV_DIR/flags.csv"; else CC_FLAGS="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_flags.csv"; fi
+        [ -f "$CC_FLAGS" ] || (umask 077; printf 'severity,section,item,detail,time\n' >"$CC_FLAGS")
+    fi
+    cc_csv_row "$CC_FLAGS" "$1" "$2" "$3" "$4" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    CC_N_FLAG=$((CC_N_FLAG + 1))
+    cc_note "FLAG $1 [$2] $3: $4"
+}
+
+# CC_AWK_CSV: an awk function that splits one CSV line correctly (quoted
+# fields, doubled quotes, commas inside quotes).  Paste it in front of an awk
+# program that reads files this kit wrote:
+#     awk "$CC_AWK_CSV"'{ n = csvsplit($0, f); print f[1] }' file.csv
+CC_AWK_CSV='
+function csvsplit(s, a,   n, i, c, f, q, len) {    # awk, not shell: posix-ok
+    n = 0; f = ""; q = 0; len = length(s)
+    for (i = 1; i <= len; i++) {
+        c = substr(s, i, 1)
+        if (q) {
+            if (c == "\"") {
+                if (substr(s, i + 1, 1) == "\"") { f = f "\""; i++ } else q = 0
+            } else f = f c
+        } else if (c == "\"") q = 1
+        else if (c == ",") { a[++n] = f; f = "" }
+        else if (c != "\r") f = f c
+    }
+    a[++n] = f
+    return n
+}'
+
+# cc_flag_report [MAX]
+#   Print the HIGH flags, then the MED flags, at most MAX lines in total
+#   (default 30), then how many LOW flags and how many were cut, with the path
+#   of flags.csv.  Each screen line is cut at 200 characters; the file keeps
+#   the full text.  Reads the file, so it counts flags written from subshells.
+#   Prints "no flags" when there are none.
+cc_flag_report() {
+    _cc_fr_max=${1:-30}
+    # If every flag was written from a subshell, this shell never learned the
+    # file name; it is always <run folder>/flags.csv in that case.
+    if [ -z "$CC_FLAGS" ] && [ -n "$CC_CSV_DIR" ] && [ -f "$CC_CSV_DIR/flags.csv" ]; then
+        CC_FLAGS="$CC_CSV_DIR/flags.csv"
+    fi
+    if [ -z "$CC_FLAGS" ] || [ ! -f "$CC_FLAGS" ]; then
+        printf 'Flags: none\n'
+        return 0
+    fi
+    # CC_FLAGS_SHOW: the path to name on screen, when a script writes a
+    # readable copy of flags.csv (SH-05 writes flags.txt).
+    awk -v max="$_cc_fr_max" -v file="${CC_FLAGS_SHOW:-$CC_FLAGS}" "$CC_AWK_CSV"'
+        NR == 1 { next }
+        {
+            csvsplit($0, f)
+            sev = f[1]; cnt[sev]++
+            line = "  [" f[2] "] " f[3] ": " f[4]
+            # Screen lines are cut at 200 characters; flags.csv keeps the full text.
+            if (length(line) > 200) line = substr(line, 1, 197) "..."
+            if (sev == "HIGH") hi[++nh] = line
+            else if (sev == "MED") me[++nm] = line
+        }
+        END {
+            shown = 0
+            printf "Flags: %d high, %d medium, %d low\n", cnt["HIGH"], cnt["MED"], cnt["LOW"]
+            if (nh) { print "HIGH - look now"; for (i = 1; i <= nh && shown < max; i++) { print hi[i]; shown++ } }
+            if (nm && shown < max) { print "MED - look soon"; for (i = 1; i <= nm && shown < max; i++) { print me[i]; shown++ } }
+            cut = nh + nm - shown
+            if (cut > 0) printf "  ... %d more high/medium not shown\n", cut
+            if (cnt["LOW"] + cut > 0) printf "All flags, including low: %s\n", file
+        }' "$CC_FLAGS"
+}
+
+# -----------------------------------------------------------------------------
+# Kit integrity and finish
+# -----------------------------------------------------------------------------
+
+# cc_verify_self
+#   Rule 15: the kit's hash is checked before each run.  If a MANIFEST.sha256
+#   (written by tools/build.sh) sits in the script's folder or one of the two
+#   folders above it, or CCDC_MANIFEST points to one, the running script's
+#   hash must match its line there.  A mismatch stops the script: the file on
+#   this host is not the one you built, and a red team may have edited it.
+#   CCDC_SKIP_VERIFY=1 turns the check off (for development).
+cc_verify_self() {
+    [ "${CCDC_SKIP_VERIFY:-0}" = 1 ] && { cc_debug "verify: skipped (CCDC_SKIP_VERIFY=1)"; return 0; }
+    [ -f "$0" ] || { cc_debug "verify: script was not started from a file, nothing to hash"; return 0; }
+    _cc_vs_man=${CCDC_MANIFEST:-}
+    if [ -z "$_cc_vs_man" ]; then
+        for _cc_vs_d in "$CC_KIT" "$CC_KIT/.." "$CC_KIT/../.."; do
+            if [ -r "$_cc_vs_d/MANIFEST.sha256" ]; then _cc_vs_man="$_cc_vs_d/MANIFEST.sha256"; break; fi
+        done
+    fi
+    [ -n "$_cc_vs_man" ] && [ -r "$_cc_vs_man" ] || { cc_debug "verify: no MANIFEST.sha256 found (unbuilt copy), not checked"; return 0; }
+    _cc_vs_name=$(basename "$0")
+    _cc_vs_want=$(awk -v n="$_cc_vs_name" '{ f=$2; sub(/.*\//, "", f); if (f == n) { print $1; exit } }' "$_cc_vs_man")
+    [ -n "$_cc_vs_want" ] || { cc_warn "verify: $_cc_vs_name is not listed in $_cc_vs_man"; return 0; }
+    _cc_vs_got=$(cc_sha256 "$0") || { cc_warn "verify: no SHA-256 tool on this host, cannot check the kit"; return 0; }
+    if [ "$_cc_vs_got" != "$_cc_vs_want" ]; then
+        cc_die 3 "KIT CHECK FAILED: $0 does not match $_cc_vs_man. This copy was changed after it was built - do not run it. Re-copy the kit from the admin workstation"
+    fi
+    cc_debug "verify: $_cc_vs_name matches the manifest"
+    return 0
+}
+
+# cc_finish [EXIT_CODE]
+#   Print the one-line summary and exit.  With no argument the exit code is
+#   5 when any change failed, otherwise 0.  Refusals are counted and shown but
+#   are not a failure: a refusal is the protected list doing its job.
+cc_finish() {
+    _cc_fin_rc=${1:-}
+    if [ -z "$_cc_fin_rc" ]; then
+        if [ "$CC_N_FAIL" -gt 0 ]; then _cc_fin_rc=5; else _cc_fin_rc=0; fi
+    fi
+    cc_info "done: changed=$CC_N_DONE would-change=$CC_N_WOULD failed=$CC_N_FAIL refused=$CC_N_REFUSED findings=$CC_N_FIND exit=$_cc_fin_rc"
+    [ -n "$CC_RUN_DIR" ] && cc_info "results: $CC_RUN_DIR"
+    [ "$CC_N_WOULD" -gt 0 ] && cc_info "this was a dry run - re-run with --apply to make the $CC_N_WOULD change(s)"
+    [ "$CC_N_DONE" -gt 0 ] && cc_info "undo commands for this host are in $CC_UNDO"
+    [ -n "$CC_LOG" ] && cc_info "log: $CC_LOG"
+    exit "$_cc_fin_rc"
+}
+# <<< CCDC-LIB
+
+usage() {
+    cat <<'USAGE'
+LX-21 Account lockdown - every account, one by one: keep, lock, take admin away, remove keys
+  sudo sh LX-21-account-lockdown.sh                          look + dry run
+  sudo sh LX-21-account-lockdown.sh --protected p.csv --apply
+
+  --apply            make the changes (without it, dry run only)
+  --box NAME         splunk | webmail | ecomm | other
+  --all              ask about every account, not only those flagged
+  --days N           "changed lately" = the last N days (default 2)
+  --timer SECONDS    revert countdown (default 120); --no-timer
+  --root DIR         treat DIR as / (tests)
+  --no-color         no colours
+  --help             show this text
+USAGE
+    cc_usage_common
+}
+
+BOX=""; ALL=0; DAYS=2; TIMER=120; NOTIMER=0; R=""; COLOR=1
+while [ $# -gt 0 ]; do
+    if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
+    case "$1" in
+        --apply)    CC_APPLY=1; shift ;;
+        --box)      [ $# -ge 2 ] || cc_die 2 "--box needs a name"; BOX=$2; shift 2 ;;
+        --all)      ALL=1; shift ;;
+        --days)     [ $# -ge 2 ] || cc_die 2 "--days needs a number"; DAYS=$2; shift 2 ;;
+        --timer)    [ $# -ge 2 ] || cc_die 2 "--timer needs seconds"; TIMER=$2; shift 2 ;;
+        --no-timer) NOTIMER=1; shift ;;
+        --root)     [ $# -ge 2 ] || cc_die 2 "--root needs a folder"; [ -d "$2" ] || cc_die 2 "--root: not a folder: $2"; R=$(cd "$2" && pwd); [ "$R" = / ] && R=""; shift 2 ;;
+        --no-color|--no-colour) COLOR=0; shift ;;
+        --help|-h)  usage; exit 0 ;;
+        *)          cc_die 2 "unknown option: $1 (try --help)" ;;
+    esac
+done
+case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
+for _n in "$DAYS" "$TIMER"; do case "$_n" in ''|*[!0-9]*) cc_die 2 "--days and --timer need whole numbers" ;; esac; done
+
+cc_init "LX-21" "Account lockdown" changes
+cc_detect_os
+# shellcheck disable=SC2034  # read by cc_color_init
+[ "$COLOR" = 1 ] || CC_NOCOLOR=1
+cc_color_init
+cc_use_numbered_dir accounts
+rmdir "$CC_RUN_DIR/raw" 2>/dev/null
+OUTF="$CC_RUN_DIR/output.txt"
+grep -v '\[NOTE\]\|\[DEBUG\]' "$CC_LOG" >"$OUTF" 2>/dev/null || : >"$OUTF"
+# shellcheck disable=SC2034  # CC_TEE is read by the library's log functions
+CC_TEE=$OUTF
+W="$CC_RUN_DIR/.work"; mkdir -p "$W"; chmod 700 "$W"
+mkdir -p "$CC_RUN_DIR/before"; chmod 700 "$CC_RUN_DIR/before"
+CC_CSV_DIR="$W/csv"; mkdir -p "$CC_CSV_DIR"
+header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
+P() { printf '%s%s' "$R" "$1"; }
+
+cc_show "$C_CYN" "LX-21 Account lockdown | host $CC_HOST | results in $CC_RUN_DIR"
+cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it   ${C_GRN}[ok]${C_OFF} fine   ${C_YEL}[~] would change${C_OFF}   ${C_GRN}[+] changed${C_OFF}   ${C_RED}[x] failed${C_OFF}"
+[ -n "$R" ] && cc_show "$C_GRY" "Acting on $R as if it were / (files edited directly)"
+
+if [ -z "$BOX" ]; then
+    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "o=other"
+    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
+fi
+case "$BOX" in splunk|webmail)
+    cc_show "$C_YEL" "  SSH is SCORED on $BOX ($BOX-ssh): the scoring engine logs in as some account. Keep that one (put it on the protected list)." ;;
+esac
+
+# ---- Accounts --------------------------------------------------------------------------
+UID_MIN=$(awk '$1 == "UID_MIN" { print $2 }' "$(P /etc/login.defs)" 2>/dev/null); case "$UID_MIN" in ''|*[!0-9]*) UID_MIN=1000 ;; esac
+ADMIN_GROUPS="root sudo wheel admin docker lxd lxc libvirt disk shadow"
+ME=${SUDO_USER:-$(id -un 2>/dev/null)}
+TODAY=$(( $(date +%s) / 86400 ))
+# Every sudoers line in use: "file|line number|text"
+: >"$W/sudo"
+for _s in "$(P /etc/sudoers)" "$(P /etc/sudoers.d)"/*; do
+    [ -f "$_s" ] || continue
+    # sudo skips sudoers.d files whose name has a dot or ends in ~: so do we.
+    case "${_s##*/}" in *~|*.*) [ "$(dirname "$_s")" = "$(P /etc/sudoers.d)" ] && continue ;; esac
+    awk -v f="${_s#"$R"}" '{ t = $0; sub(/^[ \t]+/, "", t) } t == "" || t ~ /^#/ || t ~ /^(Defaults|Cmnd_Alias|Host_Alias|Runas_Alias|User_Alias)/ { next }
+        { printf "%s|%d|%s\n", f, NR, t }' "$_s" >>"$W/sudo"
+done
+# groups_of USER GID -> space separated group names
+groups_of() { awk -F: -v u="$1" -v g="$2" '$3 == g { print $1; next } { n = split($4, m, ","); for (i = 1; i <= n; i++) if (m[i] == u) { print $1; break } }' "$(P /etc/group)" | tr '\n' ' ' | sed 's/ $//'; }
+# keys_of HOME -> "COUNT|OPTIONS" (options: command=, from= ...)
+keys_of() {
+    _kn=0; _ko=""
+    for _k in "$1/.ssh/authorized_keys" "$1/.ssh/authorized_keys2"; do
+        [ -f "$(P "$_k")" ] || continue
+        _kn=$((_kn + $(grep -c '^[^#]*\(ssh-\|ecdsa-\|sk-\)' "$(P "$_k")")))
+        grep -q '^[a-z-]*=\|^[^#]*command=' "$(P "$_k")" && _ko="with options (command=/from=)"
+    done
+    printf '%s|%s' "$_kn" "$_ko"
+}
+# $W/acc: user|uid|kind|shell|login|pw|groups|admin|sudo|nopw|keys|keyopt|days|home|flags|level|default
+: >"$W/acc"
+awk -F: '{ print $1 "|" $3 "|" $4 "|" $6 "|" $7 "|" $2 }' "$(P /etc/passwd)" >"$W/pw"
+while IFS='|' read -r _u _uid _gid _home _sh _pf; do
+    _kind=service; [ "$_uid" = 0 ] && _kind=root
+    [ "$_uid" -ge "$UID_MIN" ] && [ "$_uid" -lt 60000 ] && _kind=human
+    [ "$_uid" = 0 ] && [ "$_u" != root ] && _kind=uid0
+    _login=no; case "${_sh##*/}" in nologin|false|sync|shutdown|halt|'') ;; *) _login=yes ;; esac
+    _sl=$(awk -F: -v u="$_u" '$1 == u { print $2 "|" $3 }' "$(P /etc/shadow)" 2>/dev/null)
+    _hash=${_sl%%"|"*}; _lc=${_sl#*"|"}
+    case "$_pf" in x|'*'|'!'|'!!') case "$_hash" in '') _pw=empty ;; '!'*|'*'*) _pw=locked ;; *) _pw="set" ;; esac ;;
+        '') _pw=empty ;; *) _pw=in-passwd ;; esac
+    [ -z "$_sl" ] && [ "$_pf" = x ] && _pw=locked
+    _grs=$(groups_of "$_u" "$_gid"); _adm=""
+    for _g in $_grs; do case " $ADMIN_GROUPS " in *" $_g "*) _adm="$_adm $_g" ;; esac; done; _adm=${_adm# }
+    # Sudo lines for this user (by name, or by one of its groups).
+    _sud=$(awk -F'|' -v u="$_u" -v g=" $_grs " '{ split($3, w, /[ \t]+/); n = w[1]; if (n == u || (substr(n, 1, 1) == "%" && index(g, " " substr(n, 2) " "))) print $1 ":" $2 }' "$W/sudo" | tr '\n' ' ' | sed 's/ $//')
+    _nop=no; [ -n "$_sud" ] && awk -F'|' -v u="$_u" -v g=" $_grs " '{ split($3, w, /[ \t]+/); n = w[1]; if ((n == u || (substr(n, 1, 1) == "%" && index(g, " " substr(n, 2) " "))) && $3 ~ /NOPASSWD/) f = 1 } END { exit !f }' "$W/sudo" && _nop=yes
+    _ki=$(keys_of "$_home"); _keys=${_ki%%"|"*}; _kopt=${_ki#*"|"}
+    _days=-; case "$_lc" in ''|*[!0-9]*) ;; *) _days=$((TODAY - _lc)) ;; esac
+    # Findings and the default answer.
+    _fl=""; _lv=ok; _def=k
+    hi() { _fl="$_fl $1;"; _lv=HIGH; }
+    me() { _fl="$_fl $1;"; [ "$_lv" = HIGH ] || _lv=MED; }
+    [ "$_kind" = uid0 ] && { hi "UID 0: it IS root under another name"; _def=l; }
+    [ "$_pw" = empty ] && [ "$_login" = yes ] && { hi "NO password: anyone can log in"; _def=l; }
+    [ "$_pw" = in-passwd ] && { hi "password hash in /etc/passwd (readable by everyone)"; _def=l; }
+    if [ "$_kind" = service ] && [ "$_login" = yes ]; then
+        if [ "$_pw" = set ] || [ "$_keys" -gt 0 ]; then hi "service account that can log in ($_sh$([ "$_pw" = set ] && echo ', has a password')$([ "$_keys" -gt 0 ] && echo ", $_keys SSH key(s)"))"; else me "service account with a login shell ($_sh)"; fi
+        _def=n
+    fi
+    [ -n "$_adm" ] && [ "$_kind" != root ] && ! cc_is_protected account "$_u" && me "admin ($_adm) - one of yours?"
+    [ -n "$_sud" ] && [ "$_kind" != root ] && ! cc_is_protected account "$_u" && me "has sudo lines ($_sud)$([ "$_nop" = yes ] && echo ', NOPASSWD')"
+    [ "$_keys" -gt 0 ] && [ -n "$_kopt" ] && me "SSH keys $_kopt"
+    [ "$_days" != - ] && [ "$_days" -le "$DAYS" ] && [ "$_pw" = set ] && [ "$_kind" != service ] && me "password changed $_days day(s) ago"
+    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$_u" "$_uid" "$_kind" "$_sh" "$_login" "$_pw" "$_grs" "$_adm" "$_sud" "$_nop" "$_keys" "$_kopt" "$_days" "$_home" "${_fl# }" "$_lv" "$_def" >>"$W/acc"
+done <"$W/pw"
+
+header "1/5  accounts"
+cc_show "$C_CYN" "$(printf '  %-14s %-6s %-8s %-6s %-9s %-16s %-5s %-4s %s' USER UID KIND LOGIN PASSWORD "ADMIN GROUPS" SUDO KEYS NOTES)"
+ACSV=$(cc_csv_new accounts "user,uid,kind,shell,password,groups,admin_groups,sudo_lines,nopasswd,ssh_keys,password_changed_days_ago,notes,decision")
+while IFS='|' read -r _u _uid _kind _sh _login _pw _grs _adm _sud _nop _keys _kopt _days _home _fl _lv _def; do
+    # Clean accounts that cannot log in (service, build users) stay out of the table.
+    _show=1; [ "$_lv" = ok ] && [ "$_login" = no ] && _show=0; [ "$_kind" = service ] && [ "$_lv" = ok ] && _show=0
+    if [ "$_show" = 1 ]; then
+        _c=""; [ "$_lv" = HIGH ] && _c=$C_RED; [ "$_lv" = MED ] && _c=$C_YEL
+        cc_show "$_c" "$(printf '  %-14s %-6s %-8s %-6s %-9s %-16s %-5s %-4s %s' "$_u" "$_uid" "$_kind" "$_login" "$_pw" "${_adm:--}" "$([ -n "$_sud" ] && { [ "$_nop" = yes ] && echo NOPW || echo yes; } || echo -)" "$_keys" "$(printf '%s' "$_fl" | sed 's/;$//')")"
+    fi
+done <"$W/acc"
+cc_show "$C_GRY" "  ($(awk -F'|' '$16 == "ok" && ($5 == "no" || $3 == "service")' "$W/acc" | grep -c .) clean accounts that cannot log in are not shown: they are in accounts.txt)"
+
+# ---- Sudo rules on their own -------------------------------------------------------------
+header "2/5  sudo rules"
+: >"$W/sbad"
+while IFS='|' read -r _f _n _t; do
+    _w=$(printf '%s' "$_t" | awk '{ print $1 }')
+    _why=""
+    case "$_w" in ALL) _why="gives EVERY user root" ;; %users|%everyone|%staff) _why="gives a whole group ($_w) root" ;; esac
+    if [ -z "$_why" ] && [ "${_w#%}" = "$_w" ] && [ "$_w" != root ] && ! awk -F'|' -v u="$_w" '$1 == u { f = 1 } END { exit !f }' "$W/pw"; then
+        awk -F= -v u="$_w" '/^User_Alias/ { split($1, a, /[ \t]+/); if (a[2] == u) f = 1 } END { exit !f }' "$(P /etc/sudoers)" 2>/dev/null || _why="for a user that does not exist ($_w)"
+    fi
+    # A line for one existing user is asked about with that account; here
+    # only group-wide NOPASSWD.
+    case "$_w$_t" in %*NOPASSWD*ALL*) [ -z "$_why" ] && ! cc_is_protected account "$_w" && _why="NOPASSWD: ALL for the whole group (root with no password)" ;; esac
+    if [ -n "$_why" ]; then printf '%s|%s|%s|%s\n' "$_f" "$_n" "$_t" "$_why" >>"$W/sbad"; cc_show "$C_RED" "  [!] $_f line $_n: $_t  - $_why"; fi
+done <"$W/sudo"
+[ -s "$W/sbad" ] || cc_show "$C_GRN" "  [ok] no sudo line gives everyone root (per-account lines are with each account)"
+
+# ---- Questions ------------------------------------------------------------------------
+header "3/5  questions (Enter = the default in capitals)"
+# $W/plan: user|action|why    action: k l d r b n
+: >"$W/plan"
+if [ "$ALL" = 1 ]; then awk -F'|' '$3 != "service" || $16 != "ok"' "$W/acc" >"$W/ask"
+else awk -F'|' '$16 != "ok"' "$W/acc" >"$W/ask"; fi
+CANAPPLY=0; { [ -n "$R" ] || cc_is_root; } && CANAPPLY=1
+ONEBYONE=0
+if [ -s "$W/ask" ]; then
+    if cc_ask "Go through the $(grep -c . "$W/ask") flagged account(s) one by one?" Y "yes, ask me about each account" "no, take the default for each (shown in the table)"; then ONEBYONE=1; fi
+fi
+_all=0
+while IFS='|' read -r _u _uid _kind _sh _login _pw _grs _adm _sud _nop _keys _kopt _days _home _fl _lv _def; do
+    # Never offered: locking root or yourself.
+    _self=0; { [ "$_u" = root ] || [ "$_u" = "$ME" ]; } && _self=1
+    _prot=0; cc_is_protected account "$_u" && _prot=1
+    [ "$_prot" = 1 ] && _def=k
+    [ "$_self" = 1 ] && [ "$_def" = l ] && _def=k
+    if [ "$ONEBYONE" = 0 ] || [ "$_all" = 1 ]; then printf '%s|%s|%s\n' "$_u" "$_def" "default" >>"$W/plan"; continue; fi
+    cc_show "" ""
+    cc_show "$([ "$_lv" = HIGH ] && printf '%s' "$C_RED" || printf '%s' "$C_YEL")" "  $_u: $(printf '%s' "$_fl" | sed 's/;$//')"
+    [ "$_prot" = 1 ] && cc_show "$C_GRY" "  (on the protected list)"
+    [ "$_self" = 1 ] && cc_show "$C_GRY" "  ($([ "$_u" = root ] && echo 'root' || echo 'the account you are using'): it cannot be locked here)"
+    set -- "k=keep it as it is"
+    [ "$_self" = 0 ] && set -- "$@" "l=lock it: no password or SSH-key logins (its files stay)"
+    [ -n "$_adm$_sud" ] && set -- "$@" "d=take its admin rights away (groups: ${_adm:-none}; sudo lines: ${_sud:-none})"
+    [ "$_keys" -gt 0 ] && set -- "$@" "r=remove its SSH keys ($_keys, moved to quarantine)"
+    [ -n "$_adm$_sud" ] && [ "$_keys" -gt 0 ] && set -- "$@" "b=both: take admin away and remove its keys"
+    [ "$_login" = yes ] && [ "$_kind" = service ] && set -- "$@" "n=no-login shell (the service keeps running; nobody logs in as it)"
+    set -- "$@" "a=all the rest: take their defaults"
+    cc_choose "$_u (uid $_uid, $([ "$_login" = yes ] && echo 'can log in' || echo 'no login shell'), password $_pw$([ -n "$_grs" ] && echo ", groups: $_grs")$([ "$_keys" -gt 0 ] && echo ", $_keys SSH key(s)")$([ -n "$_sud" ] && echo ", sudo$([ "$_nop" = yes ] && echo ' NOPASSWD')"))?" "$_def" "$@"
+    _ans=$CC_CHOICE
+    [ "$_ans" = a ] && { _all=1; printf '%s|%s|%s\n' "$_u" "$_def" "default" >>"$W/plan"; continue; }
+    if [ "$_ans" != k ] && [ "$_prot" = 1 ]; then
+        cc_ask "  $_u is on the protected list. Change it anyway?" N "yes, change it" "no, keep it" || _ans=k
+    fi
+    printf '%s|%s|%s\n' "$_u" "$_ans" "you chose" >>"$W/plan"
+done <"$W/ask"
+: >"$W/splan"
+while IFS='|' read -r _f _n _t _why; do
+    cc_ask "Comment out $_f line $_n ($_t) - $_why?" Y "yes, comment it out (checked with visudo first)" "no, leave it" && printf '%s|%s|%s\n' "$_f" "$_n" "$_t" >>"$W/splan"
+done <"$W/sbad"
+
+# ---- Plan ---------------------------------------------------------------------------------
+header "4/5  plan"
+act_word() { case "$1" in l) echo "lock" ;; d) echo "take admin away" ;; r) echo "remove SSH keys" ;; b) echo "take admin away + remove SSH keys" ;; n) echo "no-login shell" ;; *) echo keep ;; esac; }
+NCH=0; : >"$CC_RUN_DIR/plan.txt"
+while IFS='|' read -r _u _a _why; do
+    [ "$_a" = k ] && continue
+    NCH=$((NCH + 1)); cc_show "$C_YEL" "  [~] $_u: $(act_word "$_a")"; printf '%s: %s (%s)\n' "$_u" "$(act_word "$_a")" "$_why" >>"$CC_RUN_DIR/plan.txt"
+done <"$W/plan"
+while IFS='|' read -r _f _n _t; do NCH=$((NCH + 1)); cc_show "$C_YEL" "  [~] comment out $_f line $_n: $_t"; printf 'comment out %s line %s: %s\n' "$_f" "$_n" "$_t" >>"$CC_RUN_DIR/plan.txt"; done <"$W/splan"
+[ "$NCH" -eq 0 ] && cc_show "$C_GRN" "  [ok] Nothing to change."
+
+# ---- Helpers for the changes ------------------------------------------------------------
+# save_line FILE USER -> the user's line kept in before/, undo puts it back.
+save_line() {
+    _sf="$CC_RUN_DIR/before/$(basename "$1")-$2"
+    [ -f "$_sf" ] && return 0
+    _real=$(P "$1")
+    if [ "$(basename "$1")" = group ] || [ "$(basename "$1")" = gshadow ]; then
+        # Group files: every line the user is in.
+        (umask 077; awk -F: -v u="$2" '{ n = split($4, m, ","); for (i = 1; i <= n; i++) if (m[i] == u) { print; break } }' "$_real" >"$_sf")
+    else (umask 077; awk -F: -v u="$2" '$1 == u' "$_real" >"$_sf"); fi
+    [ -s "$_sf" ] || { rm -f "$_sf"; return 0; }
+    cc_undo_add "put back $2's lines in $1" "awk -F: 'NR == FNR { l[\$1] = \$0; next } (\$1 in l) { print l[\$1]; next } { print }' $(cc_shquote "$_sf") $(cc_shquote "$_real") > $(cc_shquote "$_real.lx21") && cat $(cc_shquote "$_real.lx21") > $(cc_shquote "$_real") && rm -f $(cc_shquote "$_real.lx21")"
+}
+# edit FILE AWK-PROGRAM USER -> rewrite a file in place (keeps owner and mode).
+edit() { awk -F: -v OFS=: -v u="$3" "$2" "$(P "$1")" >"$(P "$1").lx21" && cat "$(P "$1").lx21" >"$(P "$1")"; _er=$?; rm -f "$(P "$1").lx21"; return "$_er"; }
+do_lock() {
+    save_line /etc/shadow "$1"
+    if [ -z "$R" ] && cc_have usermod; then usermod -L "$1" && usermod -e 1 "$1"
+    else edit /etc/shadow '$1 == u { if ($2 !~ /^!/) $2 = "!" $2; $8 = 1 } { print }' "$1"; fi
+}
+do_nologin() {
+    save_line /etc/passwd "$1"
+    _nl=/usr/sbin/nologin; [ -x "$(P /usr/sbin/nologin)" ] || { [ -x "$(P /sbin/nologin)" ] && _nl=/sbin/nologin; } || _nl=/bin/false
+    [ -x "$(P "$_nl")" ] || _nl=/usr/sbin/nologin
+    if [ -z "$R" ] && cc_have usermod; then usermod -s "$_nl" "$1"
+    else edit /etc/passwd "\$1 == u { \$7 = \"$_nl\" } { print }" "$1"; fi
+}
+do_unadmin() {   # do_unadmin USER ADMIN-GROUPS SUDO-LINES
+    save_line /etc/group "$1"; [ -f "$(P /etc/gshadow)" ] && save_line /etc/gshadow "$1"
+    for _g in $2; do
+        # The primary group cannot be taken away: say so.
+        _pg=$(awk -F: -v u="$1" '$1 == u { print $4 }' "$(P /etc/passwd)"); _gg=$(awk -F: -v g="$_g" '$1 == g { print $3 }' "$(P /etc/group)")
+        [ "$_pg" = "$_gg" ] && { cc_show "$C_YEL" "    [*] $_g is $1's primary group: not changed (lock the account instead)"; continue; }
+        if [ -z "$R" ] && cc_have gpasswd; then gpasswd -d "$1" "$_g" >>"$CC_LOG" 2>&1
+        else
+            for _gf in /etc/group /etc/gshadow; do [ -f "$(P "$_gf")" ] || continue
+                edit "$_gf" "\$1 == \"$_g\" { n = split(\$4, m, \",\"); s = \"\"; for (i = 1; i <= n; i++) if (m[i] != u) s = s (s == \"\" ? \"\" : \",\") m[i]; \$4 = s } { print }" "$1"; done
+        fi
+    done
+    # Its own sudo lines (by name): commented out.
+    for _sl in $3; do
+        _f=${_sl%:*}; _n=${_sl##*:}
+        awk -F'|' -v f="$_f" -v n="$_n" -v u="$1" '$1 == f && $2 == n { split($3, w, /[ \t]+/); if (w[1] == u) x = 1 } END { exit !x }' "$W/sudo" && sudo_comment "$_f" "$_n"
+    done
+    return 0
+}
+sudo_comment() {   # sudo_comment FILE LINE -> "# LX-21: " in front, checked by visudo
+    _rf=$(P "$1")
+    grep -qxF "$_rf" "$W/sbacked" 2>/dev/null || { cc_backup_file "$_rf" >/dev/null || return 1; printf '%s\n' "$_rf" >>"$W/sbacked"; }
+    awk -v n="$2" 'NR == n && !/^# LX-21: / { print "# LX-21: " $0; next } { print }' "$_rf" >"$W/sudo.new" || return 1
+    if [ -z "$R" ] && cc_have visudo; then
+        _chk=$W/sudo.new; [ "$1" = /etc/sudoers ] || { cp "$(P /etc/sudoers)" "$W/sudo.main"; _chk=$W/sudo.new; }
+        visudo -c -f "$_chk" >>"$CC_LOG" 2>&1 || { cc_show "$C_RED" "    [x] visudo does not accept the change to $1: left as it is"; return 1; }
+    fi
+    cat "$W/sudo.new" >"$_rf"
+}
+do_keys() {   # do_keys HOME
+    for _k in "$1/.ssh/authorized_keys" "$1/.ssh/authorized_keys2"; do
+        [ -f "$(P "$_k")" ] && { cc_quarantine "$(P "$_k")" >>"$CC_LOG" 2>&1 || return 1; }
+    done
+    return 0
+}
+
+# ---- Apply --------------------------------------------------------------------------------
+header "5/5  apply"
+CSV=$(cc_csv_new changes "account,change,result")
+NOK=0; NBAD=0; APPLIED=0; TIMER_ON=0
+if [ "$NCH" -eq 0 ]; then :
+elif [ "$CC_APPLY" != 1 ] || [ "$CANAPPLY" = 0 ]; then
+    [ "$CANAPPLY" = 0 ] && cc_show "$C_YEL" "  [!] not root: showing the plan only"
+    cc_show "$C_GRY" "  $NCH change(s) planned. Dry run: nothing was changed. Run again with --apply."
+    # shellcheck disable=SC2034  # read by cc_finish
+    CC_N_WOULD=$NCH
+elif cc_ask "Apply these $NCH change(s)?" Y "yes, apply them (a revert timer undoes them unless you confirm from a NEW session)" "no, change nothing"; then
+    APPLIED=1
+    if [ "$NOTIMER" != 1 ] && [ -z "$R" ]; then cc_timer_start "$TIMER"; TIMER_ON=1
+        cc_show "$C_YEL" "  [*] Revert timer started: everything is undone in $((TIMER / 60)):$(printf '%02d' $((TIMER % 60))) unless you keep it from a NEW login."; fi
+    : >"$W/sbacked"
+    while IFS='|' read -r _u _a _why; do
+        [ "$_a" = k ] && continue
+        _row=$(awk -F'|' -v u="$_u" '$1 == u' "$W/acc")
+        _adm=$(printf '%s' "$_row" | cut -d'|' -f8); _sud=$(printf '%s' "$_row" | cut -d'|' -f9); _home=$(printf '%s' "$_row" | cut -d'|' -f14)
+        _ok=0
+        case "$_a" in
+            l) do_lock "$_u" >>"$CC_LOG" 2>&1 && _ok=1 ;;
+            n) do_nologin "$_u" >>"$CC_LOG" 2>&1 && _ok=1 ;;
+            d) do_unadmin "$_u" "$_adm" "$_sud" && _ok=1 ;;
+            r) do_keys "$_home" && _ok=1 ;;
+            b) do_unadmin "$_u" "$_adm" "$_sud" && do_keys "$_home" && _ok=1 ;;
+        esac
+        if [ "$_ok" = 1 ]; then cc_show "$C_GRN" "  [+] $_u: $(act_word "$_a")"; NOK=$((NOK + 1)); cc_csv_row "$CSV" "$_u" "$(act_word "$_a")" "done"
+        else cc_show "$C_RED" "  [x] $_u: $(act_word "$_a") FAILED (log: $CC_LOG)"; NBAD=$((NBAD + 1)); cc_csv_row "$CSV" "$_u" "$(act_word "$_a")" failed; fi
+    done <"$W/plan"
+    # Lines asked about on their own; line numbers do not move (we only add "# LX-21: ").
+    while IFS='|' read -r _f _n _t; do
+        if sudo_comment "$_f" "$_n"; then cc_show "$C_GRN" "  [+] commented out $_f line $_n"; NOK=$((NOK + 1)); cc_csv_row "$CSV" "$_f:$_n" "sudo line commented out" "done"
+        else NBAD=$((NBAD + 1)); cc_csv_row "$CSV" "$_f:$_n" "sudo line commented out" failed; fi
+    done <"$W/splan"
+    cc_csv_pretty "$CSV" "$CC_RUN_DIR/changes.txt" 100
+else cc_show "$C_GRY" "  Not applied. The plan is in $CC_RUN_DIR/plan.txt"; fi
+# shellcheck disable=SC2034  # read by cc_finish
+CC_N_DONE=$NOK
+# shellcheck disable=SC2034  # read by cc_finish
+CC_N_FAIL=$NBAD
+
+# ---- Summary ----------------------------------------------------------------------------
+while IFS='|' read -r _u _uid _kind _sh _login _pw _grs _adm _sud _nop _keys _kopt _days _home _fl _lv _def; do
+    _dc=$(awk -F'|' -v u="$_u" '$1 == u { print $2 }' "$W/plan"); _dc=$(act_word "${_dc:-k}")
+    cc_csv_row "$ACSV" "$_u" "$_uid" "$_kind" "$_sh" "$_pw" "$_grs" "${_adm:--}" "${_sud:--}" "$_nop" "$_keys" "$_days" "$(printf '%s' "$_fl" | sed 's/;$//')" "$_dc"
+done <"$W/acc"
+cc_csv_pretty "$ACSV" "$CC_RUN_DIR/accounts.txt" 160
+{
+    printf '==========[ summary ]==========\n'
+    printf 'LX-21 Account lockdown | host %s | %s\n' "$CC_HOST" "$([ "$APPLIED" = 1 ] && echo APPLIED || echo 'DRY RUN - nothing changed')"
+    printf 'Accounts: %d (%d HIGH, %d MED)   Sudo lines that give root widely: %d\n' "$(grep -c . "$W/acc")" "$(awk -F'|' '$16 == "HIGH"' "$W/acc" | grep -c .)" "$(awk -F'|' '$16 == "MED"' "$W/acc" | grep -c .)" "$(grep -c . "$W/sbad")"
+    awk -F'|' '$16 != "ok" { printf "  %-4s %-14s %s\n", $16, $1, $15 }' "$W/acc"
+    [ -s "$CC_RUN_DIR/plan.txt" ] && { printf '\nChanges%s:\n' "$([ "$APPLIED" = 1 ] || echo ' planned')"; sed 's/^/  /' "$CC_RUN_DIR/plan.txt"; }
+    [ "$APPLIED" = 1 ] && printf 'Done: %d   Failed: %d\n' "$NOK" "$NBAD"
+    [ "$APPLIED" = 1 ] && [ -f "$CC_RUN_DIR/revert.sh" ] && printf 'Undo this run: sh %s/revert.sh --force\n' "$CC_RUN_DIR"
+    printf '\nAlso: new passwords LX-20; cron, PAM, services and the rest red team plants LX-42; who is logged in now LX-40.\n'
+} >"$CC_RUN_DIR/summary.txt"
+cc_show "" ""
+while IFS= read -r _l; do
+    case "$_l" in ==*|LX-21*) cc_show "$C_CYN" "$_l" ;; '  HIGH'*|*'Failed: '[1-9]*) cc_show "$C_RED" "$_l" ;; '  MED'*) cc_show "$C_YEL" "$_l" ;; *) cc_show "" "$_l" ;; esac
+done <"$CC_RUN_DIR/summary.txt"
+rm -rf "$W"
+if [ "$TIMER_ON" = 1 ]; then header "KEEP OR REVERT"; cc_show "$C_YEL" "[*] Before you answer: log in again from a NEW terminal (SSH) and check sudo works."; cc_timer_finish || true; fi
+cc_finish

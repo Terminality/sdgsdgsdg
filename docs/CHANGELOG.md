@@ -2,6 +2,14 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Account lockdown (LX-21, new)
+
+- **LX-21** goes through every account one by one: a second UID 0, empty passwords, hashes in /etc/passwd, admin groups (sudo, wheel, docker, lxd, disk ...), its sudo lines and NOPASSWD, SSH keys and key options, service accounts with a login shell, passwords changed in the last 2 days. Each account worth a decision is asked: `[k]eep [l]ock [d] take admin away [r]emove keys [b]oth [n]o-login shell [a]ll the rest`. Root, you and protected accounts are never locked.
+- Sudo lines that give everyone or a whole group root, or that name a user that doesn't exist, are asked about on their own and commented out after a visudo check.
+- Lock = `usermod -L` plus an expired account, so SSH keys stop too. The undo puts each account's saved lines back exactly.
+- Found while testing: `sudoers.d` has a dot in its own name, so "skip files with a dot" must look at the file name only; ksh reads a bare `|` in `${x%%|*}` as "or" (again), so tests/lint-posix.sh now catches it.
+- Tested: 39 checks under seven shells and three awks; live with a throwaway account (usermod, restored exactly).
+
 ## 2026-11-18: Web shell hunter (SV-16, new)
 
 - **SV-16** looks inside the site's files for web shells: request data run as code, eval of encoded code, `preg_replace /e`, known shell names, PHP in upload folders or inside images, `.htaccess` handlers and `auto_prepend_file`, WordPress core files that differ from wordpress.org (or that it doesn't ship). It shows the matching line, asks per file (`[q]uarantine [k]eep [a]ll`), and checks the site after.
