@@ -23,6 +23,8 @@
 #                   programs     programs it ran - NEVER added by the
 #                                script (a web shell runs sh, curl, nc ...):
 #                                listed for you
+#                   secrets      /etc/shadow, keys, /root, writes into /etc
+#                                or /usr, sys_module ... - NEVER added: [!]
 #     3 enforce   when the log is clean: everything not in the profile is
 #                 blocked.  The service is checked right after; if it
 #                 stopped answering it goes back to complain on its own.
@@ -39,6 +41,7 @@
 #       unconfined   [c]omplain (default) / [e]nforce now / [k]eep
 #       complain     [l]earn / [e]nforce / [c] stay in complain
 #       enforced     [k]eep (default) / [c] back to complain
+#     loaded but the service runs outside it   [r]estart it / [k]eep
 #     add the normal log lines? / the writes into web code?   (yes / no)
 #     restart the service so it runs under its profile?        (yes / no)
 #     apply?                                                   --apply
@@ -1417,7 +1420,8 @@ W="$CC_RUN_DIR/.work"; mkdir -p "$W"
 header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
 P() { printf '%s%s' "$R" "$1"; }
 AAD=$(P /etc/apparmor.d); STATE=$(P /var/lib/ccdc/apparmor)
-PARSER=${CCDC_AA_PARSER:-apparmor_parser}
+# A full path: the revert timer may run the undo lines with a short PATH.
+PARSER=${CCDC_AA_PARSER:-$(cc_which apparmor_parser 2>/dev/null || echo apparmor_parser)}
 
 cc_show "$C_CYN" "LX-44 AppArmor confinement | host $CC_HOST | results in $CC_RUN_DIR"
 cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it   ${C_GRN}[ok]${C_OFF} fine   ${C_YEL}[~] would change${C_OFF}   ${C_GRN}[+] changed${C_OFF}   ${C_RED}[x] failed${C_OFF}"
@@ -1525,7 +1529,7 @@ write_profile() {
 # events PROFILE SINCE-EPOCH -> "KIND|op|name|mask|extra" lines (KIND: ALLOWED/DENIED)
 events() {
     for _l in "$(P /var/log/audit/audit.log)" "$(P /var/log/kern.log)" "$(P /var/log/syslog)"; do [ -r "$_l" ] && cat "$_l"; done 2>/dev/null >"$W/logs"
-    [ -s "$W/logs" ] || { [ -z "$R" ] && cc_have journalctl && journalctl -k --no-pager -o cat 2>/dev/null >"$W/logs"; }
+    grep -q 'apparmor=' "$W/logs" 2>/dev/null || { [ -z "$R" ] && cc_have journalctl && journalctl -k --no-pager -o cat 2>/dev/null >>"$W/logs"; }
     awk -v p="$1" -v since="${2:-0}" '
         /apparmor="(ALLOWED|DENIED)"/ && index($0, "profile=\"" p "\"") {
             t = 0; if (match($0, /audit\([0-9]+/)) t = substr($0, RSTART + 6, RLENGTH - 6) + 0
@@ -1539,26 +1543,31 @@ events() {
         function v(key,   r) { if (match($0, key "=\"[^\"]*\"")) { r = substr($0, RSTART + length(key) + 2, RLENGTH - length(key) - 3); return r }  # awk, not shell: posix-ok
             if (match($0, key "=[^ ]*")) return substr($0, RSTART + length(key) + 1, RLENGTH - length(key) - 1); return "" }' "$W/logs" | sort -u
 }
-# sort_events FILE -> $W/normal (rules), $W/webw (writes into the sites), $W/progs (programs run)
+# sort_events FILE -> $W/normal (rules), $W/webw (writes into the sites),
+# $W/progs (programs run), $W/bad (secrets and system files: never added)
 sort_events() {
-    : >"$W/normal"; : >"$W/webw"; : >"$W/progs"
+    : >"$W/normal"; : >"$W/webw"; : >"$W/progs"; : >"$W/bad"
     while IFS='|' read -r _k _op _nm _mk _x; do
         case "$_op" in
             exec) printf '%s\n' "$_nm" >>"$W/progs" ;;
-            capable) [ -n "$_x" ] && printf 'capability %s,\n' "$_x" >>"$W/normal" ;;
-            create|connect|bind|listen|sendmsg|recvmsg) [ -n "$_x" ] && printf 'network %s,\n' "$_x" >>"$W/normal" ;;
+            capable) case "$_x" in sys_admin|sys_module|sys_rawio|sys_boot|mac_admin|mac_override|bpf|perfmon) printf 'capability %s\n' "$_x" >>"$W/bad" ;; ?*) printf 'capability %s,\n' "$_x" >>"$W/normal" ;; esac ;;
+            create|connect|bind|listen|sendmsg|recvmsg) case "$_x" in *raw*|*packet*) printf 'network %s\n' "$_x" >>"$W/bad" ;; ?*) printf 'network %s,\n' "$_x" >>"$W/normal" ;; esac ;;
             *)  [ -n "$_nm" ] || continue
                 _m=$(printf '%s' "$_mk" | tr -d 'xcd' ); printf '%s' "$_mk" | grep -q '[cd]' && _m="${_m}w"
                 _m=$(printf '%s' "$_m" | fold -w1 | sort -u | tr -d '\n'); [ -n "$_m" ] || _m=r
                 case "$_m" in *w*) _m=$(printf '%s' "$_m" | tr -d a) ;; esac  # w and a cannot be in one rule
-                _rule=$(printf '"%s" %s,' "$_nm" "$_m")
+                # AppArmor reads * ? [ ] { } in a path as patterns: escape them.
+                _rule=$(printf '"%s" %s,' "$(printf '%s' "$_nm" | sed 's/[][*?{}]/\\&/g')" "$_m")
                 case "$_nm:$_m" in
                     /var/www/*:*w*|/srv/*:*w*|/usr/share/roundcube/*:*w*) printf '%s\n' "$_rule" >>"$W/webw" ;;
+                    # Secrets and system files: what an attacker in the web server goes for.
+                    /etc/shadow*|/etc/gshadow*|/etc/sudoers*|/etc/ssh/*key*|/root/*|/home/*/.ssh/*|/proc/*/mem:*|/dev/mem:*|/dev/kmem:*|\
+                    /etc/*:*w*|/usr/*:*w*|/bin/*:*w*|/sbin/*:*w*|/lib/*:*w*|/var/spool/cron/*:*w*|/boot/*:*w*) printf '%s %s\n' "$_nm" "$_m" >>"$W/bad" ;;
                     *) printf '%s\n' "$_rule" >>"$W/normal" ;;
                 esac ;;
         esac
     done <"$1"
-    for _f in normal webw progs; do sort -u "$W/$_f" -o "$W/$_f"; done
+    for _f in normal webw progs bad; do sort -u "$W/$_f" -o "$W/$_f"; done
 }
 SUSPECT='/(sh|bash|dash|zsh|ksh|mksh|ash|busybox|nc|ncat|netcat|socat|curl|wget|python[0-9.]*|perl|ruby|php[0-9.]*|telnet|ssh|scp|base64|chmod|crontab|at)$'
 
@@ -1583,6 +1592,16 @@ while IFS='|' read -r _kind _bins _name _units _chk; do
     cc_show "" ""
     cc_show "$C_CYN" "  $_kind ($_bin): $_state$([ "$_src" = package ] && echo ", the package's profile $_pname" || echo ", CCDC profile $_name")$([ -n "$_lab" ] && echo "; the running service: $_lab")"
     _ans=""
+    # Loaded, but the running service started before it: AppArmor neither logs
+    # nor blocks anything for it until it is restarted.
+    _stale=n; _rs=n
+    if [ "$_state" != unconfined ] && [ "$_lab" = unconfined ]; then
+        _stale=y
+        cc_show "$C_RED" "  [!] the running $_kind started before its profile was loaded: nothing is logged or blocked until it restarts"
+        cc_choose "$_kind runs outside its profile: what now?" r "r=restart it now so it runs under the profile" "k=leave it (restart it later yourself)"
+        [ "$CC_CHOICE" = r ] && _rs=y
+        printf '%-9s %-11s %-8s %s\n' "" "(running outside it)" "" "" >>"$W/status"
+    fi
     case "$_state" in
         unconfined)
             cc_show "$C_YEL" "  [*] nothing stops a hacked $_kind from touching the rest of the box"
@@ -1597,14 +1616,18 @@ while IFS='|' read -r _kind _bins _name _units _chk; do
             _nn=$(grep -c . "$W/normal"); _nw=$(grep -c . "$W/webw"); _np=$(grep -c . "$W/progs")
             _bad=$(grep -E "$SUSPECT" "$W/progs" | tr '\n' ' ')
             _age=""; [ -n "$_since" ] && _age=" for $(( (NOW - _since) / 60 )) min"
-            { printf '%s (%s) - sorted log lines\n\nnormal (offered):\n' "$_kind" "$_pname"; sed 's/^/  /' "$W/normal"; printf '\nwrites into the sites (asked on their own):\n'; sed 's/^/  /' "$W/webw"; printf '\nprograms it ran (never added by the script):\n'; sed 's/^/  /' "$W/progs"; } >"$CC_RUN_DIR/learned-$_kind.txt"
+            { printf '%s (%s) - sorted log lines\n\nnormal (offered):\n' "$_kind" "$_pname"; sed 's/^/  /' "$W/normal"; printf '\nwrites into the sites (asked on their own):\n'; sed 's/^/  /' "$W/webw"; printf '\nprograms it ran (never added by the script):\n'; sed 's/^/  /' "$W/progs"
+              printf '\nsecrets and system files, dangerous capabilities (never added):\n'; sed 's/^/  /' "$W/bad"; } >"$CC_RUN_DIR/learned-$_kind.txt"
+            _nb=$(grep -c . "$W/bad")
             cc_show "" "  in complain$_age; AppArmor logged $((_nn + _nw + _np)) thing(s) it would block: $_nn normal, $_nw write(s) into the site code, $_np program(s) it ran"
             head -n 6 "$W/normal" | while IFS= read -r _l; do cc_show "$C_GRY" "      $_l"; done
             [ "$_nn" -gt 6 ] && cc_show "$C_GRY" "      ... ($CC_RUN_DIR/learned-$_kind.txt)"
             while IFS= read -r _l; do cc_show "$C_YEL" "    [*] wrote into the site code: $_l"; done <"$W/webw"
             [ -n "$_bad" ] && cc_show "$C_RED" "    [!] it ran $_bad- that is what a web shell does: look at the site with SV-16 before you enforce"
+            while IFS= read -r _l; do cc_show "$C_RED" "    [!] it touched $_l - a web or database server has no reason to: never added (a break-in? look with SV-16 / LX-42)"; done <"$W/bad"
             grep -vE "$SUSPECT" "$W/progs" | while IFS= read -r _l; do cc_show "$C_YEL" "    [*] it ran $_l (add \"$_l ix,\" to $AAD/local/$_pname yourself if it is normal)"; done
-            _d=c; if [ $((_nn + _nw)) -gt 0 ]; then _d=l; elif [ "$_np" -gt 0 ]; then _d=c; elif [ -n "$_since" ] && [ $((NOW - _since)) -ge 600 ]; then _d=e; fi
+            # Enforce is only the default after 10 quiet minutes of real logging.
+            _d=c; if [ $((_nn + _nw)) -gt 0 ]; then _d=l; elif [ $((_np + _nb)) -gt 0 ] || [ "$_stale" = y ]; then _d=c; elif [ -n "$_since" ] && [ $((NOW - _since)) -ge 600 ]; then _d=e; fi
             [ "$_src" = package ] && [ "$_d" = l ] && _d=c
             set -- "c=stay in complain (keep using the site, look again later)" "e=enforce: block everything not in the profile$([ $((_nn + _nw + _np)) -gt 0 ] && echo ' (it would block the logged things)')"
             [ "$_src" = ccdc ] && [ $((_nn + _nw)) -gt 0 ] && set -- "l=learn: add the normal ones to its profile, then look again later" "$@"
@@ -1627,12 +1650,14 @@ while IFS='|' read -r _kind _bins _name _units _chk; do
     case "$_state:$_ans" in
         unconfined:c|unconfined:e|complain:e|complain:l|enforce:c) printf '%s|%s|%s|%s|%s|%s|%s\n' "$_kind" "$_bin" "$_pname" "$_src" "$_state" "$_ans" "$_units" >>"$W/plan" ;;
     esac
+    # the restart (if asked above) comes after the mode change
+    [ "$_rs" = y ] && printf '%s|%s|%s|%s|%s|%s|%s\n' "$_kind" "$_bin" "$_pname" "$_src" "$_state" r "$_units" >>"$W/plan"
 done <"$W/svcs"
 [ "$_seen" = 1 ] || cc_show "$C_GRY" "  None of apache2, nginx, php-fpm, mariadb/mysql is installed here."
 
 # ---- Plan -----------------------------------------------------------------------------------
 header "3/5  plan"
-act_word() { case "$1:$2" in unconfined:c) echo "load the profile in complain mode (nothing blocked)" ;; unconfined:e|complain:e) echo "ENFORCE the profile" ;; complain:l) echo "add the learned rules, stay in complain" ;; enforce:c) echo "back to complain" ;; esac; }
+act_word() { case "$1:$2" in *:r) echo "restart it so it runs under its profile" ;; unconfined:c) echo "load the profile in complain mode (nothing blocked)" ;; unconfined:e|complain:e) echo "ENFORCE the profile" ;; complain:l) echo "add the learned rules, stay in complain" ;; enforce:c) echo "back to complain" ;; esac; }
 NCH=0; : >"$CC_RUN_DIR/plan.txt"
 while IFS='|' read -r _kind _bin _pname _src _state _ans _units; do
     NCH=$((NCH + 1)); printf '%s: %s\n' "$_kind" "$(act_word "$_state" "$_ans")" >>"$CC_RUN_DIR/plan.txt"
@@ -1656,7 +1681,7 @@ check() {   # check KIND -> 0 still answers
     [ "$1" = mysql ] || cc_have curl || return 0
     case "$1" in
         mysql) _c=$(cc_first mariadb-admin mysqladmin) || return 0; "$_c" --connect-timeout=5 ping >/dev/null 2>&1 || "$_c" ping 2>&1 | grep -qi 'access denied' ;;
-        *) _s=$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$URL" 2>/dev/null); case "$_s" in [23]??|401|403|404) return 0 ;; *) return 1 ;; esac ;;
+        *) _s=$(curl -k -s -m 10 -o /dev/null -w '%{http_code}' "$URL" 2>/dev/null); case "$_s" in [23]??|401|403|404) return 0 ;; *) return 1 ;; esac ;;
     esac
 }
 # set_mode FILE NAME ccdc|package complain|enforce -> switch and reload
@@ -1673,6 +1698,8 @@ set_mode() {
 # back in complain and return 1
 back_off() {
     sleep 2
+    # Only blame the profile if the service answered before.
+    [ "$_before" = y ] || { cc_show "$C_YEL" "    [*] $_kind did not answer before the change either: not checked"; return 0; }
     check "$_kind" && return 0
     cc_show "$C_RED" "    [x] $_kind stopped answering under enforce: put back in complain"
     set_mode "$_pf" "$_pname" "$_src" complain; date +%s >"$STATE/$_pname.complain"
@@ -1690,17 +1717,24 @@ elif [ "$CC_APPLY" != 1 ] || { [ -z "$R" ] && ! cc_is_root; }; then
     cc_show "$C_GRY" "  Dry run: nothing was changed. Run again with --apply."
     # shellcheck disable=SC2034  # read by cc_finish
     CC_N_WOULD=$NCH
-elif cc_ask "Apply these $NCH change(s)?" Y "yes, apply them$(grep -q '|e|' "$W/plan" && echo ' (a revert timer puts enforced profiles back in complain unless you confirm from a NEW session)')" "no, change nothing"; then
+elif cc_ask "Apply these $NCH change(s)?" Y "yes, apply them$(grep -q '|e|' "$W/plan" && echo ' (a revert timer undoes this run unless you confirm from a NEW session)')" "no, change nothing"; then
     APPLIED=1; mkdir -p "$STATE" "$AAD/local" "$AAD/force-complain"
     if grep -q '|e|' "$W/plan" && [ "$NOTIMER" != 1 ] && [ -z "$R" ]; then cc_timer_start "$TIMER"; TIMER_ON=1; fi
     while IFS='|' read -r _kind _bin _pname _src _state _ans _units; do
+        _before=n; { [ "$_ans" = e ] || [ "$_ans" = r ]; } && check "$_kind" && _before=y
         _ok=1; _pf="$AAD/$_pname"; [ "$_src" = package ] && { _pk=$(packaged "$_bin"); _pf=${_pk%%"|"*}; }
         _fc="$AAD/force-complain/$(basename "$_pf")"; _qp=$(cc_shquote "$PARSER"); _qf=$(cc_shquote "$_pf")
         case "$_state:$_ans" in
+            *:r)
+                if [ -z "$R" ]; then svc_restart "$_units" >>"$CC_LOG" 2>&1; sleep 2; [ "$(proc_label "$_kind" "$_bin")" = unconfined ] && { _ok=0; cc_show "$C_RED" "    [x] still unconfined after the restart (another program name? see $CC_LOG)"; }; fi ;;
             unconfined:c|unconfined:e)
                 _mode=complain; [ "$_ans" = e ] && _mode=enforce
                 if [ "$_src" = ccdc ]; then
-                    cc_undo_add "remove the CCDC profile $_pname" "$_qp -R $_qf 2>/dev/null; rm -f $_qf; $(svc_restart_cmd "$_units")"
+                    if [ -f "$_pf" ]; then
+                        # a file from an earlier run, not loaded now: put it back as it was
+                        cc_undo_add "unload $_pname" "$_qp -R $_qf 2>/dev/null; $(svc_restart_cmd "$_units")"
+                        cc_backup_file "$_pf" >/dev/null
+                    else cc_undo_add "remove the CCDC profile $_pname" "$_qp -R $_qf 2>/dev/null; rm -f $_qf; $(svc_restart_cmd "$_units")"; fi
                     write_profile "$_kind" "$_bin" "$_pname" "$_mode" >"$_pf"
                     [ -f "$AAD/local/$_pname" ] || : >"$AAD/local/$_pname"
                     load -r -K "$_pf" >>"$CC_LOG" 2>&1 </dev/null || { _ok=0; rm -f "$_pf"; cc_show "$C_RED" "    [x] apparmor_parser refused the profile: $CC_LOG"; }
@@ -1752,6 +1786,7 @@ header "5/5  summary"
     printf '\nThe steps: complain -> use the site normally for a while (log in, buy, upload) -> run this again: learn -> again: enforce.\n'
     printf 'Learned rules live in %s/local/ccdc-*; the profiles in %s/ccdc-*.\n' "${AAD#"$R"}" "${AAD#"$R"}"
     [ "$APPLIED" = 1 ] && [ -f "$CC_RUN_DIR/revert.sh" ] && printf 'Undo this run: sh %s/revert.sh --force\n' "$CC_RUN_DIR"
+    [ "$APPLIED" = 1 ] && [ ! -f "$CC_RUN_DIR/revert.sh" ] && printf 'Undo: the lines in %s/undo-%s.log\n' "$CC_OUT" "$CC_HOST"
 } >"$CC_RUN_DIR/summary.txt"
 { printf 'AppArmor mode of each service when the run started\n\n'; cat "$W/status"; printf '\nunconfined = nothing stops it; complain = logs only; enforce = blocks\n'; } >"$CC_RUN_DIR/status.txt"
 while IFS= read -r _l; do case "$_l" in ==*|LX-44*) cc_show "$C_CYN" "$_l" ;; *FAILED*|*'Failed: '[1-9]*) cc_show "$C_RED" "$_l" ;; *) cc_show "" "$_l" ;; esac; done <"$CC_RUN_DIR/summary.txt"

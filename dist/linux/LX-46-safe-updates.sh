@@ -1399,6 +1399,7 @@ grep -v '\[NOTE\]\|\[DEBUG\]' "$CC_LOG" >"$OUTF" 2>/dev/null || : >"$OUTF"
 CC_TEE=$OUTF
 W="$CC_RUN_DIR/.work"; mkdir -p "$W"
 AETC=${CCDC_TEST_ETC:-/etc}   # tests point this at a fake /etc
+ACACHE=${CCDC_TEST_APTCACHE:-/var/cache/apt/archives}
 header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
 export DEBIAN_FRONTEND=noninteractive
 APTO="-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
@@ -1437,6 +1438,12 @@ if [ "$PM" = apt ]; then
         else src_line '[*]' "not the distribution's: $_u (added by your team? if not, delete it from /etc/apt/sources.list.d)"; fi
     done <"$W/src"
     grep -rhsiE 'AllowUnauthenticated[[:space:]]+"?(true|1)|AllowInsecureRepositories[[:space:]]+"?(true|1)' "$AETC"/apt/apt.conf "$AETC"/apt/apt.conf.d 2>/dev/null | while IFS= read -r _l; do src_line '[!]' "apt takes unsigned packages: $_l (in /etc/apt/apt.conf.d)"; done
+    # Pins can block updates as well as a hold: Pin-Priority below 0 never installs.
+    for _pf in "$AETC"/apt/preferences "$AETC"/apt/preferences.d/*; do
+        [ -f "$_pf" ] || continue
+        awk -v f="${_pf#"$AETC"}" 'BEGIN { RS = "" } /Pin-Priority:[ \t]*-/ { p = ""; if (match($0, /Package:[^\n]*/)) p = substr($0, RSTART + 8, RLENGTH - 8); print "/etc" f "|" p }' "$_pf"
+    done | while IFS='|' read -r _f _p; do src_line '[*]' "a pin that blocks updates (Pin-Priority below 0) for$_p in $_f: red team uses this like a hold"; done
+    grep -rhsiE '^[^#]*Acquire::(http|https|ftp)::Proxy' "$AETC"/apt/apt.conf "$AETC"/apt/apt.conf.d 2>/dev/null | while IFS= read -r _l; do src_line '[*]' "apt goes through a proxy: $_l (yours? a proxy can hand out old packages)"; done
     apt-mark showhold 2>/dev/null | grep . >"$W/held"
 else
     for _f in "$AETC"/yum.repos.d/*.repo; do
@@ -1464,7 +1471,9 @@ else cc_show "$C_GRN" "  [ok] no packages held"; fi
 
 # ---- 2. Before ------------------------------------------------------------------------------
 header "2/6  services before"
-ports() { ss -ltnH 2>/dev/null | awk '{ a = $4; sub(/.*:/, "", a); print a }' | sort -un; }
+# Ports below 32768 only: higher ones are usually short-lived (they come and
+# go on their own and would look like a broken service).
+ports() { ss -ltnH 2>/dev/null | awk '{ a = $4; sub(/.*:/, "", a); if (a + 0 < 32768) print a }' | sort -un; }
 web() { cc_have curl || return 0; curl -s -m 8 -o /dev/null -w '%{http_code}' "$URL" 2>/dev/null; }
 dbok() { _c=$(cc_first mariadb-admin mysqladmin) || return 0; "$_c" --connect-timeout=5 ping >/dev/null 2>&1 && echo up && return; "$_c" ping 2>&1 | grep -qi 'access denied' && echo up; }
 ports >"$W/ports0"; WEB0=$(web); DB0=$(dbok)
@@ -1601,11 +1610,14 @@ elif cc_ask "Apply: $NPLAN group(s) of updates$([ "$NREL" -gt 0 ] && echo ", $NR
             for _p in $_pk; do
                 _o=$(awk -F'|' -v p="$_p" '$3 == p { print $4; exit }' "$W/upd")
                 [ -n "$_o" ] || continue   # a new package: nothing to go back to
-                if (cd "$OLD" && apt-get download "$_p=$_o" </dev/null >>"$CC_LOG" 2>&1); then _back="$_back $_p=$_o"; else _miss="$_miss $_p"; fi
+                # apt's own cache first (often still there), then the mirror
+                _cf=$(ls "$ACACHE/${_p}_$(printf '%s' "$_o" | sed 's/:/%3a/')_"*.deb 2>/dev/null | head -n 1)
+                if [ -n "$_cf" ] && cp "$_cf" "$OLD/" 2>>"$CC_LOG"; then _back="$_back $_p=$_o"
+                elif (cd "$OLD" && apt-get download "$_p=$_o" </dev/null >>"$CC_LOG" 2>&1); then _back="$_back $_p=$_o"; else _miss="$_miss $_p"; fi
             done
-            _undo="cd $(cc_shquote "$OLD") && DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades $APTO$(for _x in $_back; do printf ' ./%s_%s_*.deb' "${_x%%=*}" "$(printf '%s' "${_x#*=}" | sed 's/:/%3a/')"; done)"
+            _undo=""; [ -n "$_back" ] && _undo="cd $(cc_shquote "$OLD") && DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades $APTO$(for _x in $_back; do printf ' ./%s_%s_*.deb' "${_x%%=*}" "$(printf '%s' "${_x#*=}" | sed 's/:/%3a/')"; done)"
         else
-            _undo="$PM -y history undo last"
+            _undo=""   # set after the update: the number of its dnf transaction
         fi
         if [ -n "$_miss" ]; then
             cc_show "$C_YEL" "  [*] the old version of$_miss is no longer on the mirror: no rollback for it"
@@ -1619,7 +1631,12 @@ elif cc_ask "Apply: $NPLAN group(s) of updates$([ "$NREL" -gt 0 ] && echo ", $NR
             $PM -y upgrade $_pk </dev/null >>"$CC_LOG" 2>&1
         fi
         _rc=$?
-        [ -n "$_back" ] || [ "$PM" != apt ] && cc_undo_add "roll back $_g updates" "$_undo"
+        if [ "$PM" != apt ] && [ "$_rc" = 0 ]; then
+            # Undo this transaction by its number, not "last" (a later one would be undone instead).
+            _tid=$($PM -q history list 2>/dev/null | awk '$1 ~ /^[0-9]+$/ { print $1; exit }')
+            [ -n "$_tid" ] && _undo="$PM -y history undo $_tid"
+        fi
+        [ -n "$_undo" ] && { [ -n "$_back" ] || [ "$PM" != apt ]; } && cc_undo_add "roll back $_g updates" "$_undo"
         _why=$(broke)
         if [ "$_rc" != 0 ]; then
             NBAD=$((NBAD + 1)); cc_show "$C_RED" "  [x] $_g: the package manager failed (see $CC_LOG)"
@@ -1628,7 +1645,8 @@ elif cc_ask "Apply: $NPLAN group(s) of updates$([ "$NREL" -gt 0 ] && echo ", $NR
         else
             cc_show "$C_RED" "  [!] after the $_g ($_k) update: $_why"
             cc_choose "A service broke after the $_g update: what now?" r "r=roll back the $_g update now" "l=leave it (fix it by hand; the rollback line is in the undo log)"
-            if [ "$CC_CHOICE" = r ]; then
+            if [ "$CC_CHOICE" = r ] && [ -z "$_undo" ]; then NBAD=$((NBAD + 1)); cc_show "$C_RED" "  [x] no rollback for this group (the old packages could not be saved)"
+            elif [ "$CC_CHOICE" = r ]; then
                 if sh -c "$_undo" </dev/null >>"$CC_LOG" 2>&1; then
                     NROLL=$((NROLL + 1)); _why2=$(broke)
                     if [ -z "$_why2" ]; then cc_show "$C_GRN" "  [+] rolled back; everything answers again"

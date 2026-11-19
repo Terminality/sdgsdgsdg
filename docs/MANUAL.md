@@ -3112,7 +3112,7 @@ Only with `--apply`: processes killed, files quarantined (the undo puts files ba
 
 ### What it produces
 
-In `rootkit-N/`: `output.txt`, `findings.txt`, `summary.txt`, `clamav.txt` / `rkhunter.txt` / `chkrootkit.txt` when they ran, `revert.sh`.
+In `rootkit-N/`: `output.txt`, `findings.txt`, `summary.txt`, `clamav.txt` / `rkhunter.txt` / `chkrootkit.txt` when they ran. Quarantined files go to the quarantine folder; their undo lines (put them back) to the undo log.
 
 ### What to watch for
 
@@ -3136,7 +3136,7 @@ Run it three times, with time between:
 | Run | Step | What happens |
 | --- | --- | --- |
 | 1 | **complain** | The profile is loaded but **nothing is blocked**: AppArmor only logs what it would block. Now use the site: log in, buy, upload, read mail. |
-| 2 | **learn** | The log lines are sorted. Normal ones (reads, logs, capabilities) are offered for the profile. Writes into the site code are asked on their own (an upload, or a web shell?). Programs it ran are **never** added: a shell, `curl`, `nc` or `python` is shown as `[!]`. Look at the site with SV-16 first. |
+| 2 | **learn** | The log lines are sorted. Normal ones (reads, logs, capabilities) are offered for the profile. Writes into the site code are asked on their own (an upload, or a web shell?). Programs it ran are **never** added: a shell, `curl`, `nc` or `python` is shown as `[!]`. So are secrets and system files (`/etc/shadow`, SSH keys, `/root`, writes into `/etc` or `/usr`) and dangerous capabilities (`sys_module`, `sys_admin`). Look at the site with SV-16 first. |
 | 3 | **enforce** | Everything not in the profile is blocked. The service is checked right after; if it stopped answering, it goes back to complain on its own. A revert timer also runs. |
 
 ### The services
@@ -3157,6 +3157,7 @@ On Red Hat / Rocky (SELinux, not AppArmor) it only shows the SELinux mode and ho
 | unconfined | `[c]omplain` (default) / `[e]nforce now` / `[k]eep` | `--batch` takes complain |
 | complain | `[l]earn` (default when there are lines) / `[e]nforce` (default after 10 quiet minutes) / `[c]` stay | `--batch` |
 | enforced | `[k]eep` (default) / `[c]` back to complain | `--batch` |
+| Loaded, but the running service started before it | `[r]estart it` (default) / `[k]eep` | `--batch` |
 | Add the normal lines? / the writes into the site code? | `[y]` / `[n]` (site code: default no) | `--batch` |
 | Restart the service so it runs under its profile? | `[y]` / `[n]` | `--batch` |
 | Apply? | `[y]` / `[n]` | `--apply` |
@@ -3191,9 +3192,9 @@ sudo sh LX-46-safe-updates.sh --protected p.csv --apply --batch   # security upd
 
 | Step | What happens |
 | --- | --- |
-| Sources | Flags package sources that are not the distribution's (`[*]`) and sources with no signature check (`[!]`: anything served there gets installed). Flags held packages. |
+| Sources | Flags package sources that are not the distribution's (`[*]`) and sources with no signature check (`[!]`: anything served there gets installed). Flags held packages, pins that block updates (Pin-Priority below 0) and an apt proxy. |
 | List | Pending updates grouped by service: ssh, openssl, sudo, web, php, database, mail, dns, ftp, system, kernel. Security apart. Full list in `updates.txt`. |
-| Before each group | Saves the old packages in `old-packages/` and notes the listening ports, the web page answer and the database. |
+| Before each group | Saves the old packages in `old-packages/` (from apt's cache, else the mirror) and notes the listening ports (below 32768), the web page answer and the database. |
 | Install | Your config files are always kept. A new default config from the package shows as `[*]` (`.dpkg-dist`); compare it later, don't copy it over. |
 | After each group | Checks every port that listened before still listens, the web page and the database. If one stopped: roll back that group. |
 | After all | Offers to restart services still running the old (unpatched) library code. Says if a reboot is needed. |

@@ -51,6 +51,17 @@ if [ "$(id -u)" = 0 ]; then
     sh "$T_TMP/undo.sh" >/dev/null 2>&1
     t_ok "undo puts the files back" test -f "$F/reptile"
 
+    t_start "the protected list"
+    mkroot
+    "$B/xmrig" 600 & MP=$!
+    _i=0; while ! ps -eo comm= | grep -qx xmrig && [ "$_i" -lt 20 ]; do sleep 1; _i=$((_i + 1)); done
+    printf 'type,value,note\nprocess,xmrig,test\npath,/reptile,test\n' >"$T_TMP/prot.csv"
+    out=$(run --batch --protected "$T_TMP/prot.csv" --apply 2>&1)
+    t_ok "a protected process is not killed" alive "$MP"
+    t_ok "a protected path is not quarantined" test -f "$F/reptile"
+    t_fail "an unprotected one still is" test -f "$F/dev/shm/.k"
+    kill "$MP" 2>/dev/null
+
     t_start "questions on a terminal"
     if command -v script >/dev/null 2>&1; then
         mkroot
