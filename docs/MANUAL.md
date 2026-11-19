@@ -57,6 +57,7 @@ Contents:
 47. AppArmor confinement, `roles/linux/LX-44-apparmor.sh` (LX-44)
 48. Safe security updates, `roles/linux/LX-46-safe-updates.sh` (LX-46)
 49. TLS certificate check, `roles/applications/SV-32-tls-check.sh` (SV-32)
+50. Device accounts and sessions, `roles/network/NW-12-device-sessions.sh` (NW-12)
 
 ---
 
@@ -3274,3 +3275,59 @@ In `tls-N/`: `output.txt`, `certs.txt` (each certificate), `served.txt` (each po
 - **A new self-signed certificate makes browsers warn**, and a scoring check that verifies certificates fails. Tell the team before you replace a CA-signed one.
 - **Old TLS off can lock out a very old client.** Rare, but check the scoring results after.
 - A port served by a program the script does not know (not Apache, nginx, Dovecot, Postfix): pass `--port PORT:tls:SERVICE` to say whose config it is, or fix it by hand.
+
+## 50. Device accounts and sessions, `roles/network/NW-12-device-sessions.sh` (NW-12)
+
+A red team's first move on a firewall or router is to log in with an extra admin account and stay logged in. This shows every admin account and everyone logged in, on every device, then kicks and disables what is not yours.
+
+### How to run it
+
+```sh
+BT_NET_PASS='pw' sh NW-12-device-sessions.sh --hosts config/hosts.csv --team 10.0.0.0/24            # look, dry run
+BT_NET_PASS='pw' sh NW-12-device-sessions.sh --hosts config/hosts.csv --team 10.0.0.0/24 --apply    # asks each
+```
+
+Run it **once early**: that run saves the account names as the baseline (`net-accounts-baseline.txt` in `--out`). Later runs flag an account added since. Then run NW-10: a kicked session can log in again until the password changes.
+
+### What it shows
+
+| What | Judged |
+| --- | --- |
+| Each admin account | `[ok]` the login account, `--known` ones, protected ones; `[!]` new since the first run; `[*]` the rest on the first run (are they yours?) |
+| Each session | `[ok]` this script's own login (your login account from this box's address, `--me`); `[ok]` from `--team`; `[*]` on the console; `[!]` from anywhere else |
+| Odd names | An account or session with a quote, `;` or other odd character: `[!]`, never put into a command |
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Each session not yours | `[k]ick` (default when not from `--team`) / `[l]eave` / `[a]ll the rest default` | `--batch` |
+| Each account to look at | `[d]isable` (default when new since the first run) / `[k]eep` / `[a]ll the rest default` | `--batch`, `--known` |
+| Do these? | `[y]` / `[n]` | `--apply` |
+
+An account you keep (with `--apply`) joins the baseline and is not asked about again.
+
+### What each brand does
+
+| Brand | Disable | Kick | Undo |
+| --- | --- | --- | --- |
+| Cisco IOS / ASA | `no username`, `write memory` | `clear line vty N` / `ssh disconnect N` | puts back the account's line from NW-01's saved copy |
+| Palo Alto | `delete mgt-config users`, `commit` | `delete admin-sessions username` (all of that account's sessions; never your own account) | **none** (the question says so) |
+| FortiGate | `delete` in `config system admin` | not automatic: the command is shown (its session numbers shift) | from NW-01's saved copy |
+| VyOS | `delete system login user`, `commit`, `save` | `pkill -t pts/N` | from NW-01's saved copy |
+| MikroTik | `/user disable` | `/user active request-logout` | `/user enable` |
+| Linux | `usermod -L -e 1` | `pkill -t pts/N` | `usermod -U` |
+| pfSense / OPNsense | web GUI only: listed | | |
+
+The undo reads the account's lines from NW-01's copy **when it runs**, so no password hash is copied into the results. Without an NW-01 copy there is no undo for that account, and the question says so. An undo script needs `BT_NET_PASS` set.
+
+### What it produces
+
+In `device-sessions-N/`: `output.txt`, `accounts.txt`, `sessions.txt`, `plan.txt`, `summary.txt`, `undo/DEVICE-ACCOUNT.sh`.
+
+### What to watch for
+
+- **Not yet run on real Cisco, Palo Alto, FortiGate, VyOS or MikroTik devices.** The stand-in answers follow each brand's documentation. Run it without `--apply` first and check it lists what the web GUI shows.
+- **A teammate outside `--team` looks like red team.** Give `--team`, and read each question.
+- **Only local accounts.** TACACS/RADIUS logins live on that server.
+- **Linux without `/var/run/utmp`** (some containers) shows no sessions.

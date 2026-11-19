@@ -1,6 +1,6 @@
 # Build status
 
-43 of 47 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+44 of 48 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -14,7 +14,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | Hardening: easy | 3 | 3 |
 | Hardening: medium | 2 | 2 |
 | Hardening: hard | 2 | 4 |
-| Management | 3 | 3 |
+| Management | 4 | 4 |
 | Alerts | 3 | 4 |
 | Kit | 3 | 3 |
 
@@ -102,6 +102,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LX-20 | Linux password rotation | access | built | `roles/linux/LX-20-password-rotation.sh` |
 | WN-20 | Windows password rotation | access | built | `roles/windows-ad/WN-20-password-rotation.ps1` |
 | NW-10 | Network device password rotation | access | built | `roles/network/NW-10-device-passwords.sh` |
+| NW-12 | Device accounts and sessions | access | built | `roles/network/NW-12-device-sessions.sh` |
 
 ## Alerts
 
