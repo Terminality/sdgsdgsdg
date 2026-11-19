@@ -1,6 +1,6 @@
 # Applications — web + databases
 
-Scripts owned by this role. 13 of 13 are built.
+Scripts owned by this role. 14 of 14 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -18,6 +18,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | SV-50 | Service recovery | any | medium | built | [`roles/applications/SV-50-service-recovery.sh`](../../roles/applications/SV-50-service-recovery.sh) |
 | SV-44 | Splunk hardening and passwords | wave2 | medium | built | [`roles/applications/SV-44-splunk-hardening.sh`](../../roles/applications/SV-44-splunk-hardening.sh) |
 | SV-31 | Mail tamper check | wave2 | medium | built | [`roles/applications/SV-31-mail-tamper.sh`](../../roles/applications/SV-31-mail-tamper.sh) |
+| SV-32 | TLS certificate check | wave1 | medium | built | [`roles/applications/SV-32-tls-check.sh`](../../roles/applications/SV-32-tls-check.sh) |
 | SV-30 | Service hardening (FTP + legacy) | Hardening: easy | access | built | [`roles/applications/SV-30-service-hardening.sh`](../../roles/applications/SV-30-service-hardening.sh) |
 
 Script files in this folder are named `<ID>-<short-name>.sh` or `.ps1`. What the tiers and risk levels mean, and the rules for each: `docs/PLAN.md`.

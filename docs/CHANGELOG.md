@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-19: TLS certificate check (SV-32, new)
+
+- **SV-32** reads every certificate and key named in the Apache, nginx, Dovecot, Postfix, vsftpd and MariaDB configs: expired or ending soon, not matching its key, self-signed, weak key, SHA-1/MD5 signature, a key others can read. Then connects to each TLS port (443, 993, 995, 465, STARTTLS on 25, 587, 143, 110, 21, 3306): the certificate it really serves, TLS 1.0/1.1, weak ciphers. A fingerprint baseline flags a certificate swapped since the first run (fingerprints only, never a key).
+- Asked once per certificate (every problem in one question): `[n]ew self-signed` / `[l]eave` - default new only when it was self-signed already. A readable key: `[f]ix` (chmod 600). Old TLS on a port: `[f]ix the config` (tested with the service's own check, reloaded, put back if the port stops answering TLS 1.2). A changed certificate: `[k]eep flagging` / `[u]se as the new baseline`.
+- Found while testing: one certificate file can be copied to several places (Dovecot and Postfix share the snakeoil pair), so a served certificate lists every file it matches; the undo's reload now checks for a running systemd, not just the systemctl command.
+- Tested: 39 checks under seven shells and three awks; the Postfix fix live on the test box.
+
 ## 2026-11-19: Safe security updates (LX-46, new)
 
 - **LX-46** first shows where updates come from: package sources that are not the distribution's, sources with no signature check (`[trusted=yes]`, `gpgcheck=0`, `AllowUnauthenticated`) and held packages (red team holds openssh so it never gets patched).
