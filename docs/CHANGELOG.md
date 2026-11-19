@@ -14,7 +14,8 @@ What changed, newest first. Each entry names the scripts touched and how they we
 - **LX-45** looks for what hides: processes in /proc that ps doesn't show, listening ports in /proc/net that ss doesn't show (both checked twice, a second apart), kernel modules hidden from lsmod or with a rootkit's name, kernel taint, core programs (ps, ss, ls, ssh, sudo, login...) that don't match their package, known rootkit paths, programs in /dev and /dev/shm, fake kernel threads, miners, promiscuous interfaces, and ClamAV/rkhunter/chkrootkit when installed (installing them is offered).
 - Asked per finding: `[k]ill` / `[q]uarantine` / `[l]eave` / `[a]ll the rest`. Kernel modules are reported, not unloaded.
 - Found while testing: dpkg lists merged-/usr programs as `/bin/ss`, so both spellings are tried; the miner search must not match its own command line, so it reads one ps snapshot and matches program names; zombies are skipped; /dev's search must not repeat /dev/shm.
-- Tested: 22 checks under seven shells and three awks with harmless stand-ins. The ClamAV part only runs where ClamAV has signatures (not on the test box).
+- Review fixes: the hidden-process check is skipped when `ps` sees less than half of `/proc` (a cut-down ps would have made every process "hidden", with kill as the default); the protected list now guards kills (process name) and quarantines (path) - it was checked with a type that never matches; before a kill the pid must still be the same program (a pid reused while you answered is left alone); a file with the immutable flag is unlocked to quarantine it; symlinked programs (alternatives) are looked up by their target; the summary says where quarantined files and their undo lines are.
+- Tested: 25 checks under seven shells and three awks with harmless stand-ins. The ClamAV part only runs where ClamAV has signatures (not on the test box).
 
 ## 2026-11-18: Remote access lockdown (LX-26, new)
 
