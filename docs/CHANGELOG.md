@@ -2,6 +2,14 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Web shell hunter (SV-16, new)
+
+- **SV-16** looks inside the site's files for web shells: request data run as code, eval of encoded code, `preg_replace /e`, known shell names, PHP in upload folders or inside images, `.htaccess` handlers and `auto_prepend_file`, WordPress core files that differ from wordpress.org (or that it doesn't ship). It shows the matching line, asks per file (`[q]uarantine [k]eep [a]ll`), and checks the site after.
+- If the site breaks, everything goes back and the files are retried one at a time; a file the site needs is put back and listed to clean by hand.
+- `--watch N --auto-quarantine --apply` catches new shells as they land.
+- Found while testing: folder names must be checked only inside the web root (a site under `/tmp` made every file "in a temp folder"); MED points must never add up to HIGH; PHP's opcache keeps a moved file "working" for ~2 s, so the site check looks at 3 s and 6 s.
+- Tested: 39 checks under seven shells and three awks; live with Apache.
+
 ## 2026-11-18: Splunk hardening and passwords (SV-44, new)
 
 - **SV-44** finds Splunk's backdoors (scripted inputs and alert scripts, apps that didn't come with Splunk, a deployment server, scripted login, extra admins and roles that make admins, the old `changeme` password, readable secrets) and offers: new passwords for each Splunk user through REST (each login tested), scripted inputs in planted apps disabled, apps quarantined, the deployment client removed, secrets locked down.

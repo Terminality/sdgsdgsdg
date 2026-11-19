@@ -1,6 +1,6 @@
 # Applications — web + databases
 
-Scripts owned by this role. 10 of 10 are built.
+Scripts owned by this role. 11 of 11 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -9,6 +9,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | SV-01 | Web and database enum (Linux) | Enum (look only) | none | built | [`roles/applications/SV-01-web-db-enum.sh`](../../roles/applications/SV-01-web-db-enum.sh) |
 | SV-14 | Database backup | Backup and prep | none | built | [`roles/applications/SV-14-db-backup.sh`](../../roles/applications/SV-14-db-backup.sh) |
 | SV-15 | Site backup and restore | Backup and prep | medium | built | [`roles/applications/SV-15-site-backup.sh`](../../roles/applications/SV-15-site-backup.sh) |
+| SV-16 | Web shell hunter | wave2 | medium | built | [`roles/applications/SV-16-webshell-hunter.sh`](../../roles/applications/SV-16-webshell-hunter.sh) |
 | SV-20 | Database hardening | wave2 | medium | built | [`roles/applications/SV-20-db-hardening.sh`](../../roles/applications/SV-20-db-hardening.sh) |
 | SV-21 | PHP and web app hardening | wave2 | medium | built | [`roles/applications/SV-21-web-hardening.sh`](../../roles/applications/SV-21-web-hardening.sh) |
 | SV-42 | Database password rotation | wave2 | medium | built | [`roles/applications/SV-42-db-passwords.sh`](../../roles/applications/SV-42-db-passwords.sh) |
