@@ -8,7 +8,7 @@
 #
 # PURPOSE
 #   Makes every script a single standalone file.  In the repo each script
-#   loads lib/lib.sh (or lib/lib.ps1) from a "CCDC-LIB" block near its top.
+#   loads lib/lib.sh (or lib/lib.ps1) from a "BT-LIB" block near its top.
 #   This copies each script into dist/<role>/ with that block replaced by
 #   the library itself, so on a box you copy ONE file and run it: no lib
 #   folder needed.  Then it writes dist/MANIFEST.sha256, which the scripts
@@ -56,7 +56,7 @@ sha256() {
     else echo "no SHA-256 tool (sha256sum, shasum or openssl)" >&2; exit 3; fi
 }
 
-TMP="${TMPDIR:-/tmp}/ccdc-build.$$"
+TMP="${TMPDIR:-/tmp}/bt-build.$$"
 rm -rf "$TMP"; mkdir -p "$TMP/dist" || exit 3
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
@@ -64,28 +64,28 @@ SHVER=$(sed -n 's/^CC_LIB_VERSION="\(.*\)"/\1/p' "$ROOT/lib/lib.sh" | head -n 1)
 PSVER=$(sed -n "s/^\$script:CcLibVersion *= *'\(.*\)'.*/\1/p" "$ROOT/lib/lib.ps1" | head -n 1)
 
 # build SRC DST LIB NOTE CRLF
-#   Copy SRC to DST with the CCDC-LIB block replaced by LIB (without a "#!"
+#   Copy SRC to DST with the BT-LIB block replaced by LIB (without a "#!"
 #   first line).  CRLF=1 writes Windows line endings.
 build() {
     _src=$1; _dst=$2; _lib=$3; _note=$4; _crlf=$5
     mkdir -p "$(dirname "$_dst")"
     tr -d '\r' <"$_lib" | awk 'NR == 1 && /^#!/ { next } { print }' >"$TMP/lib.body"
     tr -d '\r' <"$_src" | awk -v libf="$TMP/lib.body" -v note="$_note" '
-        /^# >>> CCDC-LIB/ {
-            print "# >>> CCDC-LIB  " note
+        /^# >>> BT-LIB/ {
+            print "# >>> BT-LIB  " note
             while ((getline l < libf) > 0) print l
             close(libf); skip = 1; next
         }
-        /^# <<< CCDC-LIB/ { skip = 0; print; found = 1; next }  # posix-ok: awk pattern, not a here-string
+        /^# <<< BT-LIB/ { skip = 0; print; found = 1; next }  # posix-ok: awk pattern, not a here-string
         !skip { print }
-        END { if (!found) exit 1 }' >"$TMP/one" || { echo "no complete CCDC-LIB block in $_src" >&2; exit 1; }
+        END { if (!found) exit 1 }' >"$TMP/one" || { echo "no complete BT-LIB block in $_src" >&2; exit 1; }
     if [ "$_crlf" = 1 ]; then awk '{ printf "%s\r\n", $0 }' "$TMP/one" >"$_dst"; else cp "$TMP/one" "$_dst"; fi
 }
 
 n=0
 for f in "$ROOT"/roles/*/*.sh "$ROOT"/roles/*/*.ps1; do
     [ -f "$f" ] || continue
-    grep -q '^# >>> CCDC-LIB' "$f" || continue
+    grep -q '^# >>> BT-LIB' "$f" || continue
     role=$(basename "$(dirname "$f")"); name=$(basename "$f")
     case "$name" in
         *.sh)  build "$f" "$TMP/dist/$role/$name" "$ROOT/lib/lib.sh" "(lib/lib.sh $SHVER pasted in by tools/build.sh - edit lib/lib.sh, not this copy)" 0

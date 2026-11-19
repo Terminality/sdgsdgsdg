@@ -6,7 +6,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/network/NW-07-config-audit.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 O="$T_TMP/out"; F="$T_TMP/cfg"; mkdir -p "$O" "$F"

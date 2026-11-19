@@ -14,9 +14,9 @@
 #   protected list), and chosen accounts can get chosen passwords (-Passwords).
 #
 # USAGE
-#   powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-password-rotation.ps1 -Out C:\ccdc-out              dry run
-#   powershell ... WN-20-password-rotation.ps1 -Out C:\ccdc-out -Apply -Exclude mark.jacobs,admin
-#   powershell ... WN-20-password-rotation.ps1 -Out C:\ccdc-out -Apply -Passwords C:\team\sheet.csv
+#   powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-password-rotation.ps1 -Out C:\bt-out              dry run
+#   powershell ... WN-20-password-rotation.ps1 -Out C:\bt-out -Apply -Exclude mark.jacobs,admin
+#   powershell ... WN-20-password-rotation.ps1 -Out C:\bt-out -Apply -Passwords C:\team\sheet.csv
 #   Run in an elevated window; on a domain controller as a domain admin.
 #
 # OPTIONS
@@ -66,7 +66,7 @@
 # DEPENDS ON
 #   WMI (local accounts, services), ADSI (WinNT and LDAP providers), schtasks.
 #   All present on Windows 7 / Server 2008 R2 and later.  No AD module needed.
-#   $env:CCDC_WN20_FAKE names a folder of stand-in accounts for the tests, so
+#   $env:BT_WN20_FAKE names a folder of stand-in accounts for the tests, so
 #   they never touch a real account.
 #
 # TESTED ON
@@ -117,7 +117,7 @@ if ($Help) {
     exit 0
 }
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.ps1 by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -125,7 +125,7 @@ $ccDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 while ($ccDir -and -not (Test-Path -LiteralPath (Join-Path (Join-Path $ccDir 'lib') 'lib.ps1'))) { $ccDir = Split-Path -Parent $ccDir }
 if (-not $ccDir) { Write-Host 'cannot find lib/lib.ps1 above this script'; exit 3 }
 . (Join-Path (Join-Path $ccDir 'lib') 'lib.ps1')
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 # ---- Options ----------------------------------------------------------------
 # Windows PowerShell 5.1 turns an empty list returned from a function into
@@ -138,7 +138,7 @@ if ($Passwords -and -not (Test-Path -LiteralPath $Passwords)) { Write-Host "-Pas
 
 # ---- Start ------------------------------------------------------------------
 Initialize-Cc -Id 'WN-20' -Name 'Windows password rotation' -Kind changes -Bound $PSBoundParameters
-$Fake = $env:CCDC_WN20_FAKE
+$Fake = $env:BT_WN20_FAKE
 if ($Fake) { Write-CcLog -Level WARN -Message "TEST MODE: stand-in accounts from $Fake; no real account is read or changed" }
 elseif ($Cc.Apply) { Assert-CcAdmin }
 Use-CcRunDir
@@ -151,7 +151,7 @@ $Me = Lc2 $me0
 
 # ---- Account sources ----------------------------------------------------------
 # Every read and write of an account goes through these few functions, so the
-# tests can swap in stand-ins ($env:CCDC_WN20_FAKE) without touching Windows.
+# tests can swap in stand-ins ($env:BT_WN20_FAKE) without touching Windows.
 #   account object: Name, Scope (local|domain), Sid, Disabled, Spn, Path
 
 function Read-FakeCsv([string]$name) {
@@ -227,7 +227,7 @@ function Get-ServiceUsers {
 function Set-Pw($a, [string]$pw) {
     if ($Fake) {
         foreach ($r in @(Read-FakeCsv 'fail.csv')) { if ($r.name -eq $a.Name) { throw $r.reason } }
-        if ($env:CCDC_WN20_SLOW -eq $a.Name) { Start-Sleep -Seconds 60 }
+        if ($env:BT_WN20_SLOW -eq $a.Name) { Start-Sleep -Seconds 60 }
         [IO.File]::AppendAllText((Join-Path $Fake 'set.log'), ($a.Name + "`t" + $pw + "`n"))
         return
     }

@@ -46,7 +46,7 @@ Every script starts with the header block from the template: ID, NAME, ROLE, KIN
 10. Print a readable summary; put full detail in a CSV (`cc_csv_new`, `New-CcCsv`).
 11. Never write next to the script. Output goes to the `--out` folder.
 12. No internet and no package installs.
-13. Work alone and under fan-out. Never prompt unless `cc_confirm` / `Confirm-Cc` is used, which honors `CCDC_ASSUME_YES=1`.
+13. Work alone and under fan-out. Never prompt unless `cc_confirm` / `Confirm-Cc` is used, which honors `BT_ASSUME_YES=1`.
 14. Block IPv6 unless a scored service or an inject needs it.
 15. The kit's hash is checked before each run (automatic once `MANIFEST.sha256` exists).
 16. The team automation account is on the protected list.

@@ -18,7 +18,7 @@ $tmp = Join-Path ([IO.Path]::GetTempPath()) ('cctest_ps_' + $PID)
 $sdir = Join-Path $tmp 's'      # throw-away scripts live here, apart from the output folder
 $out = Join-Path $tmp 'out'
 New-Item -ItemType Directory -Path $sdir -Force | Out-Null
-$env:CCDC_SKIP_VERIFY = '1'
+$env:BT_SKIP_VERIFY = '1'
 $script:pass = 0; $script:fail = 0
 
 function T-Start($t) { Write-Host "  -- $t" }
@@ -233,7 +233,7 @@ T-HasNot $rep30 'low one' 'LOW lines are never printed'
 T-HasNot $r.Text 'FLAG HIGH' 'flags are not printed while the script runs'
 
 T-Start 'kit integrity check'
-$env:CCDC_SKIP_VERIFY = $null
+$env:BT_SKIP_VERIFY = $null
 $dist = Join-Path $tmp 'dist'; New-Item -ItemType Directory -Path $dist -Force | Out-Null
 $v = Join-Path $dist 'v.ps1'; Copy-Item -LiteralPath (Join-Path $sdir 'init.ps1') -Destination $v
 [IO.File]::WriteAllText((Join-Path $dist 'MANIFEST.sha256'), ((Get-CcSha256 -Path $v) + '  v.ps1' + "`n"))
@@ -241,8 +241,8 @@ $r = Run $v @('-Out', $out); T-Eq $r.Code 0 'untouched script passes the manifes
 Add-Content -LiteralPath $v -Value '# tampered'
 $r = Run $v @('-Out', $out); T-Eq $r.Code 3 'edited script is refused with exit 3'
 T-Has $r.Text 'KIT CHECK FAILED' 'message explains why'
-$env:CCDC_SKIP_VERIFY = '1'
-$r = Run $v @('-Out', $out); T-Eq $r.Code 0 'CCDC_SKIP_VERIFY=1 bypasses the check'
+$env:BT_SKIP_VERIFY = '1'
+$r = Run $v @('-Out', $out); T-Eq $r.Code 0 'BT_SKIP_VERIFY=1 bypasses the check'
 
 T-Start 'the PowerShell template runs as a dry run and writes its files'
 $r = Run (Join-Path (Join-Path $root 'templates') 'script-template.ps1') @('-Out', $out, '-Example', 'hello')

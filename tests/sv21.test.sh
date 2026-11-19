@@ -11,7 +11,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/applications/SV-21-web-hardening.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 O="$T_TMP/out"; F="$T_TMP/root"; S="$F/var/www/html/shop"
 
 mkroot() {
@@ -66,12 +66,12 @@ if [ "$(id -u)" = 0 ]; then
     t_ok "disable_functions keeps the old entry and adds the new ones" grep -q '^disable_functions = pcntl_fork,system,exec,shell_exec,passthru,proc_open,popen,pcntl_exec$' "$ini"
     t_ok "the fpm php.ini too" grep -q '^expose_php = Off' "$F/etc/php/8.3/fpm/php.ini"
     t_ok "the cli php.ini is unchanged" grep -q '^expose_php = On' "$F/etc/php/8.3/cli/php.ini"
-    dr="$F/etc/apache2/conf-enabled/zz-ccdc-web.conf"
+    dr="$F/etc/apache2/conf-enabled/zz-bt-web.conf"
     t_ok "drop-in: no PHP in uploads" grep -q '<Directory "/var/www/html/shop/wp-content/uploads">' "$dr"
     t_ok "drop-in: xmlrpc blocked" grep -q '<Files "xmlrpc.php">' "$dr"
     t_ok "drop-in: .git blocked" grep -q 'git|svn|hg' "$dr"
     t_eq "$(ls -ln "$S/wp-config.php" | awk '{ print $1, $3, $4 }')" "-rw-r----- 0 33" "wp-config.php is root:www-data 640"
-    t_eq "$(sed -n 2p "$S/wp-config.php")" "define( 'DISALLOW_FILE_EDIT', true ); // CCDC SV-21" "DISALLOW_FILE_EDIT added"
+    t_eq "$(sed -n 2p "$S/wp-config.php")" "define( 'DISALLOW_FILE_EDIT', true ); // BT SV-21" "DISALLOW_FILE_EDIT added"
     t_eq "$(ls -ln "$S/index.php" | awk '{ print $3 }')" 0 "the code belongs to root now"
     t_eq "$(ls -lnd "$S/wp-content/uploads" | awk '{ print $3 }')" 33 "uploads stay writable by the web server"
     t_has "$out" "nothing is restarted" "--root says nothing is restarted"
@@ -92,7 +92,7 @@ if [ "$(id -u)" = 0 ]; then
         mkroot
         # box: e | level: a | then Enter for each fix
         printf 'e\na\n\n\n\n\n\n\n\n\n\n\n\n' >"$T_TMP/ans"
-        tt=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --root '$F' --out '$O' --no-color --no-protected" /dev/null <"$T_TMP/ans" 2>&1)
+        tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --root '$F' --out '$O' --no-color --no-protected" /dev/null <"$T_TMP/ans" 2>&1)
         t_has "$tt" "[v] service: also no PHP in upload folders" "the level question lists its answers"
         t_has "$tt" "[y] yes, do it" "each fix lists its answers"
         t_has "$tt" "level access" "the typed level is used"

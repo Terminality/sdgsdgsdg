@@ -76,7 +76,7 @@ Every script accepts the same options, because the libraries parse them.
 | `--debug` | `-DebugLog` | Print debugging detail |
 | `--version` | | Print the library version |
 
-Environment variables do the same job when you don't want to type the options on every host: `CCDC_OUT`, `CCDC_PROTECTED`, `CCDC_ASSUME_YES=1` (answer yes to questions), `CCDC_SKIP_VERIFY=1` (skip the kit hash check), `CCDC_MANIFEST` (path to the manifest).
+Environment variables do the same job when you don't want to type the options on every host: `BT_OUT`, `BT_PROTECTED`, `BT_ASSUME_YES=1` (answer yes to questions), `BT_SKIP_VERIFY=1` (skip the kit hash check), `BT_MANIFEST` (path to the manifest).
 
 The habit to build: **run it dry, read the WOULD lines, then run it again with apply.**
 
@@ -109,7 +109,7 @@ Exit codes:
 
 ## 2. The output folder
 
-Scripts never write next to themselves. Everything goes under the folder given by `--out` / `-Out`, then `CCDC_OUT`, then `~/ccdc-out`.
+Scripts never write next to themselves. Everything goes under the folder given by `--out` / `-Out`, then `BT_OUT`, then `~/bt-out`.
 
 ```
 <out>/
@@ -167,7 +167,7 @@ How scripts use it:
 Each host has one `undo-<host>.log`, shared by every script. Each change adds a line with four tab-separated fields:
 
 ```
-2026-11-11T17:02:11Z    LX-22    restore /etc/ssh/sshd_config    cp -pR '/root/ccdc-out/backup/web01/..._LX-22/etc/ssh/sshd_config' '/etc/ssh/sshd_config'
+2026-11-11T17:02:11Z    LX-22    restore /etc/ssh/sshd_config    cp -pR '/root/bt-out/backup/web01/..._LX-22/etc/ssh/sshd_config' '/etc/ssh/sshd_config'
 ```
 
 Time, script ID, what it undoes, and the command that undoes it. The newest change is at the bottom.
@@ -176,12 +176,12 @@ To roll back by hand, run the commands from the bottom up. The undo walker (SH-1
 
 ```sh
 # Unix: undo the last 3 changes on this host
-tail -n 3 ~/ccdc-out/undo-$(uname -n | sed 's/\..*//').log | awk -F'\t' '{a[NR]=$4} END{for(i=NR;i>=1;i--)print a[i]}' | sh -x
+tail -n 3 ~/bt-out/undo-$(uname -n | sed 's/\..*//').log | awk -F'\t' '{a[NR]=$4} END{for(i=NR;i>=1;i--)print a[i]}' | sh -x
 ```
 
 ```powershell
 # Windows: undo the last 3 changes on this host
-$lines = @(Get-Content "$HOME\ccdc-out\undo-$env:COMPUTERNAME.log" | Select-Object -Last 3)
+$lines = @(Get-Content "$HOME\bt-out\undo-$env:COMPUTERNAME.log" | Select-Object -Last 3)
 [array]::Reverse($lines)
 foreach ($l in $lines) { $cmd = ($l -split "`t")[3]; Write-Host $cmd; Invoke-Expression $cmd }
 ```
@@ -205,8 +205,8 @@ The shared code for every Unix script. You don't run it; scripts load it. Operat
 Start from `templates/script-template.sh`. The shape is always:
 
 ```sh
-# >>> CCDC-LIB          (loader lines from the template; the build step replaces this block)
-# <<< CCDC-LIB
+# >>> BT-LIB          (loader lines from the template; the build step replaces this block)
+# <<< BT-LIB
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
@@ -240,7 +240,7 @@ cc_finish
 | `cc_have TOOL` / `cc_need TOOL...` / `cc_first TOOL...` | Is a tool there; stop if not; print the first that exists |
 | `cc_detect_os` | Sets `CC_OS_KERNEL`, `CC_OS_FAMILY`, `CC_OS_NAME`, `CC_OS_VERSION`, `CC_INIT`, `CC_PKG` |
 | `cc_is_root` / `cc_require_root` | Check for root; stop with exit 3 if not |
-| `cc_confirm QUESTION` | Ask the operator. `CCDC_ASSUME_YES=1` answers yes |
+| `cc_confirm QUESTION` | Ask the operator. `BT_ASSUME_YES=1` answers yes |
 | `cc_genpass [LEN]` | Print a random password. Never logs it |
 | `cc_sha256 FILE` | Print a file's SHA-256 using whichever tool exists |
 | `cc_quarantine PATH` | Move a file to the quarantine folder, log its hash, record the undo |
@@ -270,16 +270,16 @@ cc_finish
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `output folder ... is inside the kit folder` (exit 2) | `--out` points into the folder the script is in | Pass `--out` somewhere else, or set `CCDC_OUT` |
+| `output folder ... is inside the kit folder` (exit 2) | `--out` points into the folder the script is in | Pass `--out` somewhere else, or set `BT_OUT` |
 | `no protected list at ... - refusing to change anything` (exit 3) | Apply with no protected list | Create the list, or pass `--protected FILE`. In an emergency only, `--no-protected` |
 | `cannot create output folder` / `not writable` (exit 3) | No permission, read-only disk, or disk full | Choose another `--out`. Check `df -h` and `mount` |
-| `KIT CHECK FAILED` (exit 3) | The script file differs from the manifest: it was edited, or copied badly | Re-copy the kit from the admin workstation. If you edited it on purpose, rebuild, or set `CCDC_SKIP_VERIFY=1` for that run |
+| `KIT CHECK FAILED` (exit 3) | The script file differs from the manifest: it was edited, or copied badly | Re-copy the kit from the admin workstation. If you edited it on purpose, rebuild, or set `BT_SKIP_VERIFY=1` for that run |
 | `required tool not found: X` (exit 3) | The host lacks a command the script needs | Use the fallback path if the script has one. Otherwise add the tool to the offline bundle |
 | `cc_genpass: could not generate a password` | `/dev/urandom` unreadable, or a `tr` that does not accept ranges (stock Solaris) | On Solaris put `/usr/xpg4/bin` first in `PATH` |
 | `$'\r': command not found`, or `bad interpreter` | The file has Windows line endings | It was edited on Windows or copied through a tool that converted it. Re-copy from the repo, or run `tr -d '\r' < bad.sh > good.sh` |
 | `quarantine FAILED` | The file is immutable, or on a read-only mount | `lsattr FILE`; `chattr -i FILE`; then re-run |
 | A dry run prints nothing between the banner and the summary | Nothing needed changing, or `--quiet` is set | Add `--debug` to see each decision |
-| The script hangs on a question under fan-out | `cc_confirm` is waiting for an answer | Set `CCDC_ASSUME_YES=1` when running unattended |
+| The script hangs on a question under fan-out | `cc_confirm` is waiting for an answer | Set `BT_ASSUME_YES=1` when running unattended |
 | `this script must be run as root` (exit 3) | Not root | `sudo sh script.sh ...`. Under sudo, `~` is root's home, so pass `--out` explicitly |
 | Passes in bash, fails in `sh` on a target | A bash-only construct got in | Run `sh tests/lint-posix.sh`, then `TEST_SHELL=dash dash tests/<file>.test.sh` |
 
@@ -294,7 +294,7 @@ The shared code for every Windows script, with the same behavior as `lib.sh`.
 ### Starting a script
 
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-ad-password-rotation.ps1 -Out C:\ccdc-out
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-ad-password-rotation.ps1 -Out C:\bt-out
 ```
 
 `-ExecutionPolicy Bypass` applies to that one process and changes no system setting. `-NoProfile` stops a profile script the red team may have planted from running first.
@@ -306,8 +306,8 @@ Start from `templates/script-template.ps1`. The shape is always:
 ```powershell
 param([switch]$Apply, [string]$Out, [string]$Protected, [switch]$NoProtected,
       [switch]$ForceScored, [switch]$Quiet, [switch]$DebugLog, [string]$ServiceName)
-# >>> CCDC-LIB          (loader lines from the template; the build step replaces this block)
-# <<< CCDC-LIB
+# >>> BT-LIB          (loader lines from the template; the build step replaces this block)
+# <<< BT-LIB
 Initialize-Cc -Id 'WN-24' -Name 'Port and service closer' -Kind changes -Bound $PSBoundParameters
 Assert-CcAdmin
 if (-not (Test-CcAllowed -Type service -Value $ServiceName)) { Complete-Cc -ExitCode 4 }
@@ -335,7 +335,7 @@ Library state is in one hashtable, `$Cc`: `$Cc.Apply`, `$Cc.Out`, `$Cc.Log`, `$C
 | `Test-CcCommand NAME` | `$true` if a cmdlet or program exists |
 | `Test-CcAdmin` / `Assert-CcAdmin` | Check for elevation; stop with exit 3 if not |
 | `Get-CcOsInfo` | Hashtable: `Caption`, `Version`, `Build`, `ProductType`, `IsDC`, `IsServer`, `Is64Bit`, `PSVersion` |
-| `Confirm-Cc QUESTION` | Ask the operator. `CCDC_ASSUME_YES=1` answers yes |
+| `Confirm-Cc QUESTION` | Ask the operator. `BT_ASSUME_YES=1` answers yes |
 | `New-CcPassword [-Length]` | Return a random password. Never logs it |
 | `Get-CcSha256 -Path` | A file's SHA-256 |
 | `Move-CcQuarantine -Path` | Move a file to the quarantine folder, log its hash, record the undo |
@@ -369,7 +369,7 @@ Library state is in one hashtable, `$Cc`: `$Cc.Apply`, `$Cc.Out`, `$Cc.Log`, `$C
 | `this script must run in an elevated ... window` (exit 3) | Not elevated | Right-click PowerShell, Run as administrator |
 | `no protected list at ... - refusing to change anything` (exit 3) | Apply with no protected list | Create it, or pass `-Protected FILE`. In an emergency only, `-NoProtected` |
 | `output folder ... is inside the kit folder` (exit 2) | `-Out` points into the script's folder | Pass `-Out` somewhere else |
-| `KIT CHECK FAILED` (exit 3) | The script differs from the manifest | Re-copy the kit. If you edited it on purpose, rebuild, or set `$env:CCDC_SKIP_VERIFY='1'` |
+| `KIT CHECK FAILED` (exit 3) | The script differs from the manifest | Re-copy the kit. If you edited it on purpose, rebuild, or set `$env:BT_SKIP_VERIFY='1'` |
 | A red parser error naming `Mandatory`, `[ordered]` or an unknown cmdlet, on an old server only | A feature newer than PowerShell 2.0 got in | Run `sh tests/lint-ps2.sh` on the build machine; fix the line it names |
 | `The term 'Get-...' is not recognized` | That cmdlet does not exist on this Windows version | Use the fallback (WMI, `netsh`, `net.exe`, `schtasks`). Check `$PSVersionTable.PSVersion` |
 | `Cannot find an overload for "Contains"` or similar method errors | A .NET method that differs between versions | Note the PowerShell version and the line; that line needs a version-neutral form |
@@ -387,14 +387,14 @@ Library state is in one hashtable, `$Cc`: `$Cc.Apply`, `$Cc.Out`, `$Cc.Log`, `$C
 `templates/script-template.sh` and `templates/script-template.ps1` are complete scripts that run. Each has the full header, the library loader, option parsing, one CSV output and the finish call.
 
 ```sh
-sh templates/script-template.sh --out /tmp/ccdc-out --example hello --debug
+sh templates/script-template.sh --out /tmp/bt-out --example hello --debug
 ```
 
 Copy one to start a script; `docs/CONVENTIONS.md` lists the steps.
 
 **Watch for**
 
-- Keep the two marker lines `# >>> CCDC-LIB` and `# <<< CCDC-LIB` exactly as they are. The build step replaces everything between them.
+- Keep the two marker lines `# >>> BT-LIB` and `# <<< BT-LIB` exactly as they are. The build step replaces everything between them.
 - The loader walks up from the script's folder until it finds `lib/`. A script copied alone to a host, without `lib/`, stops with exit 3. Copy the whole repository for now; built single-file scripts come with the build step.
 - Change `XX-00` in three places: the header, the `--help` text, and the `cc_init` / `Initialize-Cc` call.
 
@@ -462,10 +462,10 @@ Read-only inventory of one Linux or Unix host. Run it first on every Linux box: 
 ### How to run it
 
 ```sh
-sudo sh SH-05-linux-enum.sh --out /root/ccdc-out              # full, about a minute
-sudo sh SH-05-linux-enum.sh --out /root/ccdc-out --profile card   # quick look, seconds
-sudo sh SH-05-linux-enum.sh --out /root/ccdc-out --profile triage # full plus a copy of the logs
-sudo sh SH-05-linux-enum.sh --out /root/ccdc-out --only ports,processes
+sudo sh SH-05-linux-enum.sh --out /root/bt-out              # full, about a minute
+sudo sh SH-05-linux-enum.sh --out /root/bt-out --profile card   # quick look, seconds
+sudo sh SH-05-linux-enum.sh --out /root/bt-out --profile triage # full plus a copy of the logs
+sudo sh SH-05-linux-enum.sh --out /root/bt-out --only ports,processes
 ```
 
 Run it as root. As a normal user it still works, but the summary marks several sections `partial`.
@@ -668,10 +668,10 @@ The point: run SH-03 and SH-05 in the first minutes as a baseline, run them agai
 ### How to run it
 
 ```sh
-sh SH-04-scan-diff.sh --out ~/ccdc-out                        # the newest two network scans
-sh SH-04-scan-diff.sh --out /root/ccdc-out --type sh05        # the newest two enum runs of the newest run's host
-sh SH-04-scan-diff.sh --out /root/ccdc-out --type sh05 --host web01
-sh SH-04-scan-diff.sh --old ~/ccdc-out/netscan-1 --new ~/ccdc-out/netscan-2
+sh SH-04-scan-diff.sh --out ~/bt-out                        # the newest two network scans
+sh SH-04-scan-diff.sh --out /root/bt-out --type sh05        # the newest two enum runs of the newest run's host
+sh SH-04-scan-diff.sh --out /root/bt-out --type sh05 --host web01
+sh SH-04-scan-diff.sh --old ~/bt-out/netscan-1 --new ~/bt-out/netscan-2
 ```
 
 | Option | What it does |
@@ -769,8 +769,8 @@ Enter takes the default, and a flag answers each one ahead of time. `--batch` ta
 ### How to run it
 
 ```sh
-sudo sh SV-01-web-db-enum.sh --out /root/ccdc-out
-sudo sh SV-01-web-db-enum.sh --out /root/ccdc-out --fast                 # skip the web shell content search
+sudo sh SV-01-web-db-enum.sh --out /root/bt-out
+sudo sh SV-01-web-db-enum.sh --out /root/bt-out --fast                 # skip the web shell content search
 sudo sh SV-01-web-db-enum.sh --webroot /opt/app/public                   # a web root the configs don't show
 sudo sh SV-01-web-db-enum.sh --only mysql --mysql-cnf /root/my.cnf       # when root can't log in through the socket
 ```
@@ -911,7 +911,7 @@ In a numbered folder: `<out>/backup-1`, `backup-2`, ...
 ### Restoring
 
 ```sh
-cd /root/ccdc-out/backup-3
+cd /root/bt-out/backup-3
 sha256sum -c backup.tar.gz.sha256                                  # the archive is intact
 tar -tzf backup.tar.gz | grep sshd_config                         # find a file
 cp -p /etc/ssh/sshd_config /etc/ssh/sshd_config.before-restore
@@ -1022,20 +1022,20 @@ In a numbered folder: `<out>/safe-fixes-1`, `safe-fixes-2`, ...
 
 Every change adds an undo command to `<out>/undo-<host>.log`. Changed files are copied to `<out>/backup/<host>/` first; quarantined files go to `<out>/quarantine/<host>/`.
 
-Kernel settings are written to `/etc/sysctl.d/99-zz-ccdc-safe.conf`, a name read last at boot, so they win over `/etc/sysctl.conf`.
+Kernel settings are written to `/etc/sysctl.d/99-zz-bt-safe.conf`, a name read last at boot, so they win over `/etc/sysctl.conf`.
 
 ### Undo
 
 This run only, at any time (even after keeping it):
 
 ```sh
-sudo sh /root/ccdc-out/safe-fixes-3/revert.sh --force
+sudo sh /root/bt-out/safe-fixes-3/revert.sh --force
 ```
 
 Everything every script changed on the host: run the undo log's commands from the bottom up:
 
 ```sh
-awk -F'\t' '{ l[NR] = $4 } END { for (i = NR; i >= 1; i--) print l[i] }' /root/ccdc-out/undo-web01.log > /tmp/undo.sh
+awk -F'\t' '{ l[NR] = $4 } END { for (i = NR; i >= 1; i--) print l[i] }' /root/bt-out/undo-web01.log > /tmp/undo.sh
 less /tmp/undo.sh        # read it first: it holds every change made by every script on this host
 sh /tmp/undo.sh
 ```
@@ -1243,7 +1243,7 @@ Shows every open port on the box, says what each one is and which program is beh
 sudo sh LX-25-firewall.sh                       # look and plan: asks, changes nothing
 sudo sh LX-25-firewall.sh --apply --protected /root/protected.csv    # ask, then load the rules
 # then, from a NEW ssh session, within 2 minutes:
-sudo sh /root/ccdc-out/firewall-1/keep-firewall.sh
+sudo sh /root/bt-out/firewall-1/keep-firewall.sh
 # once scoring is green, keep the rules across a reboot:
 sudo sh LX-25-firewall.sh --save --apply
 ```
@@ -1252,7 +1252,7 @@ sudo sh LX-25-firewall.sh --save --apply
 
 Five sections, colour-coded (KEEP green, DROP red, CHECK yellow, local grey):
 
-1. **The firewall now**: which backend it will use, whether CCDC rules are already live, and whether ufw or firewalld is also running.
+1. **The firewall now**: which backend it will use, whether LX-25 rules are already live, and whether ufw or firewalld is also running.
 2. **Open ports**: one block per listening port.
 
    ```
@@ -1303,7 +1303,7 @@ Always allowed, whatever you answer: loopback, replies to the box's own connecti
 
 ### Safety
 
-- **Own rules only.** nftables: table `inet ccdc`. iptables: chains `CCDC-IN`/`CCDC-OUT`, jumped to from the top of `INPUT`/`OUTPUT`. Nothing else is flushed, so Docker, fail2ban, firewalld and ufw keep their rules. `FORWARD` is never touched.
+- **Own rules only.** nftables: table `inet bt`. iptables: chains `BT-IN`/`BT-OUT`, jumped to from the top of `INPUT`/`OUTPUT`. Nothing else is flushed, so Docker, fail2ban, firewalld and ufw keep their rules. `FORWARD` is never touched.
 - **Checked first.** The nft ruleset is checked with `nft -c` before loading; if loading fails, whatever loaded is removed.
 - **Rollback timer.** After `--apply`, a detached timer removes the rules after `--confirm-timeout` seconds unless `keep-firewall.sh` is run. Run it from a NEW ssh session: that proves new connections still get in, which an open session cannot (open sessions survive any rule). At a terminal the script also asks; answering `y` removes the rules at once.
 - **Not saved for reboot** until you run `--save --apply`. Until then a reboot is a last-resort undo.
@@ -1323,7 +1323,7 @@ In `<out>/firewall-N/` (next free number):
 | `keep-firewall.sh` | Cancels the rollback timer |
 | `ROLLED_BACK` | Appears when the timer removed the rules |
 
-Dropped packets are logged with the prefix `CCDC-DROP` (`journalctl -k | grep CCDC-DROP`, or `dmesg`), limited to 10 a minute.
+Dropped packets are logged with the prefix `BT-DROP` (`journalctl -k | grep BT-DROP`, or `dmesg`), limited to 10 a minute.
 
 ### What to watch for
 
@@ -1361,7 +1361,7 @@ sudo sh LX-40-change-watch.sh --batch              # one check, defaults
 sudo sh LX-40-change-watch.sh --loop 60 --team 10.0.0.0/24
 # keep it running, alerts copied off the box:
 nohup sudo sh LX-40-change-watch.sh --batch --loop 60 \
-    --alert-cmd "ssh admin@10.0.0.5 'cat >>/srv/alerts/web01.log'" >/root/ccdc-out/watch.out 2>&1 &
+    --alert-cmd "ssh admin@10.0.0.5 'cat >>/srv/alerts/web01.log'" >/root/bt-out/watch.out 2>&1 &
 sudo sh LX-40-change-watch.sh --accept             # after changing things on purpose
 ```
 
@@ -1495,7 +1495,7 @@ Each run gets `<out>/banning-N/`: `output.txt` (the screen without colour), `ban
 
 These are kept in `<out>/ban-<host>/`: `bans.csv` (every ban ever), `events.log`, `hits`, `offsets`, `settings`. A dry run keeps its counts in the run folder only, so it never touches the real state, and a dry loop still reads each line once.
 
-The firewall is nftables table `inet ccdc_ban` (address sets with timeouts and one drop rule). Without nftables it uses ipset `ccdc_ban` plus one iptables rule, or one iptables rule per address that a later check removes when it's due. `--unban-all` removes it all. There's no revert timer, because every ban already ends by itself.
+The firewall is nftables table `inet bt_ban` (address sets with timeouts and one drop rule). Without nftables it uses ipset `bt_ban` plus one iptables rule, or one iptables rule per address that a later check removes when it's due. `--unban-all` removes it all. There's no revert timer, because every ban already ends by itself.
 
 ### What to watch for
 
@@ -1524,9 +1524,9 @@ Dumps every database on a Linux or Unix host, checks each dump can be read back,
 ### How to run it
 
 ```sh
-sudo sh SV-14-db-backup.sh --out /root/ccdc-out
-sudo sh SV-14-db-backup.sh --out /root/ccdc-out --copy-to admin@10.0.0.5:/srv/backups/db01/
-sudo sh SV-14-db-backup.sh --out /root/ccdc-out --mysql-cnf /root/my.cnf --keep 3
+sudo sh SV-14-db-backup.sh --out /root/bt-out
+sudo sh SV-14-db-backup.sh --out /root/bt-out --copy-to admin@10.0.0.5:/srv/backups/db01/
+sudo sh SV-14-db-backup.sh --out /root/bt-out --mysql-cnf /root/my.cnf --keep 3
 ```
 
 | Option | What it does |
@@ -1557,7 +1557,7 @@ In `<out>/SV-14_<host>_<UTC time>/` (mode 700, files 600): the dumps, `SHA256SUM
 ### Restoring
 
 ```sh
-cd /root/ccdc-out/SV-14_db01_<time>
+cd /root/bt-out/SV-14_db01_<time>
 sha256sum -c SHA256SUMS
 gzip -dc mysql_wordpress.sql.gz | mysql                                           # REPLACES the database
 sudo -u postgres pg_restore --clean --if-exists -d shopdb < pg_shopdb.dump         # REPLACES its objects
@@ -1596,11 +1596,11 @@ It only sends "show" commands. Nothing on the devices changes.
 ### How to run it
 
 ```sh
-sh NW-01-config-backup.sh --out ~/ccdc-out --hosts config/hosts.csv                        # SSH keys
-CCDC_NET_PASS='...' sh NW-01-config-backup.sh --out ~/ccdc-out --hosts config/hosts.csv --password-env
-sh NW-01-config-backup.sh --out ~/ccdc-out --device fw01,10.0.2.1,paloalto,admin --ask-password
+sh NW-01-config-backup.sh --out ~/bt-out --hosts config/hosts.csv                        # SSH keys
+BT_NET_PASS='...' sh NW-01-config-backup.sh --out ~/bt-out --hosts config/hosts.csv --password-env
+sh NW-01-config-backup.sh --out ~/bt-out --device fw01,10.0.2.1,paloalto,admin --ask-password
 # every 5 minutes:
-while :; do sh NW-01-config-backup.sh --out ~/ccdc-out --hosts config/hosts.csv --password-env; sleep 300; done
+while :; do sh NW-01-config-backup.sh --out ~/bt-out --hosts config/hosts.csv --password-env; sleep 300; done
 ```
 
 Run it from the admin workstation (a Linux box that can reach the devices' management addresses).
@@ -1610,9 +1610,9 @@ Run it from the admin workstation (a Linux box that can reach the devices' manag
 | `--hosts FILE` | Host list. Rows with `os` = `network` take the vendor from the notes ("Palo Alto", "Cisco IOS", "Cisco ASA", "FortiGate", "VyOS", "pfSense", "OPNsense", "MikroTik") or a `vendor` column; a vendor name in `os` works too |
 | `--device SPEC` | `NAME,ADDRESS,VENDOR[,USER[,PORT]]` (repeat) |
 | `--user NAME` | Login name when the list gives none (default `admin`) |
-| `--password-env` | Password from `$CCDC_NET_PASS`, handed to `sshpass -e` in the environment (never on a command line) |
+| `--password-env` | Password from `$BT_NET_PASS`, handed to `sshpass -e` in the environment (never on a command line) |
 | `--ask-password` | Ask once, without echo |
-| `--enable-env` | Cisco: send `enable` with `$CCDC_NET_ENABLE` when the login is below privilege 15 |
+| `--enable-env` | Cisco: send `enable` with `$BT_NET_ENABLE` when the login is below privilege 15 |
 | `--legacy-ssh` | Allow old SSH algorithms from the start. Also tried automatically when a device refuses the modern ones |
 
 Without a password option, SSH keys are used and the script never prompts.
@@ -1672,9 +1672,9 @@ Reads the configs NW-01 saved and flags the weaknesses a red team uses first on 
 ### How to run it
 
 ```sh
-sh NW-07-config-audit.sh --out ~/ccdc-out                                  # every device NW-01 saved
-sh NW-07-config-audit.sh --out ~/ccdc-out --file r1.cfg --file fw1.txt     # configs copied by hand
-sh NW-07-config-audit.sh --out ~/ccdc-out --file fw1.txt,paloalto          # name the vendor
+sh NW-07-config-audit.sh --out ~/bt-out                                  # every device NW-01 saved
+sh NW-07-config-audit.sh --out ~/bt-out --file r1.cfg --file fw1.txt     # configs copied by hand
+sh NW-07-config-audit.sh --out ~/bt-out --file fw1.txt,paloalto          # name the vendor
 ```
 
 | Option | What it does |
@@ -1695,7 +1695,7 @@ sh NW-07-config-audit.sh --out ~/ccdc-out --file fw1.txt,paloalto          # nam
 | pfSense / OPNsense | default or read-write SNMP community; a WAN rule passing any to any | web GUI over plain HTTP | accounts |
 | MikroTik | telnet on; default SNMP community | telnet not disabled (on by default); `www`, `ftp` or `api` on | accounts |
 
-Default or guessable SNMP communities: `public`, `private`, `cisco`, `community`, `admin`, `default`, `secret`, `password`, `snmp`, `monitor`, `manager`, `read`, `write`, `test`, `ccdc`.
+Default or guessable SNMP communities: `public`, `private`, `cisco`, `community`, `admin`, `default`, `secret`, `password`, `snmp`, `monitor`, `manager`, `read`, `write`, `test`, `bt`.
 
 ### What it produces
 
@@ -1734,20 +1734,20 @@ If the first session closes early (some devices end the session after a password
 ### How to run it
 
 ```sh
-export CCDC_NET_PASS='current password'
-sh NW-10-device-passwords.sh --out ~/ccdc-out --hosts config/hosts.csv                       # dry run
-sh NW-10-device-passwords.sh --out ~/ccdc-out --device r1,10.0.0.1,cisco-ios,admin --apply   # ONE device first
-sh NW-10-device-passwords.sh --out ~/ccdc-out --hosts config/hosts.csv --apply --protected protected.csv
+export BT_NET_PASS='current password'
+sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.csv                       # dry run
+sh NW-10-device-passwords.sh --out ~/bt-out --device r1,10.0.0.1,cisco-ios,admin --apply   # ONE device first
+sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.csv --apply --protected protected.csv
 ```
 
 | Option | What it does |
 | --- | --- |
 | `--hosts FILE` / `--device SPEC` | The devices, as for NW-01 |
 | `--user NAME` | Default login account (`admin`) |
-| `--ask-password` | Ask for the CURRENT password instead of `$CCDC_NET_PASS` |
+| `--ask-password` | Ask for the CURRENT password instead of `$BT_NET_PASS` |
 | `--passwords FILE` | Chosen new passwords: `device,password` lines, by device name or address (same characters as below, 8+). Devices not in the file get a random password. A name that is no device in this run is reported |
-| `--new-password-env` | Use `$CCDC_NET_NEWPASS` for every device (letters, digits and `_ . , @ % + = -`, 12+ characters). Default: a new random password per device |
-| `--enable-env` | Cisco: log in through `enable` with `$CCDC_NET_ENABLE` |
+| `--new-password-env` | Use `$BT_NET_NEWPASS` for every device (letters, digits and `_ . , @ % + = -`, 12+ characters). Default: a new random password per device |
+| `--enable-env` | Cisco: log in through `enable` with `$BT_NET_ENABLE` |
 | `--enable-too` | Cisco: also set a new enable secret; the test login must reach privilege 15 with it |
 | `--length N` | Random password length (default 16) |
 | `--wait N` / `--commit-wait N` | Seconds before testing a change (default 5) / for a Palo Alto commit (default 120) |
@@ -1786,7 +1786,7 @@ There is no undo-log line: a password cannot be put back without storing it. The
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `could not log in with the current password` | Wrong `CCDC_NET_PASS`, wrong account, device unreachable | Check by hand with `ssh`; nothing was changed |
+| `could not log in with the current password` | Wrong `BT_NET_PASS`, wrong account, device unreachable | Check by hand with `ssh`; nothing was changed |
 | `account not found in NW-01's saved config` | Cisco: NW-01 not run, or AAA login | Run NW-01; change AAA accounts on the AAA server |
 | `new password did not work; old password restored and tested` | The device refused the change (password rules, privilege) | Read the device's password policy; try `--new-password-env` with a password that meets it |
 | `config may not be SAVED` | The device closed the first session early | Log in and save (`write memory`) by hand |
@@ -1802,9 +1802,9 @@ Read-only inventory of a Windows host: the Windows twin of SH-05. Run it first o
 ### How to run it
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-enum.ps1 -Out C:\ccdc-out
-powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-enum.ps1 -Out C:\ccdc-out -Profile card     # about a minute
-powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-enum.ps1 -Out C:\ccdc-out -Only users,ports
+powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-enum.ps1 -Out C:\bt-out
+powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-enum.ps1 -Out C:\bt-out -Profile card     # about a minute
+powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-enum.ps1 -Out C:\bt-out -Only users,ports
 ```
 
 | Option | What it does |
@@ -1861,9 +1861,9 @@ Saves the settings and files a hardening step or the red team is most likely to 
 ### How to run it
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\ccdc-out -CopyTo \\10.0.0.5\backups
-powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\ccdc-out -Path C:\xampp\htdocs,C:\App\config
-powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\ccdc-out -Only firewall,secpolicy
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\bt-out -CopyTo \\10.0.0.5\backups
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\bt-out -Path C:\xampp\htdocs,C:\App\config
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\bt-out -Only firewall,secpolicy
 ```
 
 | Option | What it does |
@@ -1905,7 +1905,7 @@ Every saved file is hashed in `SHA256SUMS.txt`. The backup folder is limited to 
 | `gpo` failed on a DC | GroupPolicy module missing | Install the Group Policy Management feature, or skip it with `-Only` |
 | A DNS zone FAILED | dnscmd could not export it (cache or system zones are skipped on purpose) | The DNS settings and the dns folder copy are still saved |
 | `COPY FAILED` | The share is unreachable or not writable | Check the path and rights; the backup on the box is complete |
-| `addb` failed: space in the path | ntdsutil cannot take it | Use `-Out C:\ccdc-out` |
+| `addb` failed: space in the path | ntdsutil cannot take it | Use `-Out C:\bt-out` |
 
 ---
 
@@ -1916,9 +1916,9 @@ Gives every enabled account a new password: local accounts on any Windows box, a
 ### How to run it
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-password-rotation.ps1 -Out C:\ccdc-out                         # dry run: read the list
-powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-password-rotation.ps1 -Out C:\ccdc-out -Apply -Exclude mark.jacobs,admin
-powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-password-rotation.ps1 -Out C:\ccdc-out -Apply -Passwords C:\team\sheet.csv
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-password-rotation.ps1 -Out C:\bt-out                         # dry run: read the list
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-password-rotation.ps1 -Out C:\bt-out -Apply -Exclude mark.jacobs,admin
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-password-rotation.ps1 -Out C:\bt-out -Apply -Passwords C:\team\sheet.csv
 ```
 
 | Option | What it does |
@@ -1960,10 +1960,10 @@ Fixes the settings red teams weaken or hide in, choosing only fixes that cannot 
 ### How to run it
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\ccdc-out                           # dry run: read the list
-powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\ccdc-out -Apply                    # the safe fixes
-powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\ccdc-out -Apply -Include rdpnla    # plus one more
-powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\ccdc-out -Undo latest -Apply       # put the last run back
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\bt-out                           # dry run: read the list
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\bt-out -Apply                    # the safe fixes
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\bt-out -Apply -Include rdpnla    # plus one more
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\bt-out -Undo latest -Apply       # put the last run back
 ```
 
 | Option | What it does |
@@ -2030,11 +2030,11 @@ Turns the Windows firewall on for every profile with inbound blocked by default,
 ### How to run it
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File WN-25-firewall.ps1 -Out C:\ccdc-out                          # dry run: read the plan
-powershell -NoProfile -ExecutionPolicy Bypass -File WN-25-firewall.ps1 -Out C:\ccdc-out -Apply -AdminFrom 10.0.0.5
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-25-firewall.ps1 -Out C:\bt-out                          # dry run: read the plan
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-25-firewall.ps1 -Out C:\bt-out -Apply -AdminFrom 10.0.0.5
 #   then from a NEW RDP / remote session, within 5 minutes:
-powershell -NoProfile -ExecutionPolicy Bypass -File C:\ccdc-out\WN-25_<host>_<time>\keep-firewall.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File WN-25-firewall.ps1 -Out C:\ccdc-out -Undo latest -Apply      # put the old firewall back
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\bt-out\WN-25_<host>_<time>\keep-firewall.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-25-firewall.ps1 -Out C:\bt-out -Undo latest -Apply      # put the old firewall back
 ```
 
 ### What it allows in
@@ -2059,11 +2059,11 @@ Existing inbound allow rules that undo the firewall: one that allows every port,
 | What | How |
 | --- | --- |
 | Before anything | `netsh advfirewall export` of the whole firewall to `firewall-before.wfw`. If that fails, nothing changes |
-| Rollback timer | A SYSTEM scheduled task (`CCDC-WN25-rollback`) imports that export after `-ConfirmMinutes` (default 5) - it runs even if your session is gone. Allow rules go in before the profiles block, so the box is never closed with nothing open |
+| Rollback timer | A SYSTEM scheduled task (`BT-WN25-rollback`) imports that export after `-ConfirmMinutes` (default 5) - it runs even if your session is gone. Allow rules go in before the profiles block, so the box is never closed with nothing open |
 | Keep | `keep-firewall.ps1` from a NEW connection cancels the rollback: proof the team can still get in |
 | Roll back now | `rollback.ps1` in the run folder |
 | Later | `-Undo latest -Apply` (or a run folder) imports the export: every rule and setting back exactly |
-| Only our rules | `-Remove` deletes the rules in group `CCDC` and nothing else |
+| Only our rules | `-Remove` deletes the rules in group `BT` and nothing else |
 | Two changes at once | Refused while a rollback is waiting |
 
 ### Logs
@@ -2457,7 +2457,7 @@ sudo sh SV-21-web-hardening.sh --protected p.csv --apply --batch --level safe --
 | `php-functions` | access | `disable_functions` adds system, exec, shell_exec, passthru, proc_open, popen, pcntl_exec (keeps what was there) |
 | `code-readonly` | access | The web server account no longer owns the site's code; upload, cache and temp folders are left alone |
 
-PHP settings go into the apache2, fpm and cgi `php.ini`, never the command line one. Apache rules go in one file, `zz-ccdc-web.conf`. **nginx is not edited:** the lines go into `nginx-ccdc.conf` in the run folder to include by hand.
+PHP settings go into the apache2, fpm and cgi `php.ini`, never the command line one. Apache rules go in one file, `zz-bt-web.conf`. **nginx is not edited:** the lines go into `nginx-bt.conf` in the run folder to include by hand.
 
 **Reported, not changed:** phpinfo pages, app versions.
 
@@ -2469,7 +2469,7 @@ PHP settings go into the apache2, fpm and cgi `php.ini`, never the command line 
 
 ### What it produces
 
-In `web-hardening-N/`: `output.txt`, `apps.txt`, `plan.txt`, `changes.txt`, `summary.txt`, `nginx-ccdc.conf` (when nginx is there), `owners-*.txt`, `revert.sh`.
+In `web-hardening-N/`: `output.txt`, `apps.txt`, `plan.txt`, `changes.txt`, `summary.txt`, `nginx-bt.conf` (when nginx is there), `owners-*.txt`, `revert.sh`.
 
 ### What to watch for
 
@@ -2484,7 +2484,7 @@ In `web-hardening-N/`: `output.txt`, `apps.txt`, `plan.txt`, `changes.txt`, `sum
 | `no known app found` | The site is outside /var/www, /srv, /opt | `--webroot DIR` |
 | `could not read wp_users` | WordPress not set up, or root can't log in | `--mysql-cnf FILE` |
 | `APPLIED, then PUT BACK` | The site broke after a change | Look at `changes.txt`, rerun with `--skip` for that fix |
-| A web shell in uploads still runs on nginx | nginx is not edited | Include `nginx-ccdc.conf` in the server block, `nginx -t`, reload |
+| A web shell in uploads still runs on nginx | nginx is not edited | Include `nginx-bt.conf` in the server block, `nginx -t`, reload |
 
 ## 36. Database password rotation, `roles/applications/SV-42-db-passwords.sh` (SV-42)
 
@@ -2959,9 +2959,9 @@ sudo sh SV-41-roundcube-hardening.sh --protected p.csv --apply --batch --url htt
 | `des-key` | A new random 24-character key (everyone logs in again) |
 | `log-logins` | `log_logins = true` |
 | `config-perms` | Config files `root:www-data 640` |
-| `block-dirs` | Apache drop-in `zz-ccdc-roundcube.conf` denying installer, logs, temp, config, SQL, bin (and where Debian's links point). nginx: lines written to `nginx-ccdc.conf`. |
+| `block-dirs` | Apache drop-in `zz-bt-roundcube.conf` denying installer, logs, temp, config, SQL, bin (and where Debian's links point). nginx: lines written to `nginx-bt.conf`. |
 
-Settings are written as `$config['key'] = value; // CCDC SV-41`. **Logins sent elsewhere are only reported**: only you know which mail server is right.
+Settings are written as `$config['key'] = value; // BT SV-41`. **Logins sent elsewhere are only reported**: only you know which mail server is right.
 
 ### Safety
 
@@ -2970,7 +2970,7 @@ Settings are written as `$config['key'] = value; // CCDC SV-41`. **Logins sent e
 
 ### What it produces
 
-In `roundcube-N/`: `output.txt`, `findings.txt`, `plan.txt`, `summary.txt`, `revert.sh` (and `nginx-ccdc.conf` with nginx).
+In `roundcube-N/`: `output.txt`, `findings.txt`, `plan.txt`, `summary.txt`, `revert.sh` (and `nginx-bt.conf` with nginx).
 
 ### What to watch for
 
@@ -3004,12 +3004,12 @@ Then open the port on the Splunk box (`LX-25`) and on any firewall between the b
 
 ### What it does
 
-- **Receive:** writes the Splunk app `etc/apps/ccdc_receiver` with a `[tcp://1514]` input (sourcetype syslog, the sender's address as host, `--index`, default main), then restarts Splunk (asked) and checks the port listens.
-- **Send:** writes `/etc/rsyslog.d/90-ccdc-splunk.conf`:
+- **Receive:** writes the Splunk app `etc/apps/bt_receiver` with a `[tcp://1514]` input (sourcetype syslog, the sender's address as host, `--index`, default main), then restarts Splunk (asked) and checks the port listens.
+- **Send:** writes `/etc/rsyslog.d/90-bt-splunk.conf`:
   - the system logs: auth, syslog (`*.info`), mail, cron, kern
   - the service log files it finds, read with `imfile`: Apache/httpd/nginx access and error, `mail.log`/`maillog`, Dovecot, Roundcube errors and user logins, MySQL/MariaDB/PostgreSQL, `audit.log`, fail2ban, Splunk's own log
   - a disk-backed queue, so logs wait while Splunk is down and are sent later
-- The config is checked with `rsyslogd -N1`, rsyslog restarts (the script makes sure a new rsyslog is running), and a test line `CCDC-LX43-TEST-HOST-TIME` is sent. **Search Splunk for it.**
+- The config is checked with `rsyslogd -N1`, rsyslog restarts (the script makes sure a new rsyslog is running), and a test line `BT-LX43-TEST-HOST-TIME` is sent. **Search Splunk for it.**
 - Another forward already in the rsyslog config is flagged: red team can send copies of your logs out too.
 
 ### What it produces
@@ -3143,9 +3143,9 @@ Run it three times, with time between:
 
 | Service | Profile |
 | --- | --- |
-| apache2, nginx | CCDC's `ccdc-apache2` / `ccdc-nginx`: sites read only, upload and cache folders writable (found on their own, more with `--writable DIR`), PHP mail through Postfix allowed, no shells |
-| php-fpm | The package's own profile when there is one (Ubuntu 24.04), else `ccdc-php-fpm` |
-| mariadb / mysql | The package's own profile when there is one, else `ccdc-mysqld` |
+| apache2, nginx | The kit's `bt-apache2` / `bt-nginx`: sites read only, upload and cache folders writable (found on their own, more with `--writable DIR`), PHP mail through Postfix allowed, no shells |
+| php-fpm | The package's own profile when there is one (Ubuntu 24.04), else `bt-php-fpm` |
+| mariadb / mysql | The package's own profile when there is one, else `bt-mysqld` |
 | postfix, dovecot | Not covered: they run many helper programs |
 
 On Red Hat / Rocky (SELinux, not AppArmor) it only shows the SELinux mode and how to turn it on.
@@ -3164,7 +3164,7 @@ On Red Hat / Rocky (SELinux, not AppArmor) it only shows the SELinux mode and ho
 
 ### What it changes
 
-Only with `--apply`: profiles in `/etc/apparmor.d/ccdc-*`, learned rules in `/etc/apparmor.d/local/ccdc-*`, `force-complain/` links for packaged profiles. Every change has an undo line; `revert.sh` puts back an enforce.
+Only with `--apply`: profiles in `/etc/apparmor.d/bt-*`, learned rules in `/etc/apparmor.d/local/bt-*`, `force-complain/` links for packaged profiles. Every change has an undo line; `revert.sh` puts back an enforce.
 
 ### What it produces
 

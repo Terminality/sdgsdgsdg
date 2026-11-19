@@ -62,7 +62,7 @@
 # DEPENDS ON
 #   doveconf (Dovecot) or postconf (Postfix); chpasswd; openssl (hashes for
 #   passwd-file users, and the IMAP login test); saslpasswd2 for sasldb.
-#   CCDC_CHPASSWD, CCDC_USERMOD and CCDC_DOVECONF (a file holding
+#   BT_CHPASSWD, BT_USERMOD and BT_DOVECONF (a file holding
 #   "doveconf -n" output) may name stand-ins: the tests use them.
 #
 # TESTED ON
@@ -81,7 +81,7 @@
 #   --debug shows each command (never the passwords: they go on stdin).
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -89,7 +89,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -168,7 +168,7 @@ given_pw() { awk -F'\t' -v u="$1" '$1 == u { print $2; exit }' "$W/given"; }
 
 # ---- Where the mail passwords live --------------------------------------------------
 # $W/passdb: "driver|args|master"  (from doveconf -n)
-if [ -n "${CCDC_DOVECONF:-}" ]; then cat "$CCDC_DOVECONF" >"$W/doveconf"
+if [ -n "${BT_DOVECONF:-}" ]; then cat "$BT_DOVECONF" >"$W/doveconf"
 elif [ -z "$R" ] && cc_have doveconf; then doveconf -n >"$W/doveconf" 2>>"$CC_LOG"
 else : >"$W/doveconf"; fi
 awk '/^[ \t]*passdb( [^{]*)? *\{/ { on = 1; d = ""; a = ""; m = "no"; next }
@@ -348,8 +348,8 @@ done <"$W/plan"
 { printf 'SV-40 plan | host %s\n\n' "$CC_HOST"; awk -F'|' '$5 != "-" { printf "  %-28s %-20s %-6s %s\n", $1, $2, $5, $6 }' "$W/plan"; } >"$CC_RUN_DIR/plan.txt"
 
 # ---- Helpers for the changes ---------------------------------------------------------
-CHPASSWD=${CCDC_CHPASSWD:-$(cc_which chpasswd)} || CHPASSWD=""
-USERMOD=${CCDC_USERMOD:-$(cc_which usermod)} || USERMOD=""
+CHPASSWD=${BT_CHPASSWD:-$(cc_which chpasswd)} || CHPASSWD=""
+USERMOD=${BT_USERMOD:-$(cc_which usermod)} || USERMOD=""
 PWOUT="$CC_RUN_DIR/passwords.txt"
 pw_line() {
     [ -f "$PWOUT" ] || { (umask 077; printf 'New mail passwords on %s - give them to the captain, then delete this file\n\n' "$CC_HOST" >"$PWOUT")

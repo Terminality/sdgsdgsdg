@@ -23,7 +23,7 @@
 #                       mode 640
 #       wp-fileedit     WordPress: no editing of theme/plugin code from the
 #                       admin panel (DISALLOW_FILE_EDIT)
-#     service  (Apache: one drop-in file, zz-ccdc-web.conf)
+#     service  (Apache: one drop-in file, zz-bt-web.conf)
 #       upload-nophp    PHP cannot run in upload folders (wp-content/uploads,
 #                       images, sites/default/files ...): an uploaded web
 #                       shell is just text
@@ -78,7 +78,7 @@
 #   output.txt   everything shown on screen, no colour
 #   apps.txt     each app: folder, version, config, upload folders
 #   plan.txt, changes.txt, summary.txt, run.txt, revert.sh
-#   nginx-ccdc.conf   the nginx lines to include by hand (when nginx serves)
+#   nginx-bt.conf   the nginx lines to include by hand (when nginx serves)
 #
 # WHAT IT CHANGES  (only with --apply)
 #   php.ini files (apache2, fpm, cgi - not the command line one), one Apache
@@ -103,14 +103,14 @@
 #     the home page only: click through the store after it.
 #   - code-readonly stops app updates and plugin installs from the admin
 #     panel.  That is the point during the competition.
-#   - nginx is not edited: include nginx-ccdc.conf in each server { } by hand.
+#   - nginx is not edited: include nginx-bt.conf in each server { } by hand.
 #
 # DEBUGGING
 #   --debug shows each command.  The Apache drop-in is plain text:
-#   /etc/apache2/conf-enabled/zz-ccdc-web.conf (or /etc/httpd/conf.d/).
+#   /etc/apache2/conf-enabled/zz-bt-web.conf (or /etc/httpd/conf.d/).
 # =============================================================================
 
-# >>> CCDC-LIB  (lib/lib.sh 0.2.1 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.2.1 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
@@ -135,9 +135,9 @@
 #   development a script sources this file through the marker block below.  tools/build.sh replaces that block with the contents of this file
 #   so every built script in dist/ is one standalone file.
 #
-#       # >>> CCDC-LIB
+#       # >>> BT-LIB
 #       ...the loader lines from templates/script-template.sh...
-#       # <<< CCDC-LIB
+#       # <<< BT-LIB
 #
 #       while [ $# -gt 0 ]; do
 #           if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
@@ -195,8 +195,8 @@ CC_LIB_VERSION="0.2.1"
 : "${CC_QUIET:=0}"          # 1 = print only WARN and ERROR on screen
 : "${CC_FORCE_SCORED:=0}"   # 1 = allowed to touch a protected *account*
 : "${CC_NO_PROTECTED:=0}"   # 1 = operator accepted running with no list
-: "${CC_OUT:=${CCDC_OUT:-}}"              # output folder (operator-chosen)
-: "${CC_PROTECTED:=${CCDC_PROTECTED:-}}"  # protected-list CSV
+: "${CC_OUT:=${BT_OUT:-}}"              # output folder (operator-chosen)
+: "${CC_PROTECTED:=${BT_PROTECTED:-}}"  # protected-list CSV
 CC_ID="${CC_ID:-CC-00}"
 CC_LOG=""                   # set by cc_init; empty means "log file not open"
 CC_N_DONE=0                 # changes made
@@ -342,11 +342,11 @@ cc_require_root() {
 
 # cc_confirm QUESTION -> ask the operator; returns 0 for yes.
 #   Reads from the terminal, not stdin, so it still works when the script was
-#   piped in.  CCDC_ASSUME_YES=1 answers yes without asking (for fan-out).
+#   piped in.  BT_ASSUME_YES=1 answers yes without asking (for fan-out).
 cc_confirm() {
-    [ "${CCDC_ASSUME_YES:-0}" = 1 ] && return 0
+    [ "${BT_ASSUME_YES:-0}" = 1 ] && return 0
     if [ ! -r /dev/tty ]; then
-        cc_warn "no terminal to ask '$1' - treating as NO (set CCDC_ASSUME_YES=1 to skip questions)"
+        cc_warn "no terminal to ask '$1' - treating as NO (set BT_ASSUME_YES=1 to skip questions)"
         return 1
     fi
     printf '%s [y/N] ' "$1" >/dev/tty
@@ -365,8 +365,8 @@ Common options (every script in the kit):
   --apply            make changes (default is a dry run that changes nothing)
   --dry-run          show what would change (the default)
   --out DIR          folder for logs, CSV files, backups and the undo log
-                     (default: $CCDC_OUT, else ~/ccdc-out)
-  --protected FILE   protected-list CSV (default: $CCDC_PROTECTED, else
+                     (default: $BT_OUT, else ~/bt-out)
+  --protected FILE   protected-list CSV (default: $BT_PROTECTED, else
                      DIR/protected.csv)
   --no-protected     allow --apply without a protected list (dangerous)
   --force-scored     allow changes to accounts on the protected list
@@ -398,7 +398,7 @@ cc_common_flag() {
         --batch)        CC_BATCH=1 ;;
         --quiet)        CC_QUIET=1 ;;
         --debug)        CC_DEBUG=1 ;;
-        --version)      printf 'ccdc kit library %s\n' "$CC_LIB_VERSION"; exit 0 ;;
+        --version)      printf 'kit library %s\n' "$CC_LIB_VERSION"; exit 0 ;;
         *)              return 1 ;;
     esac
     return 0
@@ -437,7 +437,7 @@ cc_init() {
 
     # Output folder: operator-chosen, never inside the kit (rule 11: the kit
     # may be on read-only media and must stay unchanged so its hash matches).
-    [ -n "$CC_OUT" ] || CC_OUT="${HOME:-/root}/ccdc-out"
+    [ -n "$CC_OUT" ] || CC_OUT="${HOME:-/root}/bt-out"
     (umask 077; mkdir -p "$CC_OUT") 2>/dev/null \
         || cc_die 3 "cannot create output folder: $CC_OUT (pass --out DIR)"
     CC_OUT=$(cc_abspath "$CC_OUT")
@@ -707,9 +707,9 @@ cc_choose() {
 }
 
 # _cc_can_ask -> true when there is someone to ask.
-#   CCDC_NO_TTY=1 says there is nobody (the test suite sets it, so tests
+#   BT_NO_TTY=1 says there is nobody (the test suite sets it, so tests
 #   never wait for an answer when run from a terminal).
-_cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${CCDC_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
+_cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${BT_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
 
 # cc_ask QUESTION DEFAULT [YES-MEANS] [NO-MEANS] -> 0 for yes, 1 for no.
 #   DEFAULT is Y or N.  Shown like cc_choose, with what each answer does:
@@ -803,8 +803,8 @@ REVERT
     CC_TIMER_DEADLINE=$(( $(cc_now) + _cc_ts_s ))
     CC_TIMER_HOW=""
     # 1. A systemd transient timer: survives logout and a killed session.
-    if [ "${CCDC_TIMER_METHOD:-}" != background ] && cc_is_root && [ -d /run/systemd/system ] && cc_have systemd-run; then
-        CC_TIMER_ID="ccdc-revert-$$-$(cc_now)"
+    if [ "${BT_TIMER_METHOD:-}" != background ] && cc_is_root && [ -d /run/systemd/system ] && cc_have systemd-run; then
+        CC_TIMER_ID="bt-revert-$$-$(cc_now)"
         if systemd-run --quiet --unit "$CC_TIMER_ID" --on-active="${_cc_ts_s}s" --timer-property=AccuracySec=1s /bin/sh "$_cc_ts_r" >>"$CC_LOG" 2>&1; then
             CC_TIMER_HOW=systemd
         fi
@@ -1346,14 +1346,14 @@ cc_flag_report() {
 # cc_verify_self
 #   Rule 15: the kit's hash is checked before each run.  If a MANIFEST.sha256
 #   (written by tools/build.sh) sits in the script's folder or one of the two
-#   folders above it, or CCDC_MANIFEST points to one, the running script's
+#   folders above it, or BT_MANIFEST points to one, the running script's
 #   hash must match its line there.  A mismatch stops the script: the file on
 #   this host is not the one you built, and a red team may have edited it.
-#   CCDC_SKIP_VERIFY=1 turns the check off (for development).
+#   BT_SKIP_VERIFY=1 turns the check off (for development).
 cc_verify_self() {
-    [ "${CCDC_SKIP_VERIFY:-0}" = 1 ] && { cc_debug "verify: skipped (CCDC_SKIP_VERIFY=1)"; return 0; }
+    [ "${BT_SKIP_VERIFY:-0}" = 1 ] && { cc_debug "verify: skipped (BT_SKIP_VERIFY=1)"; return 0; }
     [ -f "$0" ] || { cc_debug "verify: script was not started from a file, nothing to hash"; return 0; }
-    _cc_vs_man=${CCDC_MANIFEST:-}
+    _cc_vs_man=${BT_MANIFEST:-}
     if [ -z "$_cc_vs_man" ]; then
         for _cc_vs_d in "$CC_KIT" "$CC_KIT/.." "$CC_KIT/../.."; do
             if [ -r "$_cc_vs_d/MANIFEST.sha256" ]; then _cc_vs_man="$_cc_vs_d/MANIFEST.sha256"; break; fi
@@ -1387,7 +1387,7 @@ cc_finish() {
     [ -n "$CC_LOG" ] && cc_info "log: $CC_LOG"
     exit "$_cc_fin_rc"
 }
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 ALL_ACTIONS="php-urlinclude php-errors php-expose app-config wp-fileedit upload-nophp block-files wp-xmlrpc wp-admins php-functions code-readonly"
 
@@ -1500,8 +1500,8 @@ act_risk() {
 # ---- What is here ---------------------------------------------------------------------------
 header "1/4  web server, PHP and apps"
 APACHE_SVC=""; DROP=""
-if [ -d "$(P /etc/apache2)" ]; then APACHE_SVC=apache2; [ -d "$(P /etc/apache2/conf-enabled)" ] && DROP=/etc/apache2/conf-enabled/zz-ccdc-web.conf
-elif [ -d "$(P /etc/httpd)" ]; then APACHE_SVC=httpd; [ -d "$(P /etc/httpd/conf.d)" ] && DROP=/etc/httpd/conf.d/zz-ccdc-web.conf; fi
+if [ -d "$(P /etc/apache2)" ]; then APACHE_SVC=apache2; [ -d "$(P /etc/apache2/conf-enabled)" ] && DROP=/etc/apache2/conf-enabled/zz-bt-web.conf
+elif [ -d "$(P /etc/httpd)" ]; then APACHE_SVC=httpd; [ -d "$(P /etc/httpd/conf.d)" ] && DROP=/etc/httpd/conf.d/zz-bt-web.conf; fi
 NGINX=""; [ -f "$(P /etc/nginx/nginx.conf)" ] && NGINX=/etc/nginx
 # php.ini files the web uses (not the command line one).
 PHP_INIS=$( { ls -d "$(P /etc/php)"/*/apache2/php.ini "$(P /etc/php)"/*/fpm/php.ini "$(P /etc/php)"/*/cgi/php.ini "$(P /etc/php.ini)" 2>/dev/null; } | sed "s|^$R||")
@@ -1666,16 +1666,16 @@ php_set() {
 }
 # drop_add FIX LINES DESC -> add a block to the Apache drop-in (made if missing).
 drop_add() {
-    [ -n "$DROP" ] || { row "$1" apache "no Apache drop-in folder: see nginx-ccdc.conf / add by hand" "check by hand"; return 0; }
+    [ -n "$DROP" ] || { row "$1" apache "no Apache drop-in folder: see nginx-bt.conf / add by hand" "check by hand"; return 0; }
     _df=$(P "$DROP")
-    if grep -qF "# ccdc: $1" "$_df" 2>/dev/null; then row "$1" "$DROP" "already there" "already ok"; return 0; fi
+    if grep -qF "# bt: $1" "$_df" 2>/dev/null; then row "$1" "$DROP" "already there" "already ok"; return 0; fi
     needs_reload "$APACHE_SVC"
     if [ "$CC_APPLY" = 1 ] && [ ! -f "$_df" ]; then cc_undo_add "remove $DROP (made by SV-21)" "rm -f $(cc_shquote "$_df")"; fi
-    cc_run "add $1 to $DROP" sh -c '[ -f "$1" ] || printf "# Added by CCDC SV-21 (web hardening). Delete this file to undo.\n" >"$1"; printf "# ccdc: %s\n%s\n" "$2" "$3" >>"$1"' sh "$_df" "$1" "$2"
+    cc_run "add $1 to $DROP" sh -c '[ -f "$1" ] || printf "# Added by SV-21 (web hardening). Delete this file to undo.\n" >"$1"; printf "# bt: %s\n%s\n" "$2" "$3" >>"$1"' sh "$_df" "$1" "$2"
     row "$1" "$DROP" "$3" "$(result $?)"
 }
 # nginx_add LINES -> the nginx lines go to a file to include by hand.
-nginx_add() { [ -n "$NGINX" ] && printf '%s\n' "$1" >>"$CC_RUN_DIR/nginx-ccdc.conf"; return 0; }
+nginx_add() { [ -n "$NGINX" ] && printf '%s\n' "$1" >>"$CC_RUN_DIR/nginx-bt.conf"; return 0; }
 # PHP file name patterns that run as code.
 PHPEXT='\.(php[0-9]?|phtml|phar|pht|phps)$'
 
@@ -1708,7 +1708,7 @@ do_fix() {
                     backed "$_c" || { row wp-fileedit "${_c#"$R"}" "backup failed" failed; continue; }
                 fi
                 # Right after the opening <?php line.
-                cc_run "DISALLOW_FILE_EDIT in ${_c#"$R"}" sh -c 'awk "NR == 1 && /<\\?php/ { print; print \"define( '"'"'DISALLOW_FILE_EDIT'"'"', true ); // CCDC SV-21\"; next } { print }" "$1" >"$1.ccnew" && cat "$1.ccnew" >"$1" && rm -f "$1.ccnew" && touch "$1"' sh "$_c"
+                cc_run "DISALLOW_FILE_EDIT in ${_c#"$R"}" sh -c 'awk "NR == 1 && /<\\?php/ { print; print \"define( '"'"'DISALLOW_FILE_EDIT'"'"', true ); // BT SV-21\"; next } { print }" "$1" >"$1.ccnew" && cat "$1.ccnew" >"$1" && rm -f "$1.ccnew" && touch "$1"' sh "$_c"
                 row wp-fileedit "${_c#"$R"}" "no theme/plugin code editing from the admin panel" "$(result $?)"
             done <"$W/wpc" ;;
         upload-nophp)
@@ -1844,7 +1844,7 @@ run_all() {
 header "3/4  plan (dry run: nothing is changed yet)"
 CSV=$(cc_csv_new plan "fix,item,detail,status")
 _real=$CC_APPLY; CC_APPLY=0
-: >"$W/reload"; : >"$W/backed"; : >"$CC_RUN_DIR/nginx-ccdc.conf"
+: >"$W/reload"; : >"$W/backed"; : >"$CC_RUN_DIR/nginx-bt.conf"
 run_all
 CC_APPLY=$_real
 NCH=$(awk "$CC_AWK_CSV"'NR > 1 { csvsplit($0, f); if (f[4] == "would change") n++ } END { print n + 0 }' "$CSV")
@@ -1909,7 +1909,7 @@ else
         cc_show "$C_YEL" "  [*] Revert timer started: everything is undone in $((TIMER / 60)):$(printf '%02d' $((TIMER % 60))) unless you keep it at the end."
     fi
     APPLIED=1
-    : >"$W/reload"; : >"$W/backed"; : >"$CC_RUN_DIR/nginx-ccdc.conf"
+    : >"$W/reload"; : >"$W/backed"; : >"$CC_RUN_DIR/nginx-bt.conf"
     CSV=$(cc_csv_new changes "fix,item,detail,status")
     # shellcheck disable=SC2034  # read by cc_finish
     CC_N_WOULD=0
@@ -1938,7 +1938,7 @@ else
     fi
     cc_csv_pretty "$CSV" "$CC_RUN_DIR/changes.txt" 110
 fi
-[ -s "$CC_RUN_DIR/nginx-ccdc.conf" ] || rm -f "$CC_RUN_DIR/nginx-ccdc.conf"
+[ -s "$CC_RUN_DIR/nginx-bt.conf" ] || rm -f "$CC_RUN_DIR/nginx-bt.conf"
 if [ "$TIMER_ON" = 1 ]; then header "KEEP OR REVERT"; cc_timer_finish || true; fi
 
 # ---- Summary ----------------------------------------------------------------------------
@@ -1948,7 +1948,7 @@ cc_csv_pretty "$ACSV" "$CC_RUN_DIR/apps.txt" 120
     printf 'SV-21 PHP and web app hardening | host %s | level %s | %s\n' "$CC_HOST" "$LEVEL" "$([ "$APPLIED" = 1 ] && { [ "$SITEFAIL" = 1 ] && echo 'APPLIED, then PUT BACK (the site broke)' || echo APPLIED; } || echo 'DRY RUN - nothing changed')"
     printf 'Fixes chosen:%s\n' "$CHOSEN"
     awk "$CC_AWK_CSV"'NR > 1 { csvsplit($0, f); if (f[4] != "already ok") printf "  %-13s %-14s %-40s %s\n", toupper(f[4]), f[1], substr(f[2], 1, 40), f[3] }' "$CSV" | head -n 60
-    [ -f "$CC_RUN_DIR/nginx-ccdc.conf" ] && printf '\nnginx: include %s inside each server { } block, then nginx -t and reload.\n' "$CC_RUN_DIR/nginx-ccdc.conf"
+    [ -f "$CC_RUN_DIR/nginx-bt.conf" ] && printf '\nnginx: include %s inside each server { } block, then nginx -t and reload.\n' "$CC_RUN_DIR/nginx-bt.conf"
     printf '\nApps: %s/apps.txt\n' "$CC_RUN_DIR"
     [ "$APPLIED" = 1 ] && [ -f "$CC_RUN_DIR/revert.sh" ] && printf 'Undo this run: sh %s/revert.sh --force\n' "$CC_RUN_DIR"
     case " $CHOSEN " in *" php-functions "*) printf 'php-functions: click through the store (checkout, image upload, mail): a broken feature shows "has been disabled for security reasons".\n' ;; esac

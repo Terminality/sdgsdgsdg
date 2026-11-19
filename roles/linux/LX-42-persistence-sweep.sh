@@ -100,7 +100,7 @@
 # DEPENDS ON
 #   find, grep, awk, sed.  dpkg or rpm for "from a package".  Optional and
 #   used when present: systemctl, lsmod/modinfo, getcap, lsattr, ss.
-#   CCDC_PROC and CCDC_SS may name stand-ins (the tests use them).
+#   BT_PROC and BT_SS may name stand-ins (the tests use them).
 #
 # TESTED ON
 #   Ubuntu 24.04 under dash, bash, busybox sh, ksh93, mksh and yash, against
@@ -123,7 +123,7 @@
 #   findings.txt     the numbered list; csv/findings.csv has the fix column
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -131,7 +131,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 ALL_AREAS="cron systemd boot ssh shell preload accounts pam kernel files procs web misc"
 
@@ -243,7 +243,7 @@ grep -v '\[NOTE\]\|\[DEBUG\]' "$CC_LOG" >"$OUTF" 2>/dev/null || : >"$OUTF"
 CC_TEE=$OUTF
 IS_ROOT=0; cc_is_root && IS_ROOT=1
 LIVE=0; [ -z "$R" ] && LIVE=1
-PROCROOT=${CCDC_PROC:-}
+PROCROOT=${BT_PROC:-}
 [ -n "$PROCROOT" ] || { [ "$LIVE" = 1 ] && PROCROOT=/proc; }
 
 # ---- Helpers ----------------------------------------------------------------
@@ -1022,7 +1022,7 @@ a_procs() {
         case "$_comm" in nc|ncat|netcat|nc.openbsd|nc.traditional|socat) f MED procs "$_it" "a netcat/socat is running: $_cmd" pid "$_pid" ;; esac
     done
     # Shells holding a network connection.
-    _ss=${CCDC_SS:-$(cc_which ss)} || _ss=""
+    _ss=${BT_SS:-$(cc_which ss)} || _ss=""
     if [ -n "$_ss" ]; then
         "$_ss" -tnpH state established 2>/dev/null | grep -E 'users:\(\("(ba|da|z|k)?sh"' >"$W/cl"
         while IFS= read -r _l; do

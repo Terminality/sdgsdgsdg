@@ -72,7 +72,7 @@
 #     TLS 1.2 connection and put back if the port stops answering.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -80,7 +80,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -336,13 +336,13 @@ set_kv() {
         { l = $0; sub(/^[ \t]+/, "", l); n = split(l, w, /[ \t=]+/) }
         n > 0 && tolower(w[1]) == tolower(k) && l !~ /^[#;]/ { i = $0; sub(/[^ \t].*$/, "", i)
             if (st == "sp") $0 = i k " " v; else if (st == "ng") $0 = i k " " v ";"; else $0 = i k " = " v; hit = 1 }
-        { print } END { exit hit ? 0 : 1 }' "$1" >"$1.ccdc" && { cat "$1.ccdc" >"$1"; rm -f "$1.ccdc"; return 0; }
-    rm -f "$1.ccdc"; return 1
+        { print } END { exit hit ? 0 : 1 }' "$1" >"$1.bt" && { cat "$1.bt" >"$1"; rm -f "$1.bt"; return 0; }
+    rm -f "$1.bt"; return 1
 }
 # add_after FILE ANCHOR-KEY LINE -> put LINE (indented like the anchor) after each anchor line
 add_after() {
     awk -v a="$2" -v t="$3" '{ print; l = $0; sub(/^[ \t]+/, "", l); n = split(l, w, /[ \t=]+/)
-        if (n > 0 && tolower(w[1]) == tolower(a) && l !~ /^[#;]/) { i = $0; sub(/[^ \t].*$/, "", i); print i t } }' "$1" >"$1.ccdc" && cat "$1.ccdc" >"$1"; rm -f "$1.ccdc"
+        if (n > 0 && tolower(w[1]) == tolower(a) && l !~ /^[#;]/) { i = $0; sub(/[^ \t].*$/, "", i); print i t } }' "$1" >"$1.bt" && cat "$1.bt" >"$1"; rm -f "$1.bt"
 }
 # put_kv KEY VALUE ANCHOR -> set KEY in the files of $W/tf (style $_st)
 put_kv() {

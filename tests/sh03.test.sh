@@ -9,7 +9,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/network/SH-03-network-scan.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 
@@ -175,7 +175,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     # full (n), services (Enter), scripts (n), vuln (y), safe only (n), then
     # OS (n) and UDP (Enter) when root.
     printf '10.9.9.5\n5\n\n100\n8080\nn\n\nn\ny\nn\nn\n\n' >"$T_TMP/answers"
-    CCDC_NO_TTY=0 PATH="$T_TMP/bin:$PATH" script -qc "$SH $C --out $T_TMP/q --no-color --no-dns" /dev/null <"$T_TMP/answers" >"$T_TMP/tty.out" 2>&1
+    BT_NO_TTY=0 PATH="$T_TMP/bin:$PATH" script -qc "$SH $C --out $T_TMP/q --no-color --no-dns" /dev/null <"$T_TMP/answers" >"$T_TMP/tty.out" 2>&1
     t_has "$(cat "$T_TMP/tty.out")" "What should I scan?" "asks for the target"
     t_has "$(cat "$T_TMP/tty.out")" "vuln scripts" "asks about vuln scripts"
     t_has "$(sed -n 1p "$STUBLOG")" "10.9.9.5" "scans the typed target"
@@ -190,7 +190,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     t_has "$(tail -n 1 "$STUBLOG")" "-sV" "versions after Enter (default yes)"
     t_start "nmap check in a terminal"
     printf 'n\n' >"$T_TMP/answers3"
-    CCDC_NO_TTY=0 PATH="$T_TMP/nonmap" script -qc "$SH $C --out $T_TMP/q3 --no-color --target 127.0.0.1" /dev/null <"$T_TMP/answers3" >"$T_TMP/tty3.out" 2>&1
+    BT_NO_TTY=0 PATH="$T_TMP/nonmap" script -qc "$SH $C --out $T_TMP/q3 --no-color --target 127.0.0.1" /dev/null <"$T_TMP/answers3" >"$T_TMP/tty3.out" 2>&1
     t_has "$(cat "$T_TMP/tty3.out")" "Keep going with the" "asks whether to keep going without nmap"
     t_has "$(cat "$T_TMP/tty3.out")" "Install nmap and run again" "stops after 'n'"
     t_fail "and scans nothing" ls -d "$T_TMP"/q3/netscan-*/ 2>/dev/null
@@ -198,7 +198,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     t_start "picking hosts for the full scan in a terminal"
     : >"$STUBLOG"
     printf '10.9.9.6\n' >"$T_TMP/answers2"
-    CCDC_NO_TTY=0 PATH="$T_TMP/bin:$PATH" script -qc "$SH $C --out $T_TMP/q --no-color --target 10.9.9.0/24 --speed 4 --quick --top-ports 10 --no-extra-ports --full --no-services --no-scripts --no-vuln --no-os --no-udp" /dev/null <"$T_TMP/answers2" >"$T_TMP/tty2.out" 2>&1
+    BT_NO_TTY=0 PATH="$T_TMP/bin:$PATH" script -qc "$SH $C --out $T_TMP/q --no-color --target 10.9.9.0/24 --speed 4 --quick --top-ports 10 --no-extra-ports --full --no-services --no-scripts --no-vuln --no-os --no-udp" /dev/null <"$T_TMP/answers2" >"$T_TMP/tty2.out" 2>&1
     t_has "$(cat "$T_TMP/tty2.out")" "Full scan which hosts?" "asks which hosts get the full scan"
     t_has "$(cat "$T_TMP/tty2.out")" "up: 10.9.9.5 10.9.9.6" "after showing the hosts that are up"
     t_has "$(sed -n 2p "$STUBLOG")" "-p- --stats-every 60s 10.9.9.6" "full scan only on the typed host"

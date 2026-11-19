@@ -3,7 +3,7 @@
 # A stand-in Splunk: the real file layout (etc/passwd, etc/apps, inputs.conf,
 # deploymentclient.conf, authorize.conf, splunk.secret, user-seed.conf), a
 # process called splunkd, a bin/splunk that only logs restarts, and a
-# stand-in for the REST API on 8089 (CCDC_SPLUNK_CURL) that keeps each
+# stand-in for the REST API on 8089 (BT_SPLUNK_CURL) that keeps each
 # user's password in etc/passwd so a file restore is a password restore.
 # Checks: everything is found; a dry run changes nothing; --apply changes
 # the passwords (tested by logging in), disables the planted scripted input,
@@ -14,7 +14,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/applications/SV-44-splunk-hardening.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 O="$T_TMP/out"; S="$T_TMP/splunk"; B="$T_TMP/bin"
 mkdir -p "$B"
 cat >"$B/curl" <<'STUB'
@@ -46,7 +46,7 @@ fi
 echo '{}' >"$out"; printf '%s' "$code"
 STUB
 chmod +x "$B/curl"
-CCDC_SPLUNK_CURL="$B/curl"; SV44_HOME=$S; export CCDC_SPLUNK_CURL SV44_HOME
+BT_SPLUNK_CURL="$B/curl"; SV44_HOME=$S; export BT_SPLUNK_CURL SV44_HOME
 
 mksplunk() {
     rm -rf "$S"; mkdir -p "$S/bin" "$S/etc/system/local" "$S/etc/auth" "$S/etc/apps/search/default" "$S/etc/apps/evilapp/bin" "$S/etc/apps/evilapp/local"
@@ -134,7 +134,7 @@ if command -v script >/dev/null 2>&1; then
     # one by one y; admin k, scorer k, evil s + typed twice; app evilapp q;
     # apply Enter; restart Enter; keep at the end: no timer
     printf 'y\ny\ny\nn\nn\ny\nk\nk\ns\nTyped44Pass!\nTyped44Pass!\nq\n\n\n' >"$T_TMP/ans"
-    tt=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --splunk-home '$S' --out '$O' --no-color --auth-file '$T_TMP/auth' --no-protected --no-timer --apply" /dev/null <"$T_TMP/ans" 2>&1)
+    tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --splunk-home '$S' --out '$O' --no-color --auth-file '$T_TMP/auth' --no-protected --no-timer --apply" /dev/null <"$T_TMP/ans" 2>&1)
     t_has "$tt" "[s] set one: you type it twice" "each user lists its answers"
     t_has "$tt" "[q] quarantine it" "each app lists its answers"
     t_has "$(cat "$S/etc/passwd")" "plainTyped44Pass!" "the typed password is set"

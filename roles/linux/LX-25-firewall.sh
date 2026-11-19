@@ -31,8 +31,8 @@
 #   unless you ask to limit it.
 #
 #   SAFETY
-#     - It adds its OWN rules (nftables table "inet ccdc", or iptables chains
-#       CCDC-IN/CCDC-OUT) and never flushes anyone else's: Docker, fail2ban,
+#     - It adds its OWN rules (nftables table "inet bt", or iptables chains
+#       BT-IN/BT-OUT) and never flushes anyone else's: Docker, fail2ban,
 #       firewalld and ufw keep their rules.
 #     - The ruleset is checked by nft (-c) before it goes live.
 #     - ROLLBACK TIMER: after --apply the rules are removed again after
@@ -71,8 +71,8 @@
 #   --backend NAME      nft or iptables (default: nft when it works)
 #   --confirm-timeout N seconds before the automatic rollback (default 120;
 #                       0 = no timer, keep at once - only at the console)
-#   --save              save the CURRENT ccdc rules for reboot and exit
-#   --remove            remove the ccdc rules and exit
+#   --save              save the CURRENT bt rules for reboot and exit
+#   --remove            remove the bt rules and exit
 #                       (both are dry runs without --apply, like every change)
 #   --no-color          no colours
 #   --batch             no questions: take every default
@@ -90,13 +90,13 @@
 #
 # WHAT IT CHANGES  (only with --apply / --save / --remove)
 #   The live firewall (own table/chains only).  --save also writes
-#   /etc/ccdc-firewall.nft plus an include line in /etc/nftables.conf, or
+#   /etc/bt-firewall.nft plus an include line in /etc/nftables.conf, or
 #   saves iptables rules with the distribution's tool.
 #
 # DEPENDS ON
 #   nft or iptables (+ ip6tables); ss or netstat for listening ports; /proc
-#   for the program behind each port; sshd -T for the SSH port.  CCDC_NFT,
-#   CCDC_IPTABLES, CCDC_IP6TABLES, CCDC_SS and CCDC_PROC may name stand-ins
+#   for the program behind each port; sshd -T for the SSH port.  BT_NFT,
+#   BT_IPTABLES, BT_IP6TABLES, BT_SS and BT_PROC may name stand-ins
 #   (the tests use them).
 #
 # TESTED ON
@@ -119,12 +119,12 @@
 #
 # DEBUGGING
 #   --debug shows how every listening port was classified.  The rules are in
-#   ruleset.nft / ruleset.iptables.sh; "nft list table inet ccdc" or
-#   "iptables -S CCDC-IN" shows what is live.  Dropped packets are logged
-#   with the prefix "CCDC-DROP" (journalctl -k | grep CCDC-DROP).
+#   ruleset.nft / ruleset.iptables.sh; "nft list table inet bt" or
+#   "iptables -S BT-IN" shows what is live.  Dropped packets are logged
+#   with the prefix "BT-DROP" (journalctl -k | grep BT-DROP).
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -132,7 +132,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -150,8 +150,8 @@ LX-25 Linux firewall builder - see every open port, keep or drop each one
   --keep-ipv6 / --drop-ipv6            allow or drop IPv6
   --backend nft|iptables
   --confirm-timeout N  seconds before automatic rollback (default 120, 0 = none)
-  --save               save the current ccdc rules for reboot, then exit (with --apply)
-  --remove             remove the ccdc rules, then exit (with --apply)
+  --save               save the current bt rules for reboot, then exit (with --apply)
+  --remove             remove the bt rules, then exit (with --apply)
   --no-color           no colours
   --help               show this text
 
@@ -239,10 +239,10 @@ CC_TEE=$OUTF
 header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
 
 # ---- Tools ---------------------------------------------------------------------
-NFT=${CCDC_NFT:-$(cc_which nft)} || NFT=""
-IPT=${CCDC_IPTABLES:-$(cc_which iptables)} || IPT=""
-IP6T=${CCDC_IP6TABLES:-$(cc_which ip6tables)} || IP6T=""
-SS=${CCDC_SS:-$(cc_which ss)} || SS=""
+NFT=${BT_NFT:-$(cc_which nft)} || NFT=""
+IPT=${BT_IPTABLES:-$(cc_which iptables)} || IPT=""
+IP6T=${BT_IP6TABLES:-$(cc_which ip6tables)} || IP6T=""
+SS=${BT_SS:-$(cc_which ss)} || SS=""
 if [ -z "$BACKEND" ]; then
     if [ -n "$NFT" ] && "$NFT" list tables >/dev/null 2>&1; then BACKEND=nft
     elif [ -n "$IPT" ]; then BACKEND=iptables
@@ -255,41 +255,41 @@ cc_debug "backend: $BACKEND nft=$NFT iptables=$IPT ss=$SS"
 # The commands that remove our rules; used by --remove, the undo log and the timer.
 ROLLBACK="$CC_RUN_DIR/rollback.sh"
 {
-    printf '#!/bin/sh\n# Removes the CCDC firewall rules made by LX-25. Other rules are not touched.\n'
+    printf '#!/bin/sh\n# Removes the LX-25 firewall rules made by LX-25. Other rules are not touched.\n'
     if [ "$BACKEND" = nft ]; then
-        printf '%s list table inet ccdc >/dev/null 2>&1 && %s delete table inet ccdc\n' "$NFT" "$NFT"
+        printf '%s list table inet bt >/dev/null 2>&1 && %s delete table inet bt\n' "$NFT" "$NFT"
     else
         for _t in "$IPT" "$IP6T"; do
             [ -n "$_t" ] || continue
-            printf 'while %s -D INPUT -j CCDC-IN 2>/dev/null; do :; done\n' "$_t"
-            printf 'while %s -D OUTPUT -j CCDC-OUT 2>/dev/null; do :; done\n' "$_t"
-            printf '%s -F CCDC-IN 2>/dev/null; %s -X CCDC-IN 2>/dev/null\n' "$_t" "$_t"
-            printf '%s -F CCDC-OUT 2>/dev/null; %s -X CCDC-OUT 2>/dev/null\n' "$_t" "$_t"
+            printf 'while %s -D INPUT -j BT-IN 2>/dev/null; do :; done\n' "$_t"
+            printf 'while %s -D OUTPUT -j BT-OUT 2>/dev/null; do :; done\n' "$_t"
+            printf '%s -F BT-IN 2>/dev/null; %s -X BT-IN 2>/dev/null\n' "$_t" "$_t"
+            printf '%s -F BT-OUT 2>/dev/null; %s -X BT-OUT 2>/dev/null\n' "$_t" "$_t"
         done
     fi
-    printf 'echo "CCDC firewall rules removed"\n'
+    printf 'echo "LX-25 firewall rules removed"\n'
 } >"$ROLLBACK"
 chmod 700 "$ROLLBACK"
 
 # ---- --remove and --save ----------------------------------------------------------
 if [ "$MODE" = remove ]; then
-    cc_run "remove the CCDC firewall rules" sh "$ROLLBACK"
+    cc_run "remove the LX-25 firewall rules" sh "$ROLLBACK"
     cc_finish
 fi
 if [ "$MODE" = save ]; then
     if [ "$BACKEND" = nft ]; then
-        "$NFT" list table inet ccdc >"$W/live.nft" 2>/dev/null || cc_die 3 "no ccdc table is live: nothing to save (apply and confirm first)"
-        { printf 'table inet ccdc\ndelete table inet ccdc\n'; cat "$W/live.nft"; } >"$W/save.nft"
-        cc_backup_file /etc/ccdc-firewall.nft || cc_die 5 "backup failed"
-        cc_run "save the rules to /etc/ccdc-firewall.nft" cp "$W/save.nft" /etc/ccdc-firewall.nft
+        "$NFT" list table inet bt >"$W/live.nft" 2>/dev/null || cc_die 3 "no bt table is live: nothing to save (apply and confirm first)"
+        { printf 'table inet bt\ndelete table inet bt\n'; cat "$W/live.nft"; } >"$W/save.nft"
+        cc_backup_file /etc/bt-firewall.nft || cc_die 5 "backup failed"
+        cc_run "save the rules to /etc/bt-firewall.nft" cp "$W/save.nft" /etc/bt-firewall.nft
         if [ -f /etc/nftables.conf ]; then
-            if ! grep -q 'include "/etc/ccdc-firewall.nft"' /etc/nftables.conf; then
+            if ! grep -q 'include "/etc/bt-firewall.nft"' /etc/nftables.conf; then
                 cc_backup_file /etc/nftables.conf || cc_die 5 "backup failed"
-                cc_run "load them at boot (include line in /etc/nftables.conf)" sh -c 'printf "\ninclude \"/etc/ccdc-firewall.nft\"\n" >>/etc/nftables.conf'
+                cc_run "load them at boot (include line in /etc/nftables.conf)" sh -c 'printf "\ninclude \"/etc/bt-firewall.nft\"\n" >>/etc/nftables.conf'
             fi
             [ "$CC_INIT" = systemd ] && cc_run "enable the nftables service at boot" systemctl enable nftables
         else
-            cc_warn "no /etc/nftables.conf: load /etc/ccdc-firewall.nft at boot yourself (nft -f /etc/ccdc-firewall.nft)"
+            cc_warn "no /etc/nftables.conf: load /etc/bt-firewall.nft at boot yourself (nft -f /etc/bt-firewall.nft)"
         fi
     else
         if cc_have netfilter-persistent; then cc_run "save iptables rules (netfilter-persistent)" netfilter-persistent save
@@ -306,16 +306,16 @@ cc_show "" "Legend: ${C_GRN}KEEP${C_OFF} stays open   ${C_RED}DROP${C_OFF} block
 
 # ---- 1/5  The firewall on this box right now ----------------------------------------
 header "1/5  the firewall on this box right now"
-cc_show "" "  This script uses: $BACKEND (its own $([ "$BACKEND" = nft ] && echo 'table "inet ccdc"' || echo 'chains CCDC-IN / CCDC-OUT'); other rules are never flushed)"
-if [ "$BACKEND" = nft ] && "$NFT" list table inet ccdc >/dev/null 2>&1; then
-    cc_show "$C_YEL" "  CCDC rules from an earlier run are LIVE now. Applying replaces them."
-elif [ "$BACKEND" = iptables ] && "$IPT" -S CCDC-IN >/dev/null 2>&1 && [ -z "${CCDC_IPTABLES:-}" ]; then
-    cc_show "$C_YEL" "  CCDC rules from an earlier run are LIVE now. Applying replaces them."
+cc_show "" "  This script uses: $BACKEND (its own $([ "$BACKEND" = nft ] && echo 'table "inet bt"' || echo 'chains BT-IN / BT-OUT'); other rules are never flushed)"
+if [ "$BACKEND" = nft ] && "$NFT" list table inet bt >/dev/null 2>&1; then
+    cc_show "$C_YEL" "  LX-25 rules from an earlier run are LIVE now. Applying replaces them."
+elif [ "$BACKEND" = iptables ] && "$IPT" -S BT-IN >/dev/null 2>&1 && [ -z "${BT_IPTABLES:-}" ]; then
+    cc_show "$C_YEL" "  LX-25 rules from an earlier run are LIVE now. Applying replaces them."
 else
-    cc_show "$C_GRY" "  No CCDC rules are loaded yet."
+    cc_show "$C_GRY" "  No LX-25 rules are loaded yet."
 fi
 # Other firewalls still apply on top of ours.  (Skipped with stand-in tools.)
-if [ -z "${CCDC_SS:-}" ]; then
+if [ -z "${BT_SS:-}" ]; then
     if cc_have ufw && ufw status 2>/dev/null | grep -qi '^Status: active'; then cc_show "$C_YEL" "  ufw is ACTIVE: a port kept open here can still be blocked by ufw (ufw status)."; fi
     if cc_have firewall-cmd && firewall-cmd --state >/dev/null 2>&1; then cc_show "$C_YEL" "  firewalld is RUNNING: a port kept open here can still be blocked by it (firewall-cmd --list-all)."; fi
     if [ -n "$IPT" ]; then
@@ -353,7 +353,7 @@ awk -F'|' '
 
 # SSH port: what sshd really uses (sshd -T), else what sshd listens on, else 22.
 SSHPORTS=""
-if _sshd=$(cc_which sshd) && [ -z "${CCDC_SS:-}" ]; then SSHPORTS=$("$_sshd" -T 2>/dev/null | awk '$1 == "port" { print $2 }' | sort -u | tr '\n' ' ' | sed 's/ *$//'); fi
+if _sshd=$(cc_which sshd) && [ -z "${BT_SS:-}" ]; then SSHPORTS=$("$_sshd" -T 2>/dev/null | awk '$1 == "port" { print $2 }' | sort -u | tr '\n' ' ' | sed 's/ *$//'); fi
 [ -n "$SSHPORTS" ] || SSHPORTS=$(awk -F'|' '$1 == "tcp" && $4 ~ /^sshd/ { print $3 }' "$W/listen" | sort -u | tr '\n' ' ' | sed 's/ *$//')
 [ -n "$SSHPORTS" ] || SSHPORTS=22
 
@@ -423,7 +423,7 @@ port_info() {
 }
 
 # proc_info PID -> PR_USER, PR_CMD (full command line), PR_EXE, from /proc.
-PROCROOT=${CCDC_PROC:-/proc}
+PROCROOT=${BT_PROC:-/proc}
 proc_info() {
     PR_USER=""; PR_CMD=""; PR_EXE=""
     [ -n "$1" ] && [ -d "$PROCROOT/$1" ] || return 0
@@ -483,7 +483,7 @@ while IFS='|' read -r _pr _p _bind _proc _pid; do
     cc_debug "port $_pr/$_p bind=$_bind class=$PI_CLASS default=$_def"
 done <"$W/ports0"
 if [ "$_shown" = 0 ]; then cc_show "$C_YEL" "  Nothing is listening (or ss/netstat could not say). Only SSH, scored ports and --allow will be open."; fi
-if ! cc_is_root && [ -z "${CCDC_SS:-}" ]; then cc_show "$C_YEL" "  Not root: programs owned by other accounts show as '?'. Run with sudo to see them."; fi
+if ! cc_is_root && [ -z "${BT_SS:-}" ]; then cc_show "$C_YEL" "  Not root: programs owned by other accounts show as '?'. Run with sudo to see them."; fi
 
 # ---- 3/5  Questions -------------------------------------------------------------------
 header "3/5  questions (Enter takes the answer in capitals)"
@@ -590,9 +590,9 @@ TCPSET=$(portset tcp); UDPSET=$(portset udp)
 if [ "$BACKEND" = nft ]; then
     RULES="$CC_RUN_DIR/ruleset.nft"
     {
-        printf '# CCDC firewall (LX-25) %s - its own table; other tables are untouched.\n' "$CC_HOST"
-        printf 'table inet ccdc\ndelete table inet ccdc\n'
-        printf 'table inet ccdc {\n'
+        printf '# Firewall (LX-25) %s - its own table; other tables are untouched.\n' "$CC_HOST"
+        printf 'table inet bt\ndelete table inet bt\n'
+        printf 'table inet bt {\n'
         printf '    chain input {\n        type filter hook input priority 0; policy accept;\n'
         printf '        iif "lo" accept\n'
         printf '        ct state established,related accept\n'
@@ -607,7 +607,7 @@ if [ "$BACKEND" = nft ]; then
         fi
         [ -n "$TCPSET" ] && printf '        tcp dport { %s } accept\n' "$TCPSET"
         [ -n "$UDPSET" ] && printf '        udp dport { %s } accept\n' "$UDPSET"
-        printf '        limit rate 10/minute log prefix "CCDC-DROP " level info\n'
+        printf '        limit rate 10/minute log prefix "BT-DROP " level info\n'
         printf '        drop\n    }\n'
         if [ "$RESTOUT" = 1 ]; then
             printf '    chain output {\n        type filter hook output priority 0; policy accept;\n'
@@ -615,43 +615,43 @@ if [ "$BACKEND" = nft ]; then
             printf '        meta l4proto { icmp, ipv6-icmp } accept\n'
             printf '        udp dport { 53, 67, 123 } accept\n        tcp dport { 53, 80, 443 } accept\n'
             [ -n "$SRC4" ] && printf '        ip daddr { %s } accept\n' "$(commaset "$SRC4")"
-            printf '        limit rate 10/minute log prefix "CCDC-OUT-DROP " level info\n        drop\n    }\n'
+            printf '        limit rate 10/minute log prefix "BT-OUT-DROP " level info\n        drop\n    }\n'
         fi
         printf '}\n'
     } >"$RULES"
 else
     RULES="$CC_RUN_DIR/ruleset.iptables.sh"
     {
-        printf '#!/bin/sh\n# CCDC firewall (LX-25) %s - its own chains; other chains are untouched.\n' "$CC_HOST"
+        printf '#!/bin/sh\n# Firewall (LX-25) %s - its own chains; other chains are untouched.\n' "$CC_HOST"
         printf 'set -e\nT=%s\n' "$IPT"
-        printf '$T -N CCDC-IN 2>/dev/null || $T -F CCDC-IN\n'
-        printf '$T -A CCDC-IN -i lo -j ACCEPT\n'
-        printf '$T -A CCDC-IN -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n'
-        printf '$T -A CCDC-IN -m conntrack --ctstate INVALID -j DROP\n'
-        printf '$T -A CCDC-IN -p icmp -j ACCEPT\n'
-        for _s in $SRC4; do printf '$T -A CCDC-IN -s %s -j ACCEPT\n' "$_s"; done
-        if [ -n "$SSHFROM" ]; then for _p in $SSHPORTS; do for _s in $SSH4; do printf '$T -A CCDC-IN -s %s -p tcp --dport %s -j ACCEPT\n' "$_s" "$_p"; done; done; fi
-        awk -F'|' '{ printf "$T -A CCDC-IN -p %s --dport %s -j ACCEPT\n", $1, ($2 == $3 ? $2 : $2 ":" $3) }' "$W/allow.u"
-        printf '$T -A CCDC-IN -m limit --limit 10/min -j LOG --log-prefix "CCDC-DROP "\n'
-        printf '$T -A CCDC-IN -j DROP\n'
-        printf '$T -C INPUT -j CCDC-IN 2>/dev/null || $T -I INPUT 1 -j CCDC-IN\n'
+        printf '$T -N BT-IN 2>/dev/null || $T -F BT-IN\n'
+        printf '$T -A BT-IN -i lo -j ACCEPT\n'
+        printf '$T -A BT-IN -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n'
+        printf '$T -A BT-IN -m conntrack --ctstate INVALID -j DROP\n'
+        printf '$T -A BT-IN -p icmp -j ACCEPT\n'
+        for _s in $SRC4; do printf '$T -A BT-IN -s %s -j ACCEPT\n' "$_s"; done
+        if [ -n "$SSHFROM" ]; then for _p in $SSHPORTS; do for _s in $SSH4; do printf '$T -A BT-IN -s %s -p tcp --dport %s -j ACCEPT\n' "$_s" "$_p"; done; done; fi
+        awk -F'|' '{ printf "$T -A BT-IN -p %s --dport %s -j ACCEPT\n", $1, ($2 == $3 ? $2 : $2 ":" $3) }' "$W/allow.u"
+        printf '$T -A BT-IN -m limit --limit 10/min -j LOG --log-prefix "BT-DROP "\n'
+        printf '$T -A BT-IN -j DROP\n'
+        printf '$T -C INPUT -j BT-IN 2>/dev/null || $T -I INPUT 1 -j BT-IN\n'
         if [ "$RESTOUT" = 1 ]; then
-            printf '$T -N CCDC-OUT 2>/dev/null || $T -F CCDC-OUT\n'
-            printf '$T -A CCDC-OUT -o lo -j ACCEPT\n$T -A CCDC-OUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n$T -A CCDC-OUT -p icmp -j ACCEPT\n'
-            printf '$T -A CCDC-OUT -p udp -m multiport --dports 53,67,123 -j ACCEPT\n$T -A CCDC-OUT -p tcp -m multiport --dports 53,80,443 -j ACCEPT\n'
-            for _s in $SRC4; do printf '$T -A CCDC-OUT -d %s -j ACCEPT\n' "$_s"; done
-            printf '$T -A CCDC-OUT -m limit --limit 10/min -j LOG --log-prefix "CCDC-OUT-DROP "\n$T -A CCDC-OUT -j DROP\n'
-            printf '$T -C OUTPUT -j CCDC-OUT 2>/dev/null || $T -I OUTPUT 1 -j CCDC-OUT\n'
+            printf '$T -N BT-OUT 2>/dev/null || $T -F BT-OUT\n'
+            printf '$T -A BT-OUT -o lo -j ACCEPT\n$T -A BT-OUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n$T -A BT-OUT -p icmp -j ACCEPT\n'
+            printf '$T -A BT-OUT -p udp -m multiport --dports 53,67,123 -j ACCEPT\n$T -A BT-OUT -p tcp -m multiport --dports 53,80,443 -j ACCEPT\n'
+            for _s in $SRC4; do printf '$T -A BT-OUT -d %s -j ACCEPT\n' "$_s"; done
+            printf '$T -A BT-OUT -m limit --limit 10/min -j LOG --log-prefix "BT-OUT-DROP "\n$T -A BT-OUT -j DROP\n'
+            printf '$T -C OUTPUT -j BT-OUT 2>/dev/null || $T -I OUTPUT 1 -j BT-OUT\n'
         fi
         if [ -n "$IP6T" ]; then
-            printf 'T6=%s\n$T6 -N CCDC-IN 2>/dev/null || $T6 -F CCDC-IN\n' "$IP6T"
-            printf '$T6 -A CCDC-IN -i lo -j ACCEPT\n$T6 -A CCDC-IN -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n'
+            printf 'T6=%s\n$T6 -N BT-IN 2>/dev/null || $T6 -F BT-IN\n' "$IP6T"
+            printf '$T6 -A BT-IN -i lo -j ACCEPT\n$T6 -A BT-IN -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n'
             if [ "$KEEP6" = 1 ]; then
-                printf '$T6 -A CCDC-IN -p ipv6-icmp -j ACCEPT\n'
-                for _s in $SRC6; do printf '$T6 -A CCDC-IN -s %s -j ACCEPT\n' "$_s"; done
-                awk -F'|' '{ printf "$T6 -A CCDC-IN -p %s --dport %s -j ACCEPT\n", $1, ($2 == $3 ? $2 : $2 ":" $3) }' "$W/allow.u"
+                printf '$T6 -A BT-IN -p ipv6-icmp -j ACCEPT\n'
+                for _s in $SRC6; do printf '$T6 -A BT-IN -s %s -j ACCEPT\n' "$_s"; done
+                awk -F'|' '{ printf "$T6 -A BT-IN -p %s --dport %s -j ACCEPT\n", $1, ($2 == $3 ? $2 : $2 ":" $3) }' "$W/allow.u"
             fi
-            printf '$T6 -A CCDC-IN -j DROP\n$T6 -C INPUT -j CCDC-IN 2>/dev/null || $T6 -I INPUT 1 -j CCDC-IN\n'
+            printf '$T6 -A BT-IN -j DROP\n$T6 -C INPUT -j BT-IN 2>/dev/null || $T6 -I INPUT 1 -j BT-IN\n'
         fi
     } >"$RULES"
     chmod 700 "$RULES"
@@ -702,7 +702,7 @@ elif [ "$CC_APPLY" = 1 ]; then
         sh "$ROLLBACK" >>"$CC_LOG" 2>&1
         _state="FAILED to load; rules removed again"
     else
-        cc_undo_add "remove the CCDC firewall rules" "sh $(cc_shquote "$ROLLBACK")"
+        cc_undo_add "remove the LX-25 firewall rules" "sh $(cc_shquote "$ROLLBACK")"
         printf '%s\n' "$CC_RUN_DIR" >"$CURRENT"
         if [ "$TIMEOUT" -eq 0 ]; then
             _state="LIVE (no rollback timer: --confirm-timeout 0)"
@@ -723,7 +723,7 @@ EOF
 if [ -f $(cc_shquote "$CC_RUN_DIR/ROLLED_BACK") ]; then echo "too late: the rules were already rolled back at \$(cat $(cc_shquote "$CC_RUN_DIR/ROLLED_BACK"))"; exit 1; fi
 : >$(cc_shquote "$KEEPF")
 kill \$(cat $(cc_shquote "$CC_RUN_DIR/.timer.pid") 2>/dev/null) 2>/dev/null
-echo "kept: the CCDC firewall rules stay. To keep them across a reboot run LX-25 with --save."
+echo "kept: the LX-25 firewall rules stay. To keep them across a reboot run LX-25 with --save."
 EOF
             chmod 700 "$CC_RUN_DIR/rollback-timer.sh" "$KEEPSH"
             nohup sh "$CC_RUN_DIR/rollback-timer.sh" >/dev/null 2>&1 &
@@ -733,7 +733,7 @@ EOF
             cc_show "$C_YEL" "  [!] It removes itself in ${TIMEOUT}s unless you confirm. Open a NEW ssh session (do not close this one) and run:"
             cc_show "$C_YEL" "          sudo sh $KEEPSH"
             cc_show "$C_YEL" "      If the new session cannot connect, do nothing: the rules go away on their own."
-            if _cc_can_ask && [ "${CCDC_ASSUME_YES:-0}" != 1 ]; then
+            if _cc_can_ask && [ "${BT_ASSUME_YES:-0}" != 1 ]; then
                 # The question cannot prove new connections work, so it only
                 # offers the quick way out ("n" = remove now).
                 printf 'Check scoring and open a NEW ssh session now. Remove the rules immediately? [y/N] ' >/dev/tty
@@ -753,7 +753,7 @@ fi
     printf 'LX-25 Linux firewall | host %s | %s | %s\n\n' "$CC_HOST" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$([ "$CC_APPLY" = 1 ] && echo APPLIED || echo 'DRY RUN - nothing changed')"
     printf 'State:    %s\n' "$_state"
     printf 'Ports:    %s kept open, %s dropped, %s local only (loopback)\n' "$NKEEP" "$NDROP" "$NLOCAL"
-    printf 'Backend:  %s (own %s; nothing else is flushed)\n' "$BACKEND" "$([ "$BACKEND" = nft ] && echo 'table inet ccdc' || echo 'chains CCDC-IN/CCDC-OUT')"
+    printf 'Backend:  %s (own %s; nothing else is flushed)\n' "$BACKEND" "$([ "$BACKEND" = nft ] && echo 'table inet bt' || echo 'chains BT-IN/BT-OUT')"
     printf 'IPv6:     %s\n' "$([ "$KEEP6" = 1 ] && echo 'allowed like IPv4' || echo 'dropped (except loopback)')"
     printf 'Outgoing: %s\n' "$([ "$RESTOUT" = 1 ] && echo 'limited to DNS, DHCP, NTP, HTTP(S), replies and admin hosts' || echo 'not limited')"
     printf '\nOpen to everyone:\n'

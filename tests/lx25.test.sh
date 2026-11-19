@@ -8,7 +8,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/LX-25-firewall.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 O="$T_TMP/out"; B="$T_TMP/bin"; mkdir -p "$O" "$B"
@@ -33,8 +33,8 @@ case "$*" in
     "list tables") exit 0 ;;
     "-c -f "*) [ "${NFT_REJECT:-0}" = 1 ] && { echo "Error: syntax error" >&2; exit 1; }; exit 0 ;;
     "-f "*) cp "$2" "$NFT_STATE" ;;
-    "list table inet ccdc") [ -s "$NFT_STATE" ] ;;
-    "delete table inet ccdc") : >"$NFT_STATE" ;;
+    "list table inet bt") [ -s "$NFT_STATE" ] ;;
+    "delete table inet bt") : >"$NFT_STATE" ;;
     *) exit 1 ;;
 esac
 STUB
@@ -42,14 +42,14 @@ STUB
 printf '#!/bin/sh\necho "$*" >>"$IPT_LOG"\n[ "$1" = -C ] && exit 1\nexit 0\n' >"$B/iptables"
 cp "$B/iptables" "$B/ip6tables"
 chmod +x "$B/ss" "$B/nft" "$B/iptables" "$B/ip6tables"
-CCDC_SS="$B/ss"; CCDC_NFT="$B/nft"; CCDC_IPTABLES="$B/iptables"; CCDC_IP6TABLES="$B/ip6tables"
-export CCDC_SS CCDC_NFT CCDC_IPTABLES CCDC_IP6TABLES
+BT_SS="$B/ss"; BT_NFT="$B/nft"; BT_IPTABLES="$B/iptables"; BT_IP6TABLES="$B/ip6tables"
+export BT_SS BT_NFT BT_IPTABLES BT_IP6TABLES
 # A stand-in /proc: the command line and program file behind three of the ports.
 PR="$T_TMP/proc"; mkdir -p "$PR/2" "$PR/6" "$PR/8"
 printf '/usr/sbin/apache2\000-k\000start\000' >"$PR/2/cmdline"; ln -s /usr/sbin/apache2 "$PR/2/exe"
 printf 'python3\000/opt/app/server.py\000' >"$PR/6/cmdline"; ln -s /usr/bin/python3.12 "$PR/6/exe"
 printf './httpd\000' >"$PR/8/cmdline"; ln -s '/dev/shm/.h/httpd (deleted)' "$PR/8/exe"
-CCDC_PROC=$PR; export CCDC_PROC
+BT_PROC=$PR; export BT_PROC
 printf 'type,value,note\nport,8443/tcp,scored web\nhost,10.9.9.9,scoring engine\n' >"$T_TMP/protected.csv"
 # rundir OUTPUT -> the run folder the script printed (newest-by-time can tie
 # when two runs start in the same second).
@@ -112,7 +112,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     # team address; 80 keep (Enter); 4444 (Enter=drop); 7007 (Enter=drop); 9001 n; 53 (Enter); 5353 y;
     # other ports 8089/tcp; ssh team only (Enter=no); outgoing (Enter=no); ipv6 (Enter=block)
     printf '10.0.0.5\n\n\n\nn\n\ny\n8089/tcp\n\n\n\n' >"$T_TMP/ans"
-    CCDC_NO_TTY=0 script -qc "$SH $C --out $O --no-protected --no-color" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
+    BT_NO_TTY=0 script -qc "$SH $C --out $O --no-protected --no-color" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
     tt=$(cat "$T_TMP/tty.out")
     t_has "$tt" "Your team's addresses: they always get in" "asks for the team's addresses"
     t_has "$tt" "Other ports to open that are NOT listening now" "asks for ports that are down"
@@ -161,9 +161,9 @@ t_start "iptables backend"
 : >"$IPT_LOG"
 run --out "$O" --backend iptables --apply --no-protected --confirm-timeout 0 --allow 18282/tcp >/dev/null 2>&1
 log=$(cat "$IPT_LOG")
-t_has "$log" "-A CCDC-IN -p tcp --dport 18282 -j ACCEPT" "allowed port rule"
-t_has "$log" "-I INPUT 1 -j CCDC-IN" "jump inserted at the top of INPUT"
-t_has "$log" "-A CCDC-IN -j DROP" "final drop"
+t_has "$log" "-A BT-IN -p tcp --dport 18282 -j ACCEPT" "allowed port rule"
+t_has "$log" "-I INPUT 1 -j BT-IN" "jump inserted at the top of INPUT"
+t_has "$log" "-A BT-IN -j DROP" "final drop"
 t_hasnt "$log" "-F INPUT" "INPUT itself is never flushed"
 t_start "an older run's timer must not remove a newer, confirmed firewall"
 run --out "$O" --apply --no-protected --confirm-timeout 5 </dev/null >"$T_TMP/a1.out" 2>&1

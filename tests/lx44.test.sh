@@ -11,7 +11,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/LX-44-apparmor.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 O="$T_TMP/out"; F="$T_TMP/root"; B="$T_TMP/bin"
 command -v apparmor_parser >/dev/null 2>&1 && [ -d /etc/apparmor.d/abstractions ] || { echo "apparmor_parser not installed: skipped"; t_done; exit 0; }
 mkdir -p "$B"
@@ -29,14 +29,14 @@ apparmor_parser -Q -K -b "$AA_ROOT/etc/apparmor.d" "$f" >/dev/null 2>"$AA_ROOT/p
 echo "$name ($mode)" >>"$P"
 EOF
 chmod +x "$B/aa"
-export CCDC_AA_PARSER="$B/aa" AA_ROOT="$F"
+export BT_AA_PARSER="$B/aa" AA_ROOT="$F"
 mkroot() {
     rm -rf "$F"; mkdir -p "$F/sys/module/apparmor/parameters" "$F/sys/kernel/security/apparmor" "$F/usr/sbin" "$F/var/log" \
         "$F/var/www/html/wp-content/uploads" "$F/var/www/html/admin"
     echo Y >"$F/sys/module/apparmor/parameters/enabled"; : >"$F/sys/kernel/security/apparmor/profiles"
     mkdir -p "$F/etc"; cp -R /etc/apparmor.d "$F/etc/apparmor.d"
     # only our own profiles in the copy: no packaged ones for these programs
-    rm -f "$F/etc/apparmor.d/php-fpm" "$F/etc/apparmor.d/usr.sbin.mysqld" "$F/etc/apparmor.d/local/"ccdc-* 2>/dev/null
+    rm -f "$F/etc/apparmor.d/php-fpm" "$F/etc/apparmor.d/usr.sbin.mysqld" "$F/etc/apparmor.d/local/"bt-* 2>/dev/null
     for p in apache2 mariadbd; do printf '#!/bin/sh\n' >"$F/usr/sbin/$p"; chmod +x "$F/usr/sbin/$p"; done
     : >"$F/var/log/kern.log"
 }
@@ -63,7 +63,7 @@ t_has "$out" "mysql (/usr/sbin/mariadbd): unconfined" "mariadb is unconfined"
 t_has "$out" "c (default): complain: load the profile in learning mode" "the default answer is shown"
 t_has "$out" "[~] apache2: load the profile in complain mode" "the plan"
 t_has "$out" "Dry run: nothing was changed" "dry run without --apply"
-t_fail "a dry run writes no profile" test -f "$F/etc/apparmor.d/ccdc-apache2"
+t_fail "a dry run writes no profile" test -f "$F/etc/apparmor.d/bt-apache2"
 t_file "$(ls -d "$O"/apparmor-* | tail -n 1)/status.txt" "status.txt"
 t_fail "no CSV files are left" sh -c "find '$O' -name '*.csv' | grep -q ."
 
@@ -72,9 +72,9 @@ out=$(run --batch --apply 2>&1)
 t_has "$out" "[+] apache2: load the profile in complain mode" "apache2 into complain"
 t_has "$out" "[+] mysql: load the profile in complain mode" "mariadb into complain"
 t_hasnt "$out" "apparmor_parser refused" "the real parser takes both profiles"
-t_ok "the profile is written" grep -q '/var/www/html/wp-content/uploads/\*\* rwk' "$F/etc/apparmor.d/ccdc-apache2"
-t_ok "the kernel list has it in complain" grep -qx 'ccdc-apache2 (complain)' "$F/sys/kernel/security/apparmor/profiles"
-t_hasnt "$(cat "$F/etc/apparmor.d/ccdc-apache2")" "/bin/sh" "the web profile does not let it run a shell"
+t_ok "the profile is written" grep -q '/var/www/html/wp-content/uploads/\*\* rwk' "$F/etc/apparmor.d/bt-apache2"
+t_ok "the kernel list has it in complain" grep -qx 'bt-apache2 (complain)' "$F/sys/kernel/security/apparmor/profiles"
+t_hasnt "$(cat "$F/etc/apparmor.d/bt-apache2")" "/bin/sh" "the web profile does not let it run a shell"
 
 t_start "nginx and php-fpm profiles"
 for p in nginx php-fpm8.3; do printf '#!/bin/sh\n' >"$F/usr/sbin/$p"; chmod +x "$F/usr/sbin/$p"; done
@@ -88,24 +88,24 @@ rm -f "$F/usr/sbin/nginx" "$F/usr/sbin/php-fpm8.3"
 t_start "a profile the package ships"
 printf '#!/bin/sh\n' >"$F/usr/sbin/php-fpm8.3"; chmod +x "$F/usr/sbin/php-fpm8.3"
 printf 'abi <abi/3.0>,\ninclude <tunables/global>\nprofile php-fpm /usr/sbin/php-fpm* {\n  include <abstractions/base>\n}\n' >"$F/etc/apparmor.d/php-fpm"
-rm -f "$F/etc/apparmor.d/ccdc-php-fpm"; grep -v '^ccdc-php-fpm ' "$F/sys/kernel/security/apparmor/profiles" >"$T_TMP/p"; cat "$T_TMP/p" >"$F/sys/kernel/security/apparmor/profiles"
+rm -f "$F/etc/apparmor.d/bt-php-fpm"; grep -v '^bt-php-fpm ' "$F/sys/kernel/security/apparmor/profiles" >"$T_TMP/p"; cat "$T_TMP/p" >"$F/sys/kernel/security/apparmor/profiles"
 out=$(run --batch --apply --services php-fpm 2>&1)
 t_has "$out" "the package's profile php-fpm" "the packaged profile is used"
 t_ok "complain through force-complain" test -L "$F/etc/apparmor.d/force-complain/php-fpm"
-t_fail "no CCDC profile next to it" test -f "$F/etc/apparmor.d/ccdc-php-fpm"
+t_fail "no kit profile next to it" test -f "$F/etc/apparmor.d/bt-php-fpm"
 rm -f "$F/usr/sbin/php-fpm8.3"
 
 t_start "learn"
-logline ccdc-apache2 open /opt/shop/conf.ini r
-logline ccdc-apache2 open /var/log/shop.log w
-logline ccdc-apache2 open /var/log/shop2.log wa
-logline ccdc-apache2 capable "" "" 'capname="sys_ptrace"'
-logline ccdc-apache2 open /var/www/html/admin/x.php w
-logline ccdc-apache2 exec /usr/bin/dash x
-logline ccdc-apache2 exec /usr/bin/convert x
-logline ccdc-apache2 open /etc/shadow r
-logline ccdc-apache2 capable "" "" 'capname="sys_module"'
-logline ccdc-apache2 open '/opt/shop/a*b.txt' r
+logline bt-apache2 open /opt/shop/conf.ini r
+logline bt-apache2 open /var/log/shop.log w
+logline bt-apache2 open /var/log/shop2.log wa
+logline bt-apache2 capable "" "" 'capname="sys_ptrace"'
+logline bt-apache2 open /var/www/html/admin/x.php w
+logline bt-apache2 exec /usr/bin/dash x
+logline bt-apache2 exec /usr/bin/convert x
+logline bt-apache2 open /etc/shadow r
+logline bt-apache2 capable "" "" 'capname="sys_module"'
+logline bt-apache2 open '/opt/shop/a*b.txt' r
 # apache2: learn (default), add the normal ones (Y), not the web code write (N); mysql: complain (default); apply: Enter
 out=$(run --batch --apply 2>&1)
 _rd=$(ls -d "$O"/apparmor-* | tail -n 1)
@@ -113,7 +113,7 @@ t_has "$out" "[!] it ran /usr/bin/dash" "running a shell is HIGH"
 t_has "$out" "[*] it ran /usr/bin/convert" "another program is listed"
 t_has "$out" "[*] wrote into the site code: \"/var/www/html/admin/x.php\" w," "a write into the site is shown"
 t_has "$out" "[+] apache2: add the learned rules" "learned"
-L="$F/etc/apparmor.d/local/ccdc-apache2"
+L="$F/etc/apparmor.d/local/bt-apache2"
 t_ok "a normal read is added" grep -q '"/opt/shop/conf.ini" r,' "$L"
 t_ok "w and a are not mixed" grep -q '"/var/log/shop2.log" w,' "$L"
 t_ok "a capability is added" grep -q 'capability sys_ptrace,' "$L"
@@ -127,30 +127,30 @@ t_hasnt "$out" "apparmor_parser refused" "the real parser takes the learned rule
 t_file "$_rd/learned-apache2.txt" "learned-apache2.txt"
 
 t_start "a service running outside its profile"
-mkdir -p "$F/run/ccdc-test"; echo unconfined >"$F/run/ccdc-test/apache2.label"
+mkdir -p "$F/run/bt-test"; echo unconfined >"$F/run/bt-test/apache2.label"
 out=$(run --batch 2>&1)
 t_has "$out" "[!] the running apache2 started before its profile was loaded" "it is seen"
 t_has "$out" "[~] apache2: restart it so it runs under its profile" "a restart is planned (default)"
 t_hasnt "$out" "apache2: ENFORCE" "and it is not enforced by default"
-rm -f "$F/run/ccdc-test/apache2.label"
+rm -f "$F/run/bt-test/apache2.label"
 
 t_start "enforce, then undo"
 : >"$F/var/log/kern.log"
 printf 'e\nc\n\n' >"$T_TMP/ans"
 if command -v script >/dev/null 2>&1; then
     # apache2: e (enforce); mysql: c (stay); apply: Enter
-    tt=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --root '$F' --no-protected --apply" /dev/null <"$T_TMP/ans" 2>&1)
+    tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --root '$F' --no-protected --apply" /dev/null <"$T_TMP/ans" 2>&1)
     t_has "$tt" "[e] enforce: block everything" "complain lists its answers"
     t_has "$tt" "[+] apache2: ENFORCE the profile" "e: enforced"
-    t_ok "the kernel list has it enforced" grep -qx 'ccdc-apache2 (enforce)' "$F/sys/kernel/security/apparmor/profiles"
-    t_ok "c: mariadb stays in complain" grep -qx 'ccdc-mysqld (complain)' "$F/sys/kernel/security/apparmor/profiles"
-    t_fail "the profile has no complain flag" grep -q 'flags=(complain)' "$F/etc/apparmor.d/ccdc-apache2"
+    t_ok "the kernel list has it enforced" grep -qx 'bt-apache2 (enforce)' "$F/sys/kernel/security/apparmor/profiles"
+    t_ok "c: mariadb stays in complain" grep -qx 'bt-mysqld (complain)' "$F/sys/kernel/security/apparmor/profiles"
+    t_fail "the profile has no complain flag" grep -q 'flags=(complain)' "$F/etc/apparmor.d/bt-apache2"
     _rd=$(ls -d "$O"/apparmor-* | tail -n 1)
     _u=$(cat "$O"/undo-*.log | grep -c .)
     awk -F'\t' '{ l[NR] = $4 } END { for (i = NR; i > 0; i--) print l[i] }' "$O"/undo-*.log >"$T_TMP/undo.sh"
     sh "$T_TMP/undo.sh" >/dev/null 2>&1
-    t_fail "undo of everything removes the CCDC profiles" test -f "$F/etc/apparmor.d/ccdc-apache2"
-    t_fail "and unloads them" grep -q ccdc- "$F/sys/kernel/security/apparmor/profiles"
+    t_fail "undo of everything removes the kit profiles" test -f "$F/etc/apparmor.d/bt-apache2"
+    t_fail "and unloads them" grep -q bt- "$F/sys/kernel/security/apparmor/profiles"
     t_ok "$_u undo lines were written" test "$_u" -gt 0
 fi
 t_done

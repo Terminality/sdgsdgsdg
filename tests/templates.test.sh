@@ -3,7 +3,7 @@
 # a new script copied from one starts from something that works.
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 t_start "shell template runs as a dry run and writes its files"
 # shellcheck disable=SC2086
 r=$($SH "$T_ROOT/templates/script-template.sh" --out "$T_TMP/out" --example hello 2>&1); t_eq "$?" 0 "exits 0"
