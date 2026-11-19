@@ -55,6 +55,7 @@ Contents:
 45. Remote access lockdown, `roles/linux/LX-26-remote-access.sh` (LX-26)
 46. Rootkit and malware scan, `roles/linux/LX-45-rootkit-scan.sh` (LX-45)
 47. AppArmor confinement, `roles/linux/LX-44-apparmor.sh` (LX-44)
+48. Safe security updates, `roles/linux/LX-46-safe-updates.sh` (LX-46)
 
 ---
 
@@ -3172,3 +3173,52 @@ In `apparmor-N/`: `output.txt`, `status.txt` (mode of each service), `plan.txt`,
 - **Not yet tried on a real AppArmor kernel** (the test box is a container). Do the whole cycle on a practice VM first.
 - **Enforcing too early breaks features quietly**: the home page loads but upload fails. The check only loads the home page. Click through everything before you confirm.
 - A running service only picks up a new profile after a restart (asked).
+
+## 48. Safe security updates, `roles/linux/LX-46-safe-updates.sh` (LX-46)
+
+Patches the holes red team will use (OpenSSH, OpenSSL, sudo, Apache, PHP, the database, mail) **one group at a time**, checking the services after each group and rolling a group back if it broke one.
+
+### How to run it
+
+```sh
+sudo sh LX-46-safe-updates.sh                                  # list, dry run
+sudo sh LX-46-safe-updates.sh --protected p.csv --apply        # step by step
+sudo sh LX-46-safe-updates.sh --protected p.csv --apply --batch   # security updates only, no kernel
+```
+
+### What it does
+
+| Step | What happens |
+| --- | --- |
+| Sources | Flags package sources that are not the distribution's (`[*]`) and sources with no signature check (`[!]`: anything served there gets installed). Flags held packages. |
+| List | Pending updates grouped by service: ssh, openssl, sudo, web, php, database, mail, dns, ftp, system, kernel. Security apart. Full list in `updates.txt`. |
+| Before each group | Saves the old packages in `old-packages/` and notes the listening ports, the web page answer and the database. |
+| Install | Your config files are always kept. A new default config from the package shows as `[*]` (`.dpkg-dist`); compare it later, don't copy it over. |
+| After each group | Checks every port that listened before still listens, the web page and the database. If one stopped: roll back that group. |
+| After all | Offers to restart services still running the old (unpatched) library code. Says if a reboot is needed. |
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Refresh the package lists first? | `[y]` / `[n]` | `--no-refresh` |
+| Each held package | `[k]eep held` (default) / `[r]elease it` | `--batch` |
+| Each group of security updates | `[u]pdate` (default) / `[s]kip` | `--batch` |
+| The kernel (needs a reboot) | `[u]pdate` / `[s]kip` (default) | `--kernel` |
+| Non-security updates | `[u]pdate` / `[s]kip` (default) | `--all` |
+| A service broke after a group | `[r]oll back` (default) / `[l]eave` | `--batch` |
+| Restart services on old code? | `[y]` / `[n]` | `--no-restart` |
+| Apply? | `[y]` / `[n]` | `--apply` |
+
+A group whose service is on the protected list is skipped.
+
+### What it produces
+
+In `updates-N/`: `output.txt`, `sources.txt`, `updates.txt`, `versions-before.txt`, `versions-after.txt`, `old-packages/`, `summary.txt`. The rollback lines go in the undo log.
+
+### What to watch for
+
+- **The rollback needs the old package.** If the mirror no longer has it, you are told and asked before that group (default skip).
+- **The check sees ports, the web page and the database, not every feature.** Click through the site after the web or PHP group.
+- **Updates restart services.** A scoring check in those seconds fails. Do it early, one group at a time.
+- **Not yet tried on a real Red Hat box** (the dnf path) or with a real update and rollback; the tests use stand-ins.

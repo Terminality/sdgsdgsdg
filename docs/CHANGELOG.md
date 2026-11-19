@@ -2,6 +2,14 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-19: Safe security updates (LX-46, new)
+
+- **LX-46** first shows where updates come from: package sources that are not the distribution's, sources with no signature check (`[trusted=yes]`, `gpgcheck=0`, `AllowUnauthenticated`) and held packages (red team holds openssh so it never gets patched).
+- Then lists pending updates grouped by service (ssh, openssl, sudo, web, php, database, mail, dns, ftp, system), security apart. Asked per group: `[u]pdate` / `[s]kip`; security defaults to update, the kernel and non-security updates to skip.
+- Before each group it saves the old packages (`apt-get download`) and the listening ports; your config files are always kept (`--force-confold`). After each group it checks the ports, the web page and the database; if one stopped, `[r]oll back` / `[l]eave` (default roll back). Services still on old library code are offered a restart.
+- Found while testing: after a group is left broken, the next groups were blamed for the same closed port, so the checks now compare against the state after each group.
+- Tested: 36 checks under seven shells and three awks with stand-in apt-get, apt-mark, dpkg-query and ss; no real package is installed by the tests.
+
 ## 2026-11-19: AppArmor confinement (LX-44, new)
 
 - **LX-44** puts apache2, nginx, php-fpm and mariadb/mysql under AppArmor in three steps: **complain** (the profile is loaded, nothing is blocked, AppArmor logs what it would block), **learn** (the logged accesses are sorted: normal ones offered for the profile, writes into the site code asked on their own, programs it ran never added - a shell or curl is flagged as a web shell), **enforce** (the service is checked right after; if it stopped answering it goes back to complain, and a revert timer runs).
