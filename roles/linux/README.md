@@ -1,6 +1,6 @@
 # Linux — hosts + services
 
-Scripts owned by this role. 12 of 13 are built.
+Scripts owned by this role. 13 of 13 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -11,7 +11,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LX-39 | Linux safe fixes | Hardening: easy | safe | built | [`roles/linux/LX-39-safe-fixes.sh`](../../roles/linux/LX-39-safe-fixes.sh) |
 | LX-22 | SSH hardening | Hardening: medium | service | built | [`roles/linux/LX-22-ssh-hardening.sh`](../../roles/linux/LX-22-ssh-hardening.sh) |
 | LX-25 | Linux firewall | Hardening: hard | access | built | [`roles/linux/LX-25-firewall.sh`](../../roles/linux/LX-25-firewall.sh) |
-| LX-26 | Linux remote access lockdown | Hardening: hard | access | planned |  |
+| LX-26 | Remote access lockdown (everything but SSH) | wave1 | medium | built | [`roles/linux/LX-26-remote-access.sh`](../../roles/linux/LX-26-remote-access.sh) |
 | LX-21 | Account lockdown (Linux) | wave1 | medium | built | [`roles/linux/LX-21-account-lockdown.sh`](../../roles/linux/LX-21-account-lockdown.sh) |
 | LX-20 | Linux password rotation | Management | access | built | [`roles/linux/LX-20-password-rotation.sh`](../../roles/linux/LX-20-password-rotation.sh) |
 | LX-40 | Linux alerts | Alerts | none | built | [`roles/linux/LX-40-change-watch.sh`](../../roles/linux/LX-40-change-watch.sh) |

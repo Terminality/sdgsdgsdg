@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Remote access lockdown (LX-26, new)
+
+- **LX-26** covers every way in except SSH (that's LX-22): tunnels out (ngrok, chisel, frp, cloudflared, bore, ligolo, `ssh -R`), web terminals (ttyd, gotty, shellinabox, wetty, tmate), bind and reverse shells (`nc -e`, `ncat --exec`, `socat exec:`, a shell whose input is a network socket), remote desktops (VNC, xrdp, NoMachine, TeamViewer, AnyDesk, RustDesk), admin panels (Webmin, Cockpit), quick file servers (`python -m http.server`, `php -S`), and database panels (listed).
+- Asked per finding: `[s]top [k]eep [a]ll the rest` (default stop for HIGH). Services are stopped and disabled (the undo brings them back); programs are killed; a program file in a temp or home folder is quarantined. Scored ports and protected services are never offered.
+- Found while testing: `read` with a tab separator merges empty fields (tab is whitespace), so the findings use the unit separator; zombie processes are skipped.
+- Tested: 18 checks under seven shells and three awks with harmless stand-in programs.
+
 ## 2026-11-18: Log shipping to Splunk (LX-43, new)
 
 - **LX-43 --receive** (the Splunk box): a Splunk syslog input (TCP 1514 by default) as its own app, `ccdc_receiver`, then a restart (asked).

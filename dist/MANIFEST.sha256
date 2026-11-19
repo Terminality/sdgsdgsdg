@@ -16,6 +16,7 @@ deee97cd0b7b41c2739f99f3a73b1db65d77e7a627f3b097dfc5ebb375db35ad  linux/LX-20-pa
 30ccb7981fbf6c159dfc2d786ce039a429f1aa9e121b629e749726b669dfbcf8  linux/LX-21-account-lockdown.sh
 df56e0db4682630f76223a9deb9743cb5c8086aeaf7e5981afc7718441b6eb70  linux/LX-22-ssh-hardening.sh
 204bdb7ec33e56a47df90cc1daeb09890a046a6841201cbf978b312190df55b2  linux/LX-25-firewall.sh
+bd9e486eb5e871dcbcd6597bf72039a06a8ca489d6ce36b5217de6931184adbd  linux/LX-26-remote-access.sh
 c288360b6a0b85a1207a3dfa6778e0997e912e40c4deb5a33adfa622a8cbbf77  linux/LX-31-backup.sh
 b6d98daae672dedfe126424141964bfd3a38287b600539d31ef078bbb761efba  linux/LX-39-safe-fixes.sh
 dd5c88810a801246bfb080f80a46c469a84c41bbe23ce58992eae16e2d73792b  linux/LX-40-change-watch.sh
