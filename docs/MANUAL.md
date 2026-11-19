@@ -46,6 +46,7 @@ Contents:
 36. Database password rotation, `roles/applications/SV-42-db-passwords.sh` (SV-42)
 37. Mail password rotation, `roles/applications/SV-40-mail-passwords.sh` (SV-40)
 38. Service recovery, `roles/applications/SV-50-service-recovery.sh` (SV-50)
+39. Splunk hardening and passwords, `roles/applications/SV-44-splunk-hardening.sh` (SV-44)
 
 ---
 
@@ -2661,3 +2662,72 @@ In `recovery-N/`: `output.txt`, `status.txt` (every check for every service), `s
 | `still DOWN` after start | Something the checks don't cover | The log lines under it; `journalctl -u NAME` |
 | `HTTP 500 ... database error` | The database is down or its password changed | Fix mysql first (this script), or SV-42's undo |
 | `restarted 3 times in 10 minutes` | It crashes right after starting | Run without `--watch` to see why |
+
+## 39. Splunk hardening and passwords, `roles/applications/SV-44-splunk-hardening.sh` (SV-44)
+
+For the Splunk box. Splunk is three scored checks (`splunk-mgmt` on 8089, `splunk-query`, and the box) and an easy backdoor: a **scripted input** or **alert script** runs any command as the Splunk user, again and again. This finds those, gives the Splunk users new passwords, and checks that a search still runs afterwards.
+
+> **Not yet run on a real Splunk.** It's tested against a stand-in with Splunk's real file layout and REST answers. Read the dry run first, and try it on a test box if you can.
+
+### How to run it
+
+```sh
+sudo sh SV-44-splunk-hardening.sh                                 # look + dry run (asks for the admin login)
+sudo sh SV-44-splunk-hardening.sh --protected p.csv --apply
+sudo sh SV-44-splunk-hardening.sh --protected p.csv --apply --batch --auth-file admin.txt --exclude scorer
+```
+
+`admin.txt` is one line, `admin CURRENTPASSWORD`. Delete it after.
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Splunk admin user and its current password | typed (not shown) | `--auth-file` |
+| Each fix | `[y]` / `[n]` | `--only` / `--skip` |
+| Go through each Splunk user? | `[y]` / `[n]` | `--batch` |
+| Each user | `[r]andom` `[s]et` `[k]eep` `[a]ll the rest random` | `--users` / `--exclude` |
+| Each app that didn't come with Splunk | `[q]uarantine` / `[k]eep` | `--quarantine NAMES` |
+| Restart Splunk now? | `[y]` / `[n]` | `--batch` = yes |
+
+### What it finds (never changed)
+
+- **The old default password** `admin` / `changeme` still working (HIGH).
+- **Users and roles:** every admin, and roles that can make admins (`edit_user`, `admin_all_objects` ...).
+- **Apps that didn't come with Splunk**, with programs in `bin/` and when they changed (HIGH if both programs and a recent change).
+- **Scripted inputs** (HIGH in apps that didn't come with Splunk), **alert scripts**.
+- **Scripted login** (`authType = Scripted`), LDAP/SAML.
+- **A deployment server** (it can push any app, and any command, to this Splunk), **forwarding** to another server, **HEC tokens**.
+- Who splunkd runs as (root makes every backdoor root), secrets anyone can read, `user-seed.conf` left over.
+
+### The fixes (each asked)
+
+| Fix | Default | What it does |
+| --- | --- | --- |
+| `passwords` | yes | New password per user through the REST API on 8089, each tested by logging in. The admin you log in with goes last (Splunk needs its old password). |
+| `scripts-off` | yes | `disabled = 1` for scripted inputs in apps that didn't come with Splunk (in that app's `local/inputs.conf`) |
+| `app-quarantine` | no | Moves an app you choose out of `etc/apps` |
+| `deploy-off` | no | Removes `deploymentclient.conf` |
+| `secrets-perms` | yes | `etc/passwd` and `splunk.secret` mode 600, `user-seed.conf` removed |
+
+### Safety
+
+- Dry run unless `--apply`. Revert timer (120 s).
+- After file changes Splunk restarts (asked), then 8089 must answer and a test search must run, which is what `splunk-query` scores. If either fails, everything is put back and Splunk restarted again.
+- Undo: files back, `etc/passwd` back plus a restart (no old password is kept on disk), quarantined apps back.
+- New passwords only go in `passwords.txt` (mode 600).
+
+### What to watch for
+
+- **`splunk-query` logs in as a Splunk user.** `--exclude` it or put it on the protected list, or report its new password in the scoring portal.
+- **A restart takes about a minute**, so 8089 is down for that long.
+- **A forwarder on another box** sending here keeps working: passwords and `pass4SymmKey` aren't involved in plain forwarding.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `could not log in to 8089` | Wrong admin password, or 8089 moved | Check `web.conf mgmtHostPort`; the file checks still run |
+| `Splunk refused the change (HTTP 400)` | Password rules (length, complexity) | `--length 24`, or set one with `[s]` |
+| `the test search FAILS` | A quarantined app or disabled input was needed | It's put back; skip that one next time |
+| `splunkd is not running` | Down | `SV-50 --services splunk` |

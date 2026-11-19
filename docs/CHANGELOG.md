@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Splunk hardening and passwords (SV-44, new)
+
+- **SV-44** finds Splunk's backdoors (scripted inputs and alert scripts, apps that didn't come with Splunk, a deployment server, scripted login, extra admins and roles that make admins, the old `changeme` password, readable secrets) and offers: new passwords for each Splunk user through REST (each login tested), scripted inputs in planted apps disabled, apps quarantined, the deployment client removed, secrets locked down.
+- After a restart, 8089 must answer and a test search must run (what splunk-query scores), or everything is put back.
+- No password is kept on disk for the undo: `etc/passwd` comes back and Splunk restarts.
+- Tested: 44 checks against a stand-in Splunk under seven shells and three awks. Not yet run on a real Splunk.
+
 ## 2026-11-18: Service recovery (SV-50, new)
 
 - **SV-50** checks every service on the box (web, php-fpm, database, mail, Splunk, SSH, time) the same way: running, masked or disabled, config test, port held by another program, answers the way scoring tests, firewall drops, tampered configs / systemd overrides / package files; and once for the box: disk, inodes, /tmp, out of memory. Each fix is asked; a service is only started on a config that passes its test.
