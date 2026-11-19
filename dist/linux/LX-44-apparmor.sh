@@ -1486,7 +1486,7 @@ packaged() {
 # ---- The profiles -----------------------------------------------------------------------------
 # write_profile KIND BIN NAME MODE -> the profile text on stdout
 write_profile() {
-    _flags=""; [ "$4" = complain ] && _flags=" flags=(complain)"
+    _flags=""; [ "$4" = complain ] && _flags=" flags=(complain)"  # posix-ok: AppArmor text, not an array
     printf '# Written by CCDC LX-44 (%s).  Learned rules go in local/%s.\n# Delete this file and run "apparmor_parser -R" on it to remove.\nabi <abi/3.0>,\ninclude <tunables/global>\n\nprofile %s %s%s {\n' "$1" "$3" "$3" "$2" "$_flags"
     printf '  include <abstractions/base>\n  include <abstractions/nameservice>\n  include <abstractions/openssl>\n  include <abstractions/ssl_certs>\n'
     case "$1" in
@@ -1662,8 +1662,8 @@ check() {   # check KIND -> 0 still answers
 # set_mode FILE NAME ccdc|package complain|enforce -> switch and reload
 set_mode() {
     if [ "$3" = ccdc ]; then
-        if [ "$4" = complain ]; then sed "s|^\(profile $2 [^ {]*\) {|\1 flags=(complain) {|" "$1" >"$1.n"
-        else sed 's/ flags=(complain)//' "$1" >"$1.n"; fi
+        if [ "$4" = complain ]; then sed "s|^\(profile $2 [^ {]*\) {|\1 flags=(complain) {|" "$1" >"$1.n"  # posix-ok: AppArmor text
+        else sed 's/ flags=(complain)//' "$1" >"$1.n"; fi  # posix-ok: AppArmor text
         cat "$1.n" >"$1"; rm -f "$1.n"
         load -r -K "$1" >>"$CC_LOG" 2>&1 </dev/null
     elif [ "$4" = complain ]; then ln -sf "$1" "$AAD/force-complain/$(basename "$1")"; load -r -C "$1" >>"$CC_LOG" 2>&1 </dev/null
