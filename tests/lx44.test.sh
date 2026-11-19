@@ -103,6 +103,9 @@ logline ccdc-apache2 capable "" "" 'capname="sys_ptrace"'
 logline ccdc-apache2 open /var/www/html/admin/x.php w
 logline ccdc-apache2 exec /usr/bin/dash x
 logline ccdc-apache2 exec /usr/bin/convert x
+logline ccdc-apache2 open /etc/shadow r
+logline ccdc-apache2 capable "" "" 'capname="sys_module"'
+logline ccdc-apache2 open '/opt/shop/a*b.txt' r
 # apache2: learn (default), add the normal ones (Y), not the web code write (N); mysql: complain (default); apply: Enter
 out=$(run --batch --apply 2>&1)
 _rd=$(ls -d "$O"/apparmor-* | tail -n 1)
@@ -116,8 +119,20 @@ t_ok "w and a are not mixed" grep -q '"/var/log/shop2.log" w,' "$L"
 t_ok "a capability is added" grep -q 'capability sys_ptrace,' "$L"
 t_fail "the web code write is not added (default no)" grep -q 'x.php' "$L"
 t_fail "the shell is never added" grep -q 'dash' "$L"
+t_fail "/etc/shadow is never added" grep -q 'shadow' "$L"
+t_fail "a dangerous capability is never added" grep -q 'sys_module' "$L"
+t_has "$out" "[!] it touched /etc/shadow r" "reading /etc/shadow is HIGH"
+t_ok "a * in a file name is escaped" grep -q '"/opt/shop/a\\\*b.txt" r,' "$L"
 t_hasnt "$out" "apparmor_parser refused" "the real parser takes the learned rules"
 t_file "$_rd/learned-apache2.txt" "learned-apache2.txt"
+
+t_start "a service running outside its profile"
+mkdir -p "$F/run/ccdc-test"; echo unconfined >"$F/run/ccdc-test/apache2.label"
+out=$(run --batch 2>&1)
+t_has "$out" "[!] the running apache2 started before its profile was loaded" "it is seen"
+t_has "$out" "[~] apache2: restart it so it runs under its profile" "a restart is planned (default)"
+t_hasnt "$out" "apache2: ENFORCE" "and it is not enforced by default"
+rm -f "$F/run/ccdc-test/apache2.label"
 
 t_start "enforce, then undo"
 : >"$F/var/log/kern.log"

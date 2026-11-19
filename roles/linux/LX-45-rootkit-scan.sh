@@ -59,8 +59,8 @@
 #   --help             this text plus the common options
 #
 # OUTPUTS  (under --out, in rootkit-N/)
-#   output.txt, findings.txt, summary.txt, run.txt, revert.sh
-#   clamav.txt, rkhunter.txt, chkrootkit.txt (when those ran)
+#   output.txt, findings.txt, summary.txt, clamav.txt / rkhunter.txt /
+#   chkrootkit.txt when they ran; quarantined files and their undo lines
 #
 # DEPENDS ON
 #   ps, ss, awk, /proc and /sys; dpkg or rpm for the program check;
@@ -163,21 +163,30 @@ hidden_procs() {
     comm -13 "$W/ps.$1" "$W/proc.$1"
 }
 hidden_procs a >"$W/hid.a"; sleep 1; hidden_procs b >"$W/hid.b"
+# A ps that cannot list everything (a cut-down busybox, a container without
+# the rights) would make every process look hidden - and the default answer
+# is "kill".  Only compare when ps sees most of /proc.
+_nps=$(grep -c . "$W/ps.b"); _npr=$(grep -c . "$W/proc.b")
+if [ "$_nps" -lt $((_npr / 2)) ]; then
+    cc_show "$C_YEL" "  [*] ps lists $_nps processes but /proc has $_npr: this ps cannot be trusted for the hidden-process check (skipped)"
+    : >"$W/hid.a"
+fi
 # Threads (/proc/PID/task) are not separate processes: only real ones count.
 comm -12 "$W/hid.a" "$W/hid.b" | while IFS= read -r _p; do
     [ -r "/proc/$_p/status" ] || continue
     _tg=$(awk '$1 == "Tgid:" { print $2 }' "/proc/$_p/status" 2>/dev/null)
     [ "$_tg" = "$_p" ] || continue
     _c=$(cat "/proc/$_p/comm" 2>/dev/null); _x=$(readlink "/proc/$_p/exe" 2>/dev/null)
-    f HIGH process "a process ps does NOT show: pid $_p ($_c, $_x) - something is hiding it" kill "$_p"
+    f HIGH process "a process ps does NOT show: pid $_p ($_c, $_x) - something is hiding it" kill "$_p $_c"
 done
-grep -q "${US}process${US}" "$W/find" || ok "every process in /proc is shown by ps"
+[ "$_nps" -lt $((_npr / 2)) ] || grep -q "${US}process${US}" "$W/find" || ok "every process in /proc is shown by ps"
 # Ports: /proc/net/tcp state 0A = LISTEN; ports in hex.
 awk 'FNR > 1 && $4 == "0A" { split($2, a, ":"); print a[2] }' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u | while IFS= read -r _h; do
     printf '%d\n' "0x$_h"; done | sort -un >"$W/pp"
 ss -lnt 2>/dev/null | awk 'NR > 1 { n = split($4, a, ":"); print a[n] }' | sort -un >"$W/sp"
 _hp=$(comm -23 "$W/pp" "$W/sp" | tr '\n' ' ')
-if [ -n "$_hp" ]; then f HIGH port "listening in /proc/net/tcp but NOT shown by ss: $_hp- something is hiding it (check with SH-03 from another box)" none ""
+if ! cc_have ss || { [ -s "$W/pp" ] && [ ! -s "$W/sp" ]; }; then cc_show "$C_YEL" "  [*] ss is missing or lists nothing: hidden-port check skipped"
+elif [ -n "$_hp" ]; then f HIGH port "listening in /proc/net/tcp but NOT shown by ss: $_hp- something is hiding it (check with SH-03 from another box)" none ""
 else ok "every listening TCP port in /proc is shown by ss"; fi
 
 # ---- 2. Kernel modules ----------------------------------------------------------------------
@@ -207,8 +216,10 @@ if [ -z "$R" ] && cc_have dpkg; then
     for _b in $CORE; do _p=$(cc_which "$_b") || continue; printf '%s\n' "$_p"; done | sort -u >"$W/bins"
     while IFS= read -r _p; do
         # With the merged /usr, dpkg may list /usr/bin/ss as /bin/ss.
-        _pk=""
-        for _q in "$_p" "$(printf '%s' "$_p" | sed 's|^/usr/bin/|/bin/|; s|^/usr/sbin/|/sbin/|')" "$(printf '%s' "$_p" | sed 's|^/bin/|/usr/bin/|; s|^/sbin/|/usr/sbin/|')"; do
+        _pk=""; _tgt=$_p; _i=0
+        # alternatives: /usr/bin/x -> /etc/alternatives/x -> /usr/bin/x.real
+        while [ -h "$_tgt" ] && [ "$_i" -lt 5 ]; do _l=$(readlink "$_tgt"); case "$_l" in /*) _tgt=$_l ;; *) _tgt="$(dirname "$_tgt")/$_l" ;; esac; _i=$((_i + 1)); done
+        for _q in "$_p" "$_tgt" "$(printf '%s' "$_p" | sed 's|^/usr/bin/|/bin/|; s|^/usr/sbin/|/sbin/|')" "$(printf '%s' "$_p" | sed 's|^/bin/|/usr/bin/|; s|^/sbin/|/usr/sbin/|')"; do
             _pk=$(dpkg -S "$_q" 2>/dev/null | head -n 1 | cut -d: -f1); [ -n "$_pk" ] && break
         done
         if [ -z "$_pk" ]; then f HIGH program "$_p belongs to no package: placed there by hand?" quarantine "$_p"; continue; fi
@@ -248,7 +259,7 @@ grep -q "${US}file${US}" "$W/find" || ok "no known rootkit files, no programs in
 # Fake kernel threads: [name] in ps, but with a program file.
 ps -eo pid=,stat=,args= 2>/dev/null | awk '$2 !~ /^Z/ { p = $1; $1 = ""; $2 = ""; sub(/^  /, ""); if ($0 ~ /^\[.*\]/) print p "\t" $0 }' | while IFS="$(printf '\t')" read -r _p _a; do
     _x=$(readlink "/proc/$_p/exe" 2>/dev/null)
-    [ -n "$_x" ] && f HIGH process "pid $_p calls itself $_a but runs $_x - real kernel threads have no program" kill "$_p"
+    [ -n "$_x" ] && f HIGH process "pid $_p calls itself $_a but runs $_x - real kernel threads have no program" kill "$_p $(cat "/proc/$_p/comm" 2>/dev/null)"
 done
 # Miners: names and pool ports.
 # One snapshot first, then search it (so the search is not in its own list).
@@ -257,7 +268,7 @@ ps -eo pid=,stat=,comm=,args= 2>/dev/null | awk '$2 !~ /^Z/ { $2 = ""; print }' 
 awk '{ c = tolower($2); a = tolower($0) }
      c ~ /^(xmrig|xmr-stak|xmr-stak-cpu|minerd|cpuminer|cpuminer-multi|kdevtmpfsi|kinsing|ethminer|nbminer|t-rex|phoenixminer|lolminer|srbminer|teamredminer)$/ || a ~ /stratum\+(tcp|ssl):\/\/|--donate-level|--algo[= ]+(rx|cn|randomx|cryptonight)/ { print $1 "\t" $2 }' "$W/psall" | while IFS="$(printf '\t')" read -r _p _c; do
     [ "$_p" = "$$" ] && continue
-    f HIGH miner "a crypto miner: pid $_p ($_c, $(readlink "/proc/$_p/exe" 2>/dev/null))" kill "$_p"
+    f HIGH miner "a crypto miner: pid $_p ($_c, $(readlink "/proc/$_p/exe" 2>/dev/null))" kill "$_p $(cat "/proc/$_p/comm" 2>/dev/null)"
 done
 ss -tnp 2>/dev/null | awk 'NR > 1 { n = split($5, a, ":"); if (a[n] ~ /^(3333|4444|5555|7777|14433|14444|45700|45560|20580|9999)$/) print $5 " " $NF }' | while IFS= read -r _l; do
     f MED miner "a connection to a usual mining-pool port: $_l" none ""
@@ -276,7 +287,7 @@ if [ -n "$_miss" ] && [ -z "$R" ] && [ "$INSTALL" != n ] && cc_have apt-get; the
         if [ "$CC_APPLY" = 1 ] && cc_is_root; then
             cc_show "" "  installing$_miss ..."
             # shellcheck disable=SC2086  # a list of package names
-            DEBIAN_FRONTEND=noninteractive timeout 600 apt-get install -y -q $_miss >>"$CC_LOG" 2>&1 && cc_show "$C_GRN" "  [+] installed$_miss" || cc_show "$C_RED" "  [x] could not install$_miss (no mirror?)"
+            DEBIAN_FRONTEND=noninteractive $(cc_have timeout && echo timeout 600) apt-get install -y -q $_miss >>"$CC_LOG" 2>&1 && cc_show "$C_GRN" "  [+] installed$_miss" || cc_show "$C_RED" "  [x] could not install$_miss (no mirror?)"
         else cc_show "$C_GRY" "  (installing needs --apply and root)"; fi
     fi
 fi
@@ -327,11 +338,23 @@ elif [ "$CC_APPLY" != 1 ] || { [ -z "$R" ] && ! cc_is_root; }; then
 elif cc_ask "Do these $NCH?" Y "yes, kill and quarantine them" "no, leave everything"; then
     APPLIED=1
     while IFS="$US" read -r _fx _tg _wh; do
-        if ! cc_guard file "$_tg"; then cc_show "$C_YEL" "  [-] protected, left: $_wh"; continue; fi
         _ok=0
         case "$_fx" in
-            kill) alive "$_tg" && { kill "$_tg" 2>>"$CC_LOG"; sleep 1; alive "$_tg" && kill -9 "$_tg" 2>>"$CC_LOG"; sleep 1; }; alive "$_tg" || _ok=1 ;;
-            quarantine) cc_quarantine "$_tg" >>"$CC_LOG" 2>&1 && _ok=1 ;;
+            kill)
+                _pid=${_tg%% *}; _pn=${_tg#* }
+                if ! alive "$_pid"; then _ok=1
+                elif [ "$(cat "/proc/$_pid/comm" 2>/dev/null)" != "$_pn" ]; then
+                    # The pid now belongs to another program (it ended and the number was reused).
+                    cc_show "$C_YEL" "  [-] pid $_pid is now $(cat "/proc/$_pid/comm" 2>/dev/null), not $_pn: left alone"; continue
+                elif ! cc_guard process "$_pn"; then cc_show "$C_YEL" "  [-] protected, left: $_wh"; continue
+                else kill "$_pid" 2>>"$CC_LOG"; sleep 1; alive "$_pid" && kill -9 "$_pid" 2>>"$CC_LOG"; sleep 1; alive "$_pid" || _ok=1; fi ;;
+            quarantine)
+                if ! cc_guard path "${_tg#"$R"}"; then cc_show "$C_YEL" "  [-] protected, left: $_wh"; continue; fi
+                cc_quarantine "$_tg" >>"$CC_LOG" 2>&1 && _ok=1
+                # Rootkits often set the immutable flag so the file cannot be moved.
+                if [ "$_ok" = 0 ] && cc_have lsattr && lsattr -d "$_tg" 2>/dev/null | cut -d' ' -f1 | grep -q i; then
+                    chattr -i "$_tg" 2>>"$CC_LOG" && cc_quarantine "$_tg" >>"$CC_LOG" 2>&1 && _ok=1 && cc_show "$C_YEL" "  [*] it had the immutable flag (chattr +i): removed it to move it"
+                fi ;;
         esac
         if [ "$_ok" = 1 ]; then NOK=$((NOK + 1)); cc_show "$C_GRN" "  [+] $_fx: $_wh"; else NBAD=$((NBAD + 1)); cc_show "$C_RED" "  [x] could not $_fx: $_wh"; fi
     done <"$W/chosen"
@@ -348,7 +371,7 @@ awk -F"$US" '{ printf "%-4s %-10s %s\n", $1, $2, $3 }' "$W/find" >"$CC_RUN_DIR/f
     printf 'Found: %d HIGH, %d MED\n' "$(grep -c "^HIGH$US" "$W/find")" "$(grep -c "^MED$US" "$W/find")"
     awk -F"$US" '{ printf "  %-4s %s\n", $1, substr($3, 1, 150) }' "$W/find"
     [ "$APPLIED" = 1 ] && printf 'Done: %d   Failed: %d\n' "$NOK" "$NBAD"
-    [ "$APPLIED" = 1 ] && [ -f "$CC_RUN_DIR/revert.sh" ] && printf 'Undo (quarantined files back): sh %s/revert.sh --force\n' "$CC_RUN_DIR"
+    [ "$APPLIED" = 1 ] && [ "$NOK" -gt 0 ] && printf 'Quarantined files are in %s; the undo lines (put them back) in %s/undo-%s.log\n' "$CC_QUAR_DIR" "$CC_OUT" "$CC_HOST"
     grep -q "${US}module${US}" "$W/find" && printf '\nA rootkit module is not unloaded here (that can crash the box): find what loads it (LX-42 kernel), remove that, reboot.\n'
     printf '\nWhat starts these again (cron, services, preload): LX-42.\n'
 } >"$CC_RUN_DIR/summary.txt"

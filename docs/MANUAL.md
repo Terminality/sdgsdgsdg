@@ -3111,7 +3111,7 @@ Only with `--apply`: processes killed, files quarantined (the undo puts files ba
 
 ### What it produces
 
-In `rootkit-N/`: `output.txt`, `findings.txt`, `summary.txt`, `clamav.txt` / `rkhunter.txt` / `chkrootkit.txt` when they ran, `revert.sh`.
+In `rootkit-N/`: `output.txt`, `findings.txt`, `summary.txt`, `clamav.txt` / `rkhunter.txt` / `chkrootkit.txt` when they ran. Quarantined files go to the quarantine folder; their undo lines (put them back) to the undo log.
 
 ### What to watch for
 
@@ -3135,7 +3135,7 @@ Run it three times, with time between:
 | Run | Step | What happens |
 | --- | --- | --- |
 | 1 | **complain** | The profile is loaded but **nothing is blocked**: AppArmor only logs what it would block. Now use the site: log in, buy, upload, read mail. |
-| 2 | **learn** | The log lines are sorted. Normal ones (reads, logs, capabilities) are offered for the profile. Writes into the site code are asked on their own (an upload, or a web shell?). Programs it ran are **never** added: a shell, `curl`, `nc` or `python` is shown as `[!]`. Look at the site with SV-16 first. |
+| 2 | **learn** | The log lines are sorted. Normal ones (reads, logs, capabilities) are offered for the profile. Writes into the site code are asked on their own (an upload, or a web shell?). Programs it ran are **never** added: a shell, `curl`, `nc` or `python` is shown as `[!]`. So are secrets and system files (`/etc/shadow`, SSH keys, `/root`, writes into `/etc` or `/usr`) and dangerous capabilities (`sys_module`, `sys_admin`). Look at the site with SV-16 first. |
 | 3 | **enforce** | Everything not in the profile is blocked. The service is checked right after; if it stopped answering, it goes back to complain on its own. A revert timer also runs. |
 
 ### The services
@@ -3156,6 +3156,7 @@ On Red Hat / Rocky (SELinux, not AppArmor) it only shows the SELinux mode and ho
 | unconfined | `[c]omplain` (default) / `[e]nforce now` / `[k]eep` | `--batch` takes complain |
 | complain | `[l]earn` (default when there are lines) / `[e]nforce` (default after 10 quiet minutes) / `[c]` stay | `--batch` |
 | enforced | `[k]eep` (default) / `[c]` back to complain | `--batch` |
+| Loaded, but the running service started before it | `[r]estart it` (default) / `[k]eep` | `--batch` |
 | Add the normal lines? / the writes into the site code? | `[y]` / `[n]` (site code: default no) | `--batch` |
 | Restart the service so it runs under its profile? | `[y]` / `[n]` | `--batch` |
 | Apply? | `[y]` / `[n]` | `--apply` |
