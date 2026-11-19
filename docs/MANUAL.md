@@ -3245,7 +3245,7 @@ Run it once early: the first run saves the fingerprints as the baseline (`tls-ba
 | --- | --- |
 | Certificate files (Apache, nginx, Dovecot, Postfix, vsftpd, MariaDB configs) | Missing; expired `[!]` or ending within `--days` (14); not matching its key `[!]`; self-signed; key under 2048 bits; SHA-1/MD5 signature |
 | Key files | Readable by every user `[!]`; readable by an odd group; not owned by root; needs a passphrase |
-| Ports (443, 8443, 993, 995, 465; STARTTLS on 25, 587, 143, 110, 21, 3306; `--port`) | The certificate really served, and which file it is; TLS 1.0/1.1 accepted; weak ciphers (RC4, 3DES, NULL, anonymous) accepted |
+| Ports (443, 8443, 993, 995, 465; STARTTLS on 25, 587, 143, 110, 21, 3306; `--port`) | The certificate really served, and which file it is; TLS 1.0/1.1 accepted; weak ciphers (RC4, 3DES, NULL, anonymous) accepted; IMAP, POP3 or FTP with no TLS at all (passwords in clear text) |
 | Baseline | A certificate whose fingerprint changed since the first run `[!]` |
 
 ### The questions
@@ -3253,7 +3253,7 @@ Run it once early: the first run saves the fingerprints as the baseline (`tls-ba
 | Finding | Answers | Flag |
 | --- | --- | --- |
 | A certificate with problems (all of them in one question) | `[n]ew self-signed` / `[l]eave`; default new only if it was self-signed already, so a CA-signed one is never replaced on its own | `--batch` |
-| A key others can read | `[f]ix` (chmod 600, default) / `[l]eave` | `--batch` |
+| A key others can read | `[f]ix` (default: 600, or 640 when its group is a service group such as ssl-cert or mysql) / `[l]eave` | `--batch` |
 | A port with old TLS or weak ciphers | `[f]ix the config` (default) / `[l]eave` | `--batch` |
 | Changed since the baseline | `[k]eep flagging` (default) / `[u]se as the new baseline` | `--batch` |
 | Apply? | `[y]` / `[n]` | `--apply` |

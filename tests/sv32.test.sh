@@ -26,10 +26,11 @@ openssl x509 -req -in "$K/mail.csr" -CA "$K/ca.pem" -CAkey "$K/ca.key" -CAcreate
 openssl req -x509 -newkey rsa:1024 -sha1 -nodes -days 300 -keyout "$K/weak.key" -out "$K/weak.pem" -subj /CN=smtp.test >/dev/null 2>&1
 openssl req -x509 -newkey rsa:2048 -nodes -days 300 -keyout "$K/other.key" -out "$K/other.pem" -subj /CN=other >/dev/null 2>&1
 mkroot() {
-    rm -rf "$F"; mkdir -p "$F/etc/ssl/certs" "$F/etc/ssl/private" "$F/etc/apache2/sites-enabled" "$F/etc/dovecot/conf.d" "$F/etc/postfix"
+    rm -rf "$F"; mkdir -p "$F/etc/ssl/certs" "$F/etc/ssl/private" "$F/etc/apache2/sites-enabled" "$F/etc/apache2/sites-available" "$F/etc/dovecot/conf.d" "$F/etc/postfix"
     cp "$K/web.pem" "$K/mail.pem" "$K/weak.pem" "$F/etc/ssl/certs/"; cp "$K/web.key" "$K/other.key" "$K/weak.key" "$F/etc/ssl/private/"
     chmod 600 "$F/etc/ssl/private/"*; chmod 644 "$F/etc/ssl/private/weak.key"
-    printf '<VirtualHost *:443>\n    SSLEngine on\n    SSLProtocol all\n    SSLCertificateFile /etc/ssl/certs/web.pem\n    SSLCertificateKeyFile /etc/ssl/private/web.key\n</VirtualHost>\n' >"$F/etc/apache2/sites-enabled/default-ssl.conf"
+    printf '<VirtualHost *:443>\n    SSLEngine on\n    SSLProtocol all\n    SSLCertificateFile /etc/ssl/certs/web.pem\n    SSLCertificateKeyFile /etc/ssl/private/web.key\n</VirtualHost>\n' >"$F/etc/apache2/sites-available/default-ssl.conf"
+    ln -s ../sites-available/default-ssl.conf "$F/etc/apache2/sites-enabled/default-ssl.conf"   # as a2ensite does
     printf 'ssl = required\nssl_cert = </etc/ssl/certs/mail.pem\nssl_key = </etc/ssl/private/other.key\n' >"$F/etc/dovecot/conf.d/10-ssl.conf"
     printf 'smtpd_tls_cert_file=/etc/ssl/certs/weak.pem\nsmtpd_tls_key_file=/etc/ssl/private/weak.key\n' >"$F/etc/postfix/main.cf"
     printf 'root:x:0:\nssl-cert:x:110:\n' >"$F/etc/group"; printf 'root:x:0:0::/root:/bin/sh\n' >"$F/etc/passwd"
@@ -56,6 +57,7 @@ t_has "$out" "[*] postfix: weak key: 1024 bit RSA" "a weak key"
 t_has "$out" "[*] postfix: weak signature: sha1WithRSAEncryption" "a SHA-1 signature"
 t_has "$out" "[!] postfix: the private key /etc/ssl/private/weak.key can be read by every user" "a readable key is HIGH"
 t_has "$out" "[ok] matches its key /etc/ssl/private/web.key" "a matching key is fine"
+t_hasnt "$out" "other.key can be read" "a key only root reads is fine"
 if [ -n "$SPID" ]; then
     t_has "$out" "port $SP (apache2): still takes TLS 1.0/1.1 and weak ciphers" "old TLS and weak ciphers on a port"
     t_has "$out" "[ok] the certificate from /etc/ssl/certs/weak.pem" "the served certificate is matched to its file"
@@ -85,7 +87,10 @@ fi
 
 t_start "baseline"
 out=$(run --batch --no-probe 2>&1)
-t_has "$out" "/etc/ssl/certs/web.pem CHANGED since the baseline" "a changed certificate is HIGH"
+t_hasnt "$out" "web.pem CHANGED" "our own new certificate is not flagged as a swap"
+cp "$K/other.pem" "$F/etc/ssl/certs/mail.pem"   # a swap
+out=$(run --batch --no-probe 2>&1)
+t_has "$out" "/etc/ssl/certs/mail.pem CHANGED since the baseline" "a swapped certificate is HIGH"
 t_has "$out" "[K/u] k (default)" "default: keep flagging"
 
 t_start "undo"
@@ -93,7 +98,8 @@ awk -F'\t' '{ l[NR] = $4 } END { for (i = NR; i > 0; i--) print l[i] }' "$O"/und
 sh "$T_TMP/undo.sh" >/dev/null 2>&1
 t_eq "$(fpr "$F/etc/ssl/certs/web.pem")" "$(fpr "$K/web.pem")" "the old certificate is back"
 t_eq "$(ls -l "$F/etc/ssl/private/weak.key" | cut -c1-10)" "-rw-r--r--" "the key mode is back"
-t_fail "the Apache config is back" grep -q SSLCipherSuite "$F/etc/apache2/sites-enabled/default-ssl.conf"
+t_fail "the Apache config is back (through its symlink)" grep -q SSLCipherSuite "$F/etc/apache2/sites-available/default-ssl.conf"
+t_ok "the symlink is still a symlink" test -h "$F/etc/apache2/sites-enabled/default-ssl.conf"
 
 if command -v script >/dev/null 2>&1; then
     t_start "questions on a terminal"
@@ -102,7 +108,7 @@ if command -v script >/dev/null 2>&1; then
     printf 'l\nn\nl\nf\n\n' >"$T_TMP/ans"
     tt=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --out '$O2' --no-color --root '$F' --no-protected --no-probe --apply" /dev/null <"$T_TMP/ans" 2>&1)
     t_has "$tt" "[n] new self-signed certificate and key" "a certificate lists its answers"
-    t_has "$tt" "[f] fix it: only root can read it" "a key lists its answers"
+    t_has "$tt" "[f] fix it: only the owner" "a key lists its answers"
     t_eq "$(fpr "$F/etc/ssl/certs/web.pem")" "$(fpr "$K/web.pem")" "l: the web certificate stays"
     t_ok "n: the mail certificate is new and matches its key" sh -c "[ \"\$(openssl x509 -in '$F/etc/ssl/certs/mail.pem' -noout -pubkey | openssl sha256)\" = \"\$(openssl pkey -in '$F/etc/ssl/private/other.key' -pubout | openssl sha256)\" ]"
     t_eq "$(fpr "$F/etc/ssl/certs/weak.pem")" "$(fpr "$K/weak.pem")" "l: the weak certificate stays"

@@ -137,6 +137,15 @@ W="$CC_RUN_DIR/.work"; mkdir -p "$W"
 US=$(printf '\037')
 header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
 P() { printf '%s%s' "$R" "$1"; }
+# real FILE -> the file a symlink chain ends at (inside --root too).  Edits and
+# backups go to the real file: a backup of the link would restore nothing.
+real() {
+    _rf=$1; _ri=0
+    while [ -h "$_rf" ] && [ "$_ri" -lt 10 ]; do
+        _rl=$(readlink "$_rf"); case "$_rl" in /*) _rf="$R$_rl" ;; *) _rf="$(dirname "$_rf")/$_rl" ;; esac; _ri=$((_ri + 1))
+    done
+    printf '%s' "$_rf"
+}
 TO=""; cc_have timeout && TO="timeout 8"
 cc_have openssl || { cc_show "$C_RED" "[x] the openssl command is missing (apt-get install openssl)"; rm -rf "$W"; cc_finish; exit 3; }
 
@@ -167,8 +176,12 @@ pairs() {
 }
 {
     pairs apache2 sslcertificatefile sslcertificatekeyfile "$(P /etc/apache2/sites-enabled)"/* "$(P /etc/apache2/mods-enabled)"/*.conf "$(P /etc/httpd/conf.d)"/*.conf "$(P /etc/httpd/conf/httpd.conf)"
-    pairs nginx ssl_certificate ssl_certificate_key "$(P /etc/nginx/nginx.conf)" "$(P /etc/nginx/sites-enabled)"/* "$(P /etc/nginx/conf.d)"/*.conf
+    # snippets only when an enabled site includes them (Ubuntu's snakeoil.conf)
+    _sn=$(cat "$(P /etc/nginx/sites-enabled)"/* "$(P /etc/nginx/conf.d)"/*.conf 2>/dev/null | sed -n 's|^[[:space:]]*include[[:space:]]\{1,\}\(snippets/[^;[:space:]]*\);.*|\1|p' | sort -u | while IFS= read -r _x; do printf '%s ' "$(P "/etc/nginx/$_x")"; done)
+    # shellcheck disable=SC2086  # a list of files
+    pairs nginx ssl_certificate ssl_certificate_key "$(P /etc/nginx/nginx.conf)" "$(P /etc/nginx/sites-enabled)"/* "$(P /etc/nginx/conf.d)"/*.conf $_sn
     pairs dovecot ssl_cert ssl_key "$(P /etc/dovecot/dovecot.conf)" "$(P /etc/dovecot/conf.d)"/*.conf
+    pairs dovecot ssl_server_cert_file ssl_server_key_file "$(P /etc/dovecot/dovecot.conf)" "$(P /etc/dovecot/conf.d)"/*.conf
     pairs postfix smtpd_tls_cert_file smtpd_tls_key_file "$(P /etc/postfix/main.cf)"
     pairs vsftpd rsa_cert_file rsa_private_key_file "$(P /etc/vsftpd.conf)" "$(P /etc/vsftpd/vsftpd.conf)"
     pairs mysql ssl-cert ssl-key "$(P /etc/mysql/my.cnf)" "$(P /etc/mysql/mariadb.conf.d)"/*.cnf "$(P /etc/mysql/mysql.conf.d)"/*.cnf "$(P /etc/my.cnf)" "$(P /etc/my.cnf.d)"/*.cnf
@@ -210,7 +223,8 @@ while IFS='|' read -r _svc _c _k; do
     else
         _cpk=$(openssl x509 -in "$_rc" -noout -pubkey 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | cksum)
         _kpk=$(openssl pkey -in "$_rk" -passin pass: -pubout -outform DER 2>/dev/null | cksum)
-        if [ -z "$_kpk" ] || [ "$_kpk" = "$(printf '' | cksum)" ]; then finding MED "$_svc" "the key $_k cannot be read without a passphrase (or is not a key)" "" "" ""
+        if [ ! -r "$_rk" ]; then finding MED "$_svc" "cannot read the key $_k (run as root to check it)" "" "" ""
+        elif [ -z "$_kpk" ] || [ "$_kpk" = "$(printf '' | cksum)" ]; then finding MED "$_svc" "the key $_k cannot be read without a passphrase (or is not a key)" "" "" ""
         elif [ "$_cpk" != "$_kpk" ]; then finding HIGH "$_svc" "the certificate does NOT match its key $_k: TLS fails (a swapped certificate or key?)" new "$_c|$_k|$_svc" "$_dflt"; _notes="${_notes}KEY-MISMATCH "
         else cc_show "$C_GRN" "    [ok] matches its key $_k"; fi
         # who can read the key
@@ -220,7 +234,9 @@ while IFS='|' read -r _svc _c _k; do
             ???????r??|????????w?) finding HIGH "$_svc" "the private key $_k can be read by every user ($_mode): anyone can decrypt or impersonate the site" perm "$_k" f ;;
             ????r?????) case "$_gname" in root|ssl-cert|ssl|mail|dovecot|postfix|www-data|nginx|apache|mysql|"") ;; *) finding MED "$_svc" "the private key $_k can be read by the group $_gname ($_mode)" perm "$_k" f ;; esac ;;
         esac
-        case "$_ouid" in 0|"") ;; *) _on=$(awk -F: -v u="$_ouid" '$3 == u { print $1; exit }' "$(P /etc/passwd)" 2>/dev/null); finding MED "$_svc" "the private key $_k belongs to ${_on:-uid $_ouid}, not root" "" "" "" ;; esac
+        _on=$(awk -F: -v u="$_ouid" '$3 == u { print $1; exit }' "$(P /etc/passwd)" 2>/dev/null)
+        # MariaDB reads its key as the mysql user: that owner is right there.
+        case "$_ouid:$_on:$_svc" in 0:*|:*|*:mysql:*mysql*) ;; *) finding MED "$_svc" "the private key $_k belongs to ${_on:-uid $_ouid}, not root" "" "" "" ;; esac
     fi
     printf '%-16s %-44s %-22s %-26s %-6s %-10s %s\n' "$_svc" "$_c" "${_cn:--}" "$_end" "${_bits:-?}" "$(printf '%s' "$_alg" | cut -c1-10)" "${_notes:-ok}" >>"$CC_RUN_DIR/certs.txt"
     printf '%s|%s|%s\n' "$_c" "$(fp "$_rc")" "$_svc" >>"$W/fps"
@@ -251,7 +267,9 @@ probe() {
 NPORT=0; : >"$W/fixtls"
 while IFS='|' read -r _p _k _prog; do
     [ -n "$_p" ] || continue
-    if ! probe "$_p" "$_k"; then cc_show "$C_GRY" "  port $_p ($_k, $_prog): no TLS handshake"; printf '%-6s %-6s %-16s no TLS handshake\n' "$_p" "$_k" "$_prog" >>"$CC_RUN_DIR/served.txt"; continue; fi
+    if ! probe "$_p" "$_k"; then
+        case "$_k" in imap|pop3|ftp) finding MED "port $_p ($_prog)" "$_k without TLS: passwords cross the network in clear text (turn on STARTTLS)" "" "" "" ;; *) cc_show "$C_GRY" "  port $_p ($_k, $_prog): no TLS handshake" ;; esac
+        printf '%-6s %-6s %-16s no TLS handshake\n' "$_p" "$_k" "$_prog" >>"$CC_RUN_DIR/served.txt"; continue; fi
     NPORT=$((NPORT + 1))
     _sfp=$(openssl x509 -in "$W/probe" -noout -fingerprint -sha256 2>/dev/null | sed 's/.*=//')
     _scn=$(openssl x509 -in "$W/probe" -noout -subject 2>/dev/null | sed -n 's/.*CN *= *\([^,/]*\).*/\1/p')
@@ -283,7 +301,7 @@ elif [ ! -f "$BASE" ]; then
 else
     while IFS='|' read -r _c _f _svc; do
         _b=$(awk -F'|' -v c="$_c" '$1 == c { print $2; exit }' "$BASE")
-        if [ -z "$_b" ]; then cc_show "$C_YEL" "  [*] new since the baseline: $_c"
+        if [ -z "$_b" ]; then cc_show "$C_YEL" "  [*] new since the baseline (added to it): $_c"; printf '%s|%s\n' "$_c" "$_f" >>"$BASE"
         elif [ "$_b" != "$_f" ]; then finding HIGH "$_svc" "$_c CHANGED since the baseline (was ${_b%"${_b#???????????}"}..., now ${_f%"${_f#???????????}"}...): if your team did not change it, put back your backup copy" base "$_c|$_f" k
         else cc_show "$C_GRN" "  [ok] unchanged: $_c"; fi
     done <"$W/fps"
@@ -297,7 +315,7 @@ while IFS="$US" read -r _lv _svc _what _fix _tg _d; do
     _ak="$_fix ${_tg%%"|"*}"; grep -qxF "$_ak" "$W/asked" 2>/dev/null && continue
     printf '%s\n' "$_ak" >>"$W/asked"
     case "$_fix" in
-        perm) cc_choose "$_svc: $_what. What now?" "$_d" "f=fix it: only root can read it (chmod 600)" "l=leave it" ;;
+        perm) cc_choose "$_svc: $_what. What now?" "$_d" "f=fix it: only the owner (and a service group) can read it (chmod 600 / 640)" "l=leave it" ;;
         new)  # every problem of this certificate in one question
               _what=$(awk -F"$US" -v c="${_tg%%"|"*}" '$4 == "new" && index($5, c "|") == 1 { printf "%s%s", (n++ ? "; " : ""), $3 }' "$W/find")
               cc_choose "$_svc, ${_tg%%"|"*}: $_what. What now?" "$_d" "n=new self-signed certificate and key (same name, 1 year; the old pair is backed up)" "l=leave it" ;;
@@ -306,7 +324,7 @@ while IFS="$US" read -r _lv _svc _what _fix _tg _d; do
     esac
     case "$CC_CHOICE" in f|n|u) printf '%s\037%s\037%s\n' "$_fix" "$_tg" "$_svc" >>"$W/plan" ;; esac
 done <"$W/find"
-plan_word() { case "$1" in perm) echo "chmod 600 $2" ;; new) echo "new self-signed certificate ${2%%"|"*}" ;; tls) echo "TLS 1.2+ and strong ciphers for ${2%%"|"*}" ;; base) echo "new baseline for ${2%%"|"*}" ;; esac; }
+plan_word() { case "$1" in perm) echo "only the owner can read $2" ;; new) echo "new self-signed certificate ${2%%"|"*}" ;; tls) echo "TLS 1.2+ and strong ciphers for ${2%%"|"*}" ;; base) echo "new baseline for ${2%%"|"*}" ;; esac; }
 NCH=$(grep -c . "$W/plan")
 while IFS="$US" read -r _fix _tg _svc; do cc_show "$C_YEL" "  [~] $(plan_word "$_fix" "$_tg")"; done <"$W/plan"
 [ "$NCH" -eq 0 ] && cc_show "$C_GRN" "  [ok] Nothing to change."
@@ -328,10 +346,10 @@ add_after() {
 }
 # put_kv KEY VALUE ANCHOR -> set KEY in the files of $W/tf (style $_st)
 put_kv() {
-    _hit=0; while IFS= read -r _f; do [ -f "$(P "$_f")" ] && set_kv "$(P "$_f")" "$_st" "$1" "$2" && _hit=1; done <"$W/tf"
+    _hit=0; while IFS= read -r _f; do set_kv "$_f" "$_st" "$1" "$2" && _hit=1; done <"$W/tf"
     [ "$_hit" = 1 ] && return 0
     case "$_st" in sp) _line="$1 $2" ;; ng) _line="$1 $2;" ;; *) _line="$1 = $2" ;; esac
-    while IFS= read -r _f; do [ -f "$(P "$_f")" ] && add_after "$(P "$_f")" "$3" "$_line"; done <"$W/tf"
+    while IFS= read -r _f; do add_after "$_f" "$3" "$_line"; done <"$W/tf"
 }
 conf_files() { awk -F'|' -v s="$1" '$1 == s { print $2 }' "$W/pairs" | sort -u; }
 svc_test() {
@@ -366,10 +384,13 @@ elif cc_ask "Apply these $NCH change(s)?" Y "yes, apply them" "no, change nothin
                 _rk=$(P "$_tg")
                 if cc_guard path "$_tg"; then
                     _om=$(stat -c %a "$_rk" 2>/dev/null) || _om=600
-                    chmod 600 "$_rk" && cc_undo_add "mode $_om back on $_tg" "chmod $_om $(cc_shquote "$_rk")" || _ok=0
+                    # keep the group's read when the group is a service's (ssl-cert, mysql...)
+                    _gn=$(awk -F: -v g="$(ls -lnL "$_rk" | awk '{ print $4 }')" '$3 == g { print $1; exit }' "$(P /etc/group)" 2>/dev/null)
+                    _nm=600; case "$_gn" in ssl-cert|ssl|mail|dovecot|postfix|www-data|nginx|apache|mysql) _nm=640 ;; esac
+                    chmod "$_nm" "$_rk" && cc_undo_add "mode $_om back on $_tg" "chmod $_om $(cc_shquote "$_rk")" || _ok=0
                 else _ok=0; fi ;;
             new)
-                _c=${_tg%%"|"*}; _k=${_tg#*"|"}; _k=${_k%%"|"*}; _rc=$(P "$_c"); _rk=$(P "$_k")
+                _c=${_tg%%"|"*}; _k=${_tg#*"|"}; _k=${_k%%"|"*}; _rc=$(real "$(P "$_c")"); _rk=$(real "$(P "$_k")")
                 _cn=$(openssl x509 -in "$_rc" -noout -subject 2>/dev/null | sed -n 's/.*CN *= *\([^,/]*\).*/\1/p'); [ -n "$_cn" ] || _cn=$CC_HOST
                 _cn=$(printf '%s' "$_cn" | tr -cd 'A-Za-z0-9.*-')
                 if cc_guard path "$_c" && cc_guard path "$_k"; then
@@ -379,10 +400,14 @@ elif cc_ask "Apply these $NCH change(s)?" Y "yes, apply them" "no, change nothin
                     [ -f "$_rk" ] || cc_undo_add "remove the new $_k" "rm -f $(cc_shquote "$_rk")"
                     mkdir -p "$(dirname "$_rc")" "$(dirname "$_rk")"
                     _san="DNS:$_cn"; [ "$_cn" != "$CC_HOST" ] && _san="$_san,DNS:$CC_HOST"
-                    if (umask 077; openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 365 -keyout "$W/new.key" -out "$W/new.crt" -subj "/CN=$_cn" -addext "subjectAltName=$_san" >>"$CC_LOG" 2>&1); then
+                    # -addext needs OpenSSL 1.1.1; older ones get no SAN
+                    if (umask 077; openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 365 -keyout "$W/new.key" -out "$W/new.crt" -subj "/CN=$_cn" -addext "subjectAltName=$_san" >>"$CC_LOG" 2>&1 ||
+                        openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 365 -keyout "$W/new.key" -out "$W/new.crt" -subj "/CN=$_cn" >>"$CC_LOG" 2>&1); then
                         if [ "$_rk" = "$_rc" ]; then cat "$W/new.crt" "$W/new.key" >"$_rc"; chmod 600 "$_rc"
                         else cat "$W/new.crt" >"$_rc"; chmod 644 "$_rc"; cat "$W/new.key" >"$_rk"; chmod 600 "$_rk"; fi
                         rm -f "$W/new.key" "$W/new.crt"
+                        # our own change: the baseline follows it (no false "CHANGED" next run)
+                        [ -f "$BASE" ] && { _nf=$(fp "$_rc"); awk -F'|' -v c="$_c" -v f="$_nf" 'BEGIN { OFS = "|" } $1 == c { $2 = f } { print }' "$BASE" >"$BASE.n" && cat "$BASE.n" >"$BASE"; rm -f "$BASE.n"; }
                         for _s in $(printf '%s' "$_svc" | tr ',' ' '); do svc_reload "$_s" >>"$CC_LOG" 2>&1; done
                         cc_show "$C_YEL" "    [*] a self-signed certificate: browsers warn; tell the team (and the scoring contact if they verify certificates)"
                     else _ok=0; fi
@@ -393,12 +418,13 @@ elif cc_ask "Apply these $NCH change(s)?" Y "yes, apply them" "no, change nothin
                 cc_undo_add "reload $_s" "$(svc_reload_cmd "$_s")"
                 _files=$(conf_files "$_s"); [ "$_s" = nginx ] && _files="$_files$NL/etc/nginx/nginx.conf"
                 [ -n "$_files" ] || { _ok=0; cc_show "$C_RED" "    [x] no config file of $_s known"; }
-                printf '%s\n' "$_files" | sort -u | grep . >"$W/tf"
-                while IFS= read -r _f; do [ -f "$(P "$_f")" ] && cc_backup_file "$(P "$_f")" >/dev/null; done <"$W/tf"
+                printf '%s\n' "$_files" | sort -u | grep . | while IFS= read -r _f; do _f=$(real "$(P "$_f")"); [ -f "$_f" ] && printf '%s\n' "$_f"; done | sort -u >"$W/tf"
+                while IFS= read -r _f; do cc_backup_file "$_f" >/dev/null; done <"$W/tf"
                 case "$_s" in
                     apache2) _st=sp; set -- SSLProtocol "all -SSLv3 -TLSv1 -TLSv1.1" SSLCipherSuite "HIGH:!aNULL:!MD5:!3DES:!RC4" SSLCertificateFile ;;
                     nginx)   _st=ng; set -- ssl_protocols "TLSv1.2 TLSv1.3" ssl_ciphers "HIGH:!aNULL:!MD5:!3DES:!RC4" ssl_certificate ;;
-                    dovecot) _st=eq; set -- ssl_min_protocol "TLSv1.2" ssl_cipher_list "HIGH:!aNULL:!MD5:!3DES:!RC4" ssl_cert ;;
+                    dovecot) _st=eq; _an=ssl_cert; while IFS= read -r _f; do grep -q '^[[:space:]]*ssl_server_cert_file' "$_f" && _an=ssl_server_cert_file; done <"$W/tf"
+                             set -- ssl_min_protocol "TLSv1.2" ssl_cipher_list "HIGH:!aNULL:!MD5:!3DES:!RC4" "$_an" ;;
                     postfix) _st=eq; set -- smtpd_tls_protocols "!SSLv2, !SSLv3, !TLSv1, !TLSv1.1" smtpd_tls_mandatory_protocols "!SSLv2, !SSLv3, !TLSv1, !TLSv1.1" smtpd_tls_cert_file ;;
                 esac
                 # Each setting: replace it where it is; nowhere -> add it after the certificate line.
@@ -409,14 +435,14 @@ elif cc_ask "Apply these $NCH change(s)?" Y "yes, apply them" "no, change nothin
                 fi
                 if ! svc_test "$_s"; then
                     cc_show "$C_RED" "    [x] $_s refuses the new config: put back"; _ok=0
-                    while IFS= read -r _f; do _b="$CC_BACKUP_DIR$(cc_abspath "$(P "$_f")")"; [ -f "$_b" ] && cat "$_b" >"$(P "$_f")"; done <"$W/tf"
+                    while IFS= read -r _f; do _b="$CC_BACKUP_DIR$(cc_abspath "$_f")"; [ -f "$_b" ] && cat "$_b" >"$_f"; done <"$W/tf"
                 else
                     svc_reload "$_s" >>"$CC_LOG" 2>&1
                     if [ -z "$R" ]; then
                         sleep 2
                         if ! probe "$_p" "$_kind" -tls1_2; then
                             cc_show "$C_RED" "    [x] port $_p stopped answering TLS 1.2: put back"; _ok=0
-                            while IFS= read -r _f; do _b="$CC_BACKUP_DIR$(cc_abspath "$(P "$_f")")"; [ -f "$_b" ] && cat "$_b" >"$(P "$_f")"; done <"$W/tf"
+                            while IFS= read -r _f; do _b="$CC_BACKUP_DIR$(cc_abspath "$_f")"; [ -f "$_b" ] && cat "$_b" >"$_f"; done <"$W/tf"
                             svc_reload "$_s" >>"$CC_LOG" 2>&1
                         elif probe "$_p" "$_kind" -tls1 -cipher 'DEFAULT@SECLEVEL=0'; then cc_show "$C_YEL" "    [*] port $_p still takes TLS 1.0: a setting elsewhere wins (look for another $_s TLS line)"; fi
                     fi
