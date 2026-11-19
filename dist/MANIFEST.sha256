@@ -25,7 +25,7 @@ dd5c88810a801246bfb080f80a46c469a84c41bbe23ce58992eae16e2d73792b  linux/LX-40-ch
 6995612b53074df493dd9dfdd27a52b93c2885510dbc99e64d911dea5f6154f9  linux/LX-43-log-shipping.sh
 19e403db3eecb7674ec5fc7cbe6b5fa5dd6f7acbe5a6fb38876a22249bff6ff7  linux/LX-44-apparmor.sh
 6b9ede242025c328f7b23a8c80af68e7f7e87effe70557bad865f35b101e8c45  linux/LX-45-rootkit-scan.sh
-be6c281b1ccde095e81ad836265d26558a9b8814122792b6070dd2dcb5a5af23  linux/LX-46-safe-updates.sh
+bf3653bb9df61ff299b79f29b4f9fef4f8711bf88af60678576bca34e2bd087b  linux/LX-46-safe-updates.sh
 e8e9ad3c04ecaab0a8930469f2041ba8e7f4b32816791472e8d2160eadb346f1  linux/SH-05-linux-enum.sh
 0fa3b7087956894e10118fda96a6c4fbf2abfdf227ac6e747ff991ef9681396d  linux/SV-26-banning.sh
 caf5d15c1cbc93030aafa1d267a83612fe7b88140de981bc457bb7a20d6302e6  network/NW-01-config-backup.sh

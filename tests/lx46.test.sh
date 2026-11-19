@@ -14,7 +14,7 @@ C="$T_ROOT/roles/linux/LX-46-safe-updates.sh"
 export CCDC_SKIP_VERIFY=1
 O="$T_TMP/out"; S="$T_TMP/stub"; ST="$T_TMP/state"; E="$T_TMP/etc"
 mkdir -p "$S" "$ST" "$E/apt/sources.list.d" "$E/apt/apt.conf.d"
-export STUB_STATE="$ST" CCDC_TEST_ETC="$E"
+export STUB_STATE="$ST" CCDC_TEST_ETC="$E" CCDC_TEST_APTCACHE="$T_TMP/cache"
 
 cat >"$S/apt-get" <<'EOF'
 #!/bin/sh
@@ -24,9 +24,10 @@ setv() { awk -v p="$1" -v v="$2" '$1 == p { $2 = v } { print }' "$D/inst" >"$D/i
 case " $* " in
     *" update "*) exit 0 ;;
     *" -s "*) awk 'NR == FNR { i[$1] = $2; next } ($1 in i) && i[$1] != $2 { printf "Inst %s [%s] (%s Ubuntu:24.04/%s [amd64])\n", $1, i[$1], $2, $3 }' "$D/inst" "$D/avail"; exit 0 ;;
-    *" download "*) for a; do case "$a" in *=*) touch "$(printf '%s_%s_all.deb' "${a%%=*}" "$(printf '%s' "${a#*=}" | sed 's/:/%3a/')")" ;; esac; done; exit 0 ;;
+    *" download "*) for a; do case "$a" in *=*) case " ${STUB_NODL:-} " in *" ${a%%=*} "*) echo "E: Can't find a source to download version" >&2; exit 100 ;; esac; touch "$(printf '%s_%s_all.deb' "${a%%=*}" "$(printf '%s' "${a#*=}" | sed 's/:/%3a/')")" ;; esac; done; exit 0 ;;
     *" --only-upgrade "*)
         for a; do case "$a" in -*|install|Dpkg*) ;; *) v=$(awk -v p="$a" '$1 == p { print $2 }' "$D/avail"); [ -n "$v" ] && setv "$a" "$v"
+            [ "$a" = openssh-server ] && { grep -v '^40000$' "$D/ports" >"$D/p.n"; cat "$D/p.n" >"$D/ports"; }
             [ "$a" = breakme ] && { grep -v '^8080$' "$D/ports" >"$D/p.n"; cat "$D/p.n" >"$D/ports"; } ;; esac; done; exit 0 ;;
     *" --allow-downgrades "*)
         for a; do case "$a" in ./*.deb) b=${a#./}; b=${b%_all.deb}; setv "${b%%_*}" "$(printf '%s' "${b#*_}" | sed 's/%3a/:/')"
@@ -57,7 +58,9 @@ PATH="$S:$PATH"; export PATH
 reset() {
     printf 'openssh-server 1:9.6p1-3ubuntu13.4\nlibssl3t64 3.0.13-0ubuntu3.4\nbreakme 1.0\nlinux-image-generic 6.8.0.40\nvim 2:9.1.0016-1\nnewlib 0\n' >"$ST/inst"
     printf 'openssh-server 1:9.6p1-3ubuntu13.5 noble-security\nlibssl3t64 3.0.13-0ubuntu3.5 noble-security\nbreakme 1.1 noble-security\nlinux-image-generic 6.8.0.45 noble-security\nvim 2:9.1.0016-1ubuntu7 noble-updates\n' >"$ST/avail"
-    printf 'sudo\n' >"$ST/held"; printf '22\n8080\n' >"$ST/ports"; : >"$ST/calls"
+    printf 'sudo\n' >"$ST/held"; printf '22\n8080\n40000\n' >"$ST/ports"; : >"$ST/calls"
+    mkdir -p "$E/apt/preferences.d" "$T_TMP/cache"; printf 'Package: openssl\nPin: version 3.0.2*\nPin-Priority: -1\n' >"$E/apt/preferences.d/hold-ssl"
+    : >"$T_TMP/cache/breakme_1.0_all.deb"
     printf 'deb http://archive.ubuntu.com/ubuntu noble main\ndeb [trusted=yes] http://203.0.113.9/repo ./\n' >"$E/apt/sources.list"
 }
 run() { $SH "$C" --out "$O" --no-color --url http://127.0.0.1:1/ --no-restart --no-refresh --no-protected "$@"; }
@@ -73,6 +76,7 @@ t_has "$out" "[ok] http://archive.ubuntu.com/ubuntu" "the distribution's source 
 t_has "$out" "[!] no signature check: http://203.0.113.9/repo" "a source with no signature check is HIGH"
 t_has "$out" "[*] not the distribution's: http://203.0.113.9/repo" "an unknown source is flagged"
 t_has "$out" "[*] held (never updated): sudo" "a held package is shown"
+t_has "$out" "a pin that blocks updates (Pin-Priority below 0) for openssl in /etc/apt/preferences.d/hold-ssl" "a blocking pin is shown"
 t_has "$out" "3 of them security" "security updates are counted (kernel apart)"
 t_has "$out" "[!] ssh: openssh-server" "grouped by service"
 t_has "$out" "Security updates for ssh (1: openssh-server): what now? [U/s] u (default)" "security: default update"
@@ -88,8 +92,10 @@ t_fail "no CSV files are left" sh -c "find '$O' -name '*.csv' | grep -q ."
 if [ "$(id -u)" = 0 ]; then
     t_start "apply the defaults (--batch)"
     reset
-    out=$(run --batch --apply 2>&1)
+    out=$(STUB_NODL=breakme run --batch --apply 2>&1)
     _rd=$(ls -d "$O"/updates-* | tail -n 1)
+    t_hasnt "$out" "after the ssh (security) update" "a high (short-lived) port closing is not a broken service"
+    t_ok "the old package came from apt's cache when the mirror has none" test -f "$_rd/old-packages/breakme_1.0_all.deb"
     t_ok "openssh is updated" grep -q 'openssh-server 1:9.6p1-3ubuntu13.5' "$ST/inst"
     t_ok "openssl is updated" grep -q 'libssl3t64 3.0.13-0ubuntu3.5' "$ST/inst"
     t_ok "the kernel is not" grep -q 'linux-image-generic 6.8.0.40' "$ST/inst"

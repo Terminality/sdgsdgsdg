@@ -8,7 +8,8 @@ What changed, newest first. Each entry names the scripts touched and how they we
 - Then lists pending updates grouped by service (ssh, openssl, sudo, web, php, database, mail, dns, ftp, system), security apart. Asked per group: `[u]pdate` / `[s]kip`; security defaults to update, the kernel and non-security updates to skip.
 - Before each group it saves the old packages (`apt-get download`) and the listening ports; your config files are always kept (`--force-confold`). After each group it checks the ports, the web page and the database; if one stopped, `[r]oll back` / `[l]eave` (default roll back). Services still on old library code are offered a restart.
 - Found while testing: after a group is left broken, the next groups were blamed for the same closed port, so the checks now compare against the state after each group.
-- Tested: 36 checks under seven shells and three awks with stand-in apt-get, apt-mark, dpkg-query and ss; no real package is installed by the tests.
+- Review fixes: only ports below 32768 are compared (a short-lived high port closing on its own looked like a broken service, and the default answer is roll back); the old package is taken from apt's own cache when the mirror no longer has it (fewer groups skipped for lack of a rollback); a group with nothing saved no longer claims a rollback; the dnf rollback undoes its own transaction by number, not "last"; apt pins that block updates (Pin-Priority below 0) and an apt proxy are flagged next to holds.
+- Tested: 39 checks under seven shells and three awks with stand-in apt-get, apt-mark, dpkg-query and ss; no real package is installed by the tests.
 
 ## 2026-11-19: AppArmor confinement (LX-44, new)
 

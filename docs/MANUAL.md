@@ -3191,9 +3191,9 @@ sudo sh LX-46-safe-updates.sh --protected p.csv --apply --batch   # security upd
 
 | Step | What happens |
 | --- | --- |
-| Sources | Flags package sources that are not the distribution's (`[*]`) and sources with no signature check (`[!]`: anything served there gets installed). Flags held packages. |
+| Sources | Flags package sources that are not the distribution's (`[*]`) and sources with no signature check (`[!]`: anything served there gets installed). Flags held packages, pins that block updates (Pin-Priority below 0) and an apt proxy. |
 | List | Pending updates grouped by service: ssh, openssl, sudo, web, php, database, mail, dns, ftp, system, kernel. Security apart. Full list in `updates.txt`. |
-| Before each group | Saves the old packages in `old-packages/` and notes the listening ports, the web page answer and the database. |
+| Before each group | Saves the old packages in `old-packages/` (from apt's cache, else the mirror) and notes the listening ports (below 32768), the web page answer and the database. |
 | Install | Your config files are always kept. A new default config from the package shows as `[*]` (`.dpkg-dist`); compare it later, don't copy it over. |
 | After each group | Checks every port that listened before still listens, the web page and the database. If one stopped: roll back that group. |
 | After all | Offers to restart services still running the old (unpatched) library code. Says if a reboot is needed. |
