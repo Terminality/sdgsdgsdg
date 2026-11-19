@@ -2631,6 +2631,13 @@ sudo sh SV-50-service-recovery.sh --protected p.csv --watch 30 --auto-restart --
 
 Fixes run in order: unmask, firewall, kill, enable, start. Each fixed service is tested again (up to 10 s).
 
+**By hand:** for every service that's down, it also prints the commands to do it yourself (config test, then restart, then the check scoring would do), on screen and in `summary.txt`:
+
+```
+by hand: sudo doveconf -n >/dev/null && sudo systemctl restart dovecot
+check:   nc -w 3 127.0.0.1 143 </dev/null
+```
+
 ### Watch mode (the automation)
 
 `--watch 30` checks every 30 seconds and prints a line the moment a service goes down or comes back, with the reason. Everything is also logged to `watch.txt`.

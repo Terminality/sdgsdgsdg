@@ -30,6 +30,9 @@
 #   And once for the box: disk or inodes full, /tmp not writable, programs
 #   killed for lack of memory.
 #
+#   For each service that is down it also prints the commands to bring it
+#   back by hand (config test && restart, then how to check it).
+#
 #   Fixes offered (each asked, yes/no): unmask, enable at boot, remove a
 #   firewall rule that blocks the port, stop the program holding the port,
 #   start / restart (only after the config test passes).  Each fixed service
@@ -256,6 +259,31 @@ unit_state() {   # unit_state UNIT -> "masked" | "disabled" | "enabled" | "-"
         if ls /etc/rc[2345].d/S*"$1" >/dev/null 2>&1; then echo enabled; elif [ -x "/etc/init.d/$1" ]; then echo disabled; else echo -; fi
     else echo -; fi
 }
+# by_hand UNIT -> the commands to bring it back by hand: config test, then
+#   restart (only if the test passes), then the check scoring would do.
+by_hand() {
+    case "$1" in
+        apache2) _t="apache2ctl -t" ;; httpd) _t="httpd -t" ;; nginx) _t="nginx -t" ;;
+        php*-fpm) _v=${1#php}; _v=${_v%-fpm}; _t="php-fpm$_v -t" ;;
+        postfix) _t="postfix check" ;; dovecot) _t="doveconf -n >/dev/null" ;;
+        ssh|sshd) _t="mkdir -p /run/sshd; sshd -t" ;; *) _t="" ;;
+    esac
+    case "$1" in
+        Splunkd|splunk) _r="/opt/splunk/bin/splunk restart" ;;
+        *) if [ "$CC_INIT" = systemd ]; then _r="systemctl restart $1"; elif [ "$CC_INIT" = openrc ]; then _r="rc-service $1 restart"; else _r="service $1 restart"; fi ;;
+    esac
+    case "$1" in
+        apache2|httpd|nginx) _c="curl -sI http://127.0.0.1/ | head -n 1" ;;
+        dovecot) _c="nc -w 3 127.0.0.1 143 </dev/null" ;;
+        postfix|exim4|exim) _c="nc -w 3 127.0.0.1 25 </dev/null" ;;
+        mariadb|mysql|mysqld) _c="mysqladmin ping" ;; postgresql) _c="pg_isready -h 127.0.0.1" ;;
+        ssh|sshd) _c="nc -w 3 127.0.0.1 22 </dev/null" ;; chrony|chronyd) _c="chronyc tracking" ;;
+        Splunkd|splunk) _c="curl -sk https://127.0.0.1:8089/ | head -n 3" ;; *) _c="" ;;
+    esac
+    case "$_t" in "mkdir -p /run/sshd; sshd -t") _t="sudo mkdir -p /run/sshd && sudo sshd -t" ;; '') ;; *) _t="sudo $_t" ;; esac
+    printf '%s' "${_t:+$_t && }sudo $_r"
+    HAND_CHECK=$_c
+}
 config_test() {   # config_test UNIT -> output in $W/ct, rc 0 ok / 1 broken / 2 none
     : >"$W/ct"
     case "$1" in
@@ -377,7 +405,8 @@ if [ -n "$WATCH" ]; then
                 awk -F'|' -v u="$_u" '$1 != u' "$W/state" >"$W/state.t"; printf '%s|%s\n' "$_u" "$_st" >>"$W/state.t"; mv "$W/state.t" "$W/state"
                 case "$_st" in
                     ok)  [ -n "$_was" ] && cc_show "$C_GRN" "$(now) [ok] $_u is UP again: $_tx" || cc_show "$C_GRN" "$(now) [ok] $_u: $_tx" ;;
-                    bad) cc_show "$C_RED" "$(now) [!] $_u is DOWN: $_tx" ;;
+                    bad) cc_show "$C_RED" "$(now) [!] $_u is DOWN: $_tx"
+                         [ "$AUTOR" = 1 ] && [ "$CC_APPLY" = 1 ] || { by_hand "$_u" >"$W/bh"; cc_show "$C_GRY" "         by hand: $(cat "$W/bh")${HAND_CHECK:+   then check: $HAND_CHECK}"; } ;;
                     *)   cc_show "$C_GRY" "$(now) [-] $_u: $_tx" ;;
                 esac
                 printf '%s %s %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$_u" "$_st" "$_tx" >>"$WF"
@@ -520,6 +549,11 @@ while IFS='|' read -r _k _u _ps _pt _pr; do
             _lg=""; case "$_u" in apache2) _lg=/var/log/apache2/error.log ;; httpd) _lg=/var/log/httpd/error_log ;; nginx) _lg=/var/log/nginx/error.log ;;
                 mariadb|mysql|mysqld) _lg=$(ls /var/log/mysql/error.log /var/log/mariadb/mariadb.log 2>/dev/null | head -n 1) ;; dovecot|postfix) _lg=$(ls /var/log/mail.log /var/log/maillog 2>/dev/null | head -n 1) ;; esac
             if [ "$CC_INIT" = systemd ]; then journalctl -u "$_u" -n 3 --no-pager -o cat 2>/dev/null; elif [ -n "$_lg" ]; then tail -n 3 "$_lg" 2>/dev/null; fi | cut -c1-150 | while IFS= read -r _ll; do cc_show "$C_GRY" "        log: $_ll"; done
+            by_hand "$_u" >"$W/bh"; _bh=$(cat "$W/bh")
+            [ "$_cfg" = BROKEN ] && cc_show "$C_GRY" "        by hand: fix the config line above first"
+            cc_show "$C_GRY" "        by hand: $_bh"
+            [ -n "$HAND_CHECK" ] && cc_show "$C_GRY" "        check:   $HAND_CHECK"
+            printf '%s|%s|%s\n' "$_u" "$_bh" "$HAND_CHECK" >>"$W/hand"
         fi
     fi
     cc_csv_row "$SCSV" "$_k" "$_u" "$_run" "$_st" "$_cfg" "${_pinfo# }" "$_atx" "$(printf '%s' "$_probs" | sed 's/;$//; s/^ //')"
@@ -590,6 +624,7 @@ cc_csv_pretty "$SCSV" "$CC_RUN_DIR/status.txt" 140
     printf 'SV-50 Service recovery | host %s | %s\n' "$CC_HOST" "$([ "$CC_APPLY" = 1 ] && [ "$NCH" -gt 0 ] && echo APPLIED || echo 'CHECK / DRY RUN')"
     printf 'Services with problems: %d of %d\n' "$NDOWN" "$(grep -c . "$W/rows")"
     awk "$CC_AWK_CSV"'NR > 1 { csvsplit($0, f); if (f[8] != "") printf "  %-12s %s\n", f[2], substr(f[8], 1, 150) }' "$SCSV"
+    [ -s "$W/hand" ] && { printf '\nBy hand (config test, restart, check):\n'; awk -F'|' '{ printf "  %-12s %s\n", $1, $2; if ($3 != "") printf "  %-12s check: %s\n", "", $3 }' "$W/hand"; }
     [ -s "$W/after" ] && { printf '\nAfter the fixes:\n'; awk '{ printf "  %-12s %s\n", $1, ($2 == "bad" ? "STILL DOWN" : "up") }' "$W/after"; }
     printf '\nIf the box says up but scoring says down: check the network firewall / router (NW scripts) and that the scoring IP is not banned (SV-26 --unban-all).\n'
     printf 'Defaced or wiped site: SV-15 --check, then --restore.   Watch: sh %s --watch 30\n' "$0"

@@ -35,6 +35,9 @@ if [ "${CCDC_TEST_SVC:-0}" = 1 ] && [ "$(id -u)" = 0 ] && [ -x /usr/sbin/apache2
     t_has "$out" "not running" "a stopped Apache is found"
     t_has "$out" "Dry run: nothing was changed" "dry run without --apply"
     t_fail "a dry run does not start it" up
+    t_has "$out" "by hand: sudo apache2ctl -t && sudo " "the commands to do it by hand are shown"
+    t_has "$out" "check:   curl -sI http://127.0.0.1/" "with how to check it"
+    t_has "$(cat "$(ls -d "$O"/recovery-* | sort -t- -k3 -n | tail -n 1)/summary.txt")" "By hand (config test, restart, check):" "and in summary.txt"
     out=$(run --apply)
     t_has "$out" "[+] start apache2" "--apply starts it"
     t_has "$out" "[ok] apache2 is UP: HTTP" "and tests it over HTTP"
