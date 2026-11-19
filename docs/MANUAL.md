@@ -48,6 +48,7 @@ Contents:
 38. Service recovery, `roles/applications/SV-50-service-recovery.sh` (SV-50)
 39. Splunk hardening and passwords, `roles/applications/SV-44-splunk-hardening.sh` (SV-44)
 40. Web shell hunter, `roles/applications/SV-16-webshell-hunter.sh` (SV-16)
+41. Account lockdown, `roles/linux/LX-21-account-lockdown.sh` (LX-21)
 
 ---
 
@@ -2793,3 +2794,65 @@ In `webshells-N/`: `output.txt`, `findings.txt` (every file, its score and reaso
 | `not checked against wordpress.org` | wordpress.org unreachable | `--wp-checksums FILE` |
 | `the site needs FILE: put back` | The shell is inside a file the site loads | Remove only the bad lines, then run again |
 | Lots of MED in one plugin | It runs programs legitimately | Keep it (`k`), or check the plugin's version |
+
+## 41. Account lockdown, `roles/linux/LX-21-account-lockdown.sh` (LX-21)
+
+After passwords (LX-20), this goes through **every account, one by one**, shows what it can do, and asks what to do with it. It's the account side of getting red team out: the users they made, a second root, planted SSH keys, sudo rules.
+
+### How to run it
+
+```sh
+sudo sh LX-21-account-lockdown.sh                                  # look + dry run
+sudo sh LX-21-account-lockdown.sh --protected p.csv --apply        # asks about each account
+sudo sh LX-21-account-lockdown.sh --protected p.csv --apply --batch
+```
+
+**Put your team's accounts and the scoring account on the protected list first.** They're never locked, and anything else needs an extra yes.
+
+### What it shows for every account
+
+UID, login shell, password (set / empty / locked / a hash in `/etc/passwd`), admin groups (`sudo wheel admin docker lxd lxc libvirt disk shadow`: each one is as good as root), its sudo lines (and NOPASSWD), SSH keys (and options like `command=`), and when its password last changed.
+
+| Level | Found |
+| --- | --- |
+| HIGH | A second UID 0; an empty password; a hash in `/etc/passwd`; a service account (www-data, mysql...) that can log in with a password or a key |
+| MED | An admin that isn't protected; sudo lines / NOPASSWD; SSH key options; a password changed in the last `--days` (2); a service account with a login shell |
+
+Clean accounts that can't log in aren't shown (they're in `accounts.txt`).
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Go through the flagged accounts one by one? | `[y]` / `[n]` (the defaults) | `--batch` |
+| Each account | `[k]eep` `[l]ock` `[d]` take admin away `[r]emove its SSH keys` `[b]oth d and r` `[n]o-login shell` `[a]ll the rest default`: only the answers that fit are shown | `--all` asks about every account |
+| A protected account | extra `[y]` / `[n]`, default no | protected list |
+| Each sudo line for everyone / a group / a missing user | `[y]` comment it out / `[n]` | |
+| Apply? | `[y]` / `[n]` | `--apply` |
+
+Defaults: a second UID 0, an empty password and a hash in `/etc/passwd` → **lock**. A service account with a shell → **no-login shell**. Everything else → **keep**.
+
+### What the answers do
+
+- **Lock**: `usermod -L` and the account expired, so SSH keys stop too. Its files stay.
+- **Take admin away**: out of the admin groups (not its primary group), and its own sudo lines commented out with `# LX-21: `.
+- **Remove its SSH keys**: `authorized_keys` moved to quarantine.
+- **No-login shell**: `/usr/sbin/nologin`. The service keeps running.
+- **Sudo lines** are only changed after `visudo -c` accepts the result.
+
+### Safety
+
+- Dry run unless `--apply`. Revert timer (120 s): **log in again from a NEW terminal** and check sudo works before you keep it.
+- Root and the account you're using are never locked.
+- Each account's lines are saved in `before/` first, and the undo puts them back exactly (tested on a real account).
+
+### What it produces
+
+In `accounts-N/`: `output.txt`, `accounts.txt` (every account and the decision), `plan.txt`, `changes.txt`, `summary.txt`, `before/`, `revert.sh`.
+
+### What to watch for
+
+- **An already logged-in session stays logged in.** LX-40 shows it; kill it by hand.
+- **LDAP / AD accounts** (sssd, winbind) aren't in `/etc/passwd`, so they're not seen.
+- Cron jobs, PAM, services and the rest red team plants: **LX-42**.

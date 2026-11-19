@@ -1,6 +1,6 @@
 # Linux — hosts + services
 
-Scripts owned by this role. 10 of 12 are built.
+Scripts owned by this role. 11 of 12 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -12,7 +12,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LX-22 | SSH hardening | Hardening: medium | service | built | [`roles/linux/LX-22-ssh-hardening.sh`](../../roles/linux/LX-22-ssh-hardening.sh) |
 | LX-25 | Linux firewall | Hardening: hard | access | built | [`roles/linux/LX-25-firewall.sh`](../../roles/linux/LX-25-firewall.sh) |
 | LX-26 | Linux remote access lockdown | Hardening: hard | access | planned |  |
-| LX-21 | Account lockdown (Linux) | Hardening: hard | access | planned |  |
+| LX-21 | Account lockdown (Linux) | wave1 | medium | built | [`roles/linux/LX-21-account-lockdown.sh`](../../roles/linux/LX-21-account-lockdown.sh) |
 | LX-20 | Linux password rotation | Management | access | built | [`roles/linux/LX-20-password-rotation.sh`](../../roles/linux/LX-20-password-rotation.sh) |
 | LX-40 | Linux alerts | Alerts | none | built | [`roles/linux/LX-40-change-watch.sh`](../../roles/linux/LX-40-change-watch.sh) |
 | LX-41 | Linux session & command logging | Alerts | none | built | [`roles/linux/LX-41-session-log.sh`](../../roles/linux/LX-41-session-log.sh) |
