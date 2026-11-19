@@ -35,13 +35,13 @@ for f in "$T_TMP"/d/*/*.sh; do
     t_eq "$?" 0 "$(basename "$f") --help works on its own"
 done
 # shellcheck disable=SC2086
-r=$(CCDC_SKIP_VERIFY=1 $SH "$T_TMP/alone/SH-05-linux-enum.sh" --out "$T_TMP/o" --only system 2>&1)
+r=$(BT_SKIP_VERIFY=1 $SH "$T_TMP/alone/SH-05-linux-enum.sh" --out "$T_TMP/o" --only system 2>&1)
 t_eq "$?" 0 "the built enum runs a section on its own"
 t_has "$r" "==========[ 1/1  system ]==========" "and prints its output"
 
 t_start "kit check: clean copy runs, changed copy is refused"
 cp -R "$T_TMP/d" "$T_TMP/kit"
-unset CCDC_SKIP_VERIFY
+unset BT_SKIP_VERIFY
 # shellcheck disable=SC2086
 r=$($SH "$T_TMP/kit/linux/SH-05-linux-enum.sh" --out "$T_TMP/o2" --only system 2>&1)
 t_eq "$?" 0 "a clean built script passes its own hash check"

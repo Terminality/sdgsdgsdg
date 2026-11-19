@@ -21,7 +21,7 @@
 #   because a red team with admin rights can delete a backup kept on the box.
 #
 # USAGE
-#   powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\ccdc-out [options]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\bt-out [options]
 #   Run in an elevated window.  Without elevation most items fail and are
 #   listed as failed.
 #
@@ -133,7 +133,7 @@ if ($Help) {
 }
 if ($List) { foreach ($l in $ItemHelp) { Write-Host $l }; exit 0 }
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.ps1 by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -141,7 +141,7 @@ $ccDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 while ($ccDir -and -not (Test-Path -LiteralPath (Join-Path (Join-Path $ccDir 'lib') 'lib.ps1'))) { $ccDir = Split-Path -Parent $ccDir }
 if (-not $ccDir) { Write-Host 'cannot find lib/lib.ps1 above this script'; exit 3 }
 . (Join-Path (Join-Path $ccDir 'lib') 'lib.ps1')
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 # ---- Options ----------------------------------------------------------------
 $onlyList = @($Only -split '[,\s]+' | Where-Object { $_ -ne '' } | ForEach-Object { $_.ToLower() })
@@ -419,7 +419,7 @@ function I-dns {
     $saved = @(); $bad = @(); $restore = @('# Put back one zone: copy its file into the DNS folder, then load it.', '# (An AD-integrated zone: delete the broken one first, then add it back as primary from the file and convert it with dnscmd /zoneresettype ZONE /dsprimary.)')
     foreach ($z in $zones) {
         # dnscmd writes the export into %windir%\System32\dns; it is moved out at once.
-        $fn = 'ccdc-backup-' + $z + '.dns'
+        $fn = 'bt-backup-' + $z + '.dns'
         if (Run 'dnscmd.exe' @('/zoneexport', $z, $fn)) {
             $made = Jp $dnsDir $fn
             if (Test-Path -LiteralPath $made) {
@@ -525,7 +525,7 @@ function I-addb {
     $d = Jp $B 'ad-database'
     # ntdsutil reads each argument as one command line; a space in the path
     # would split it.
-    if ($d.Contains(' ')) { Done addb failed '' "the output path has a space in it ($d); use -Out C:\ccdc-out"; return }
+    if ($d.Contains(' ')) { Done addb failed '' "the output path has a space in it ($d); use -Out C:\bt-out"; return }
     if (-not (Run 'ntdsutil.exe' @('activate instance ntds', 'ifm', ('create sysvol full ' + $d), 'quit', 'quit'))) { Done addb failed $d (Short $script:LastOut); return }
     Add-CcFlag -Severity HIGH -Section addb -Item $d -Detail 'this folder holds the AD database with every password hash: copy it off the box with -CopyTo and delete it here'
     Done addb ok $d 'AD database and SYSVOL (install-from-media copy). HOLDS EVERY PASSWORD HASH' @('# Used for an authoritative restore or to build a new DC from media (dcpromo /ReplicaOrNewDomain ...).', '# Do not keep this folder on the DC: delete it after copying it off the box.')

@@ -6,7 +6,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/applications/SV-30-service-hardening.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 R="$T_TMP/root"; O="$T_TMP/out"
@@ -111,7 +111,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     mkvsftpd
     # level (service), then Enter for each action, in a terminal.
     printf '\nservice\n\n\n\n\n\n\n\n' >"$T_TMP/ans"
-    CCDC_NO_TTY=0 script -qc "$SH $C --root $R --out $O --no-color" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
+    BT_NO_TTY=0 script -qc "$SH $C --root $R --out $O --no-color" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
     t_has "$(cat "$T_TMP/tty.out")" "How far should I go?" "asks for the level"
     t_has "$(cat "$T_TMP/tty.out")" "chroot_local_user" "the typed level (service) is used"
     t_has "$(cat "$T_TMP/tty.out")" "[safe] turn off anonymous FTP login?" "then asks about each action with its risk"
@@ -130,8 +130,8 @@ echo "define('RCMAIL_VERSION', '1.5.2');" >"$R/var/lib/roundcube/program/include
 _u0=$(cat "$O"/undo-*.log 2>/dev/null | grep -c .)
 out=$($SH "$C" --root "$R" --out "$O" --no-color --batch --apply --no-protected --level service --box webmail 2>&1)
 t_has "$out" "Scored on webmail: IMAP, SMTP, webmail login" "the box says what is scored"
-t_eq "$(cat "$R/etc/apache2/conf-enabled/zz-ccdc-hardening.conf" | grep -v '^#' | tr '\n' ' ')" "ServerTokens Prod ServerSignature Off TraceEnable Off <Directory /var/www/>     Options -Indexes </Directory> " "Apache drop-in: versions hidden, TRACE and listings off"
-t_has "$(cat "$R/etc/nginx/conf.d/zz-ccdc-hardening.conf")" "server_tokens off;" "nginx version hidden"
+t_eq "$(cat "$R/etc/apache2/conf-enabled/zz-bt-hardening.conf" | grep -v '^#' | tr '\n' ' ')" "ServerTokens Prod ServerSignature Off TraceEnable Off <Directory /var/www/>     Options -Indexes </Directory> " "Apache drop-in: versions hidden, TRACE and listings off"
+t_has "$(cat "$R/etc/nginx/conf.d/zz-bt-hardening.conf")" "server_tokens off;" "nginx version hidden"
 t_has "$(cat "$R/etc/php/8.3/apache2/php.ini")" "expose_php = Off" "PHP X-Powered-By off"
 mc=$(cat "$R/etc/postfix/main.cf")
 t_has "$mc" 'smtpd_banner = $myhostname ESMTP' "Postfix greeting without the name"
@@ -143,7 +143,7 @@ t_has "$out" "EVERYONE may relay mail" "open relay (mynetworks 0.0.0.0/0) report
 dc=$(cat "$R/etc/dovecot/dovecot.conf")
 t_has "$dc" "login_greeting = Mail server ready." "IMAP greeting without the name"
 t_has "$dc" "auth_failure_delay = 5 secs" "slower failed IMAP logins"
-t_has "$(cat "$R/etc/chrony/chrony.conf")" "#ccdc cmdallow 10.0.0.0/8" "chrony remote control off"
+t_has "$(cat "$R/etc/chrony/chrony.conf")" "#bt cmdallow 10.0.0.0/8" "chrony remote control off"
 t_has "$out" "no 'allow' line: chrony answers nobody" "chrony not serving time is reported"
 t_has "$out" "/var/www/html/.git: can be downloaded by anyone" ".git in the web root reported"
 t_has "$out" "/var/www/html/info.php" "phpinfo page reported"
@@ -155,7 +155,7 @@ t_has "$out" "Nothing to change" "a second run changes nothing"
 cat "$O"/undo-*.log | awk -F'\t' -v n="$_u0" 'NR > n { l[NR] = $4 } END { for (i = NR; i > n; i--) print l[i] }' >"$T_TMP/undo30.sh"
 sh "$T_TMP/undo30.sh" >/dev/null 2>&1
 t_has "$(cat "$R/etc/postfix/main.cf")" '$mail_name (Ubuntu)' "undo puts the Postfix greeting back"
-t_fail "undo removes the Apache drop-in" test -f "$R/etc/apache2/conf-enabled/zz-ccdc-hardening.conf"
+t_fail "undo removes the Apache drop-in" test -f "$R/etc/apache2/conf-enabled/zz-bt-hardening.conf"
 t_has "$(cat "$R/etc/php/8.3/apache2/php.ini")" "expose_php = On" "undo puts php.ini back"
 out=$($SH "$C" --root "$R" --out "$O" --no-color --batch --apply --no-protected --level access --only web-exposed-remove 2>&1)
 t_fail "access level: info.php moved to quarantine" test -f "$R/var/www/html/info.php"

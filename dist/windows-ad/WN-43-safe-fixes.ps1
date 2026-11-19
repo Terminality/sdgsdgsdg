@@ -49,11 +49,11 @@
 #     smbsigning   SMB signing required by the server (very old clients fail)
 #
 # USAGE
-#   powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\ccdc-out                dry run
-#   powershell ... WN-43-safe-fixes.ps1 -Out C:\ccdc-out -Apply                                            make the safe fixes
-#   powershell ... WN-43-safe-fixes.ps1 -Out C:\ccdc-out -Apply -Include firewall,rdpnla                   plus two more
-#   powershell ... WN-43-safe-fixes.ps1 -Out C:\ccdc-out -Undo latest                                      what undo would do
-#   powershell ... WN-43-safe-fixes.ps1 -Out C:\ccdc-out -Undo latest -Apply                               put the last run back
+#   powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\bt-out                dry run
+#   powershell ... WN-43-safe-fixes.ps1 -Out C:\bt-out -Apply                                            make the safe fixes
+#   powershell ... WN-43-safe-fixes.ps1 -Out C:\bt-out -Apply -Include firewall,rdpnla                   plus two more
+#   powershell ... WN-43-safe-fixes.ps1 -Out C:\bt-out -Undo latest                                      what undo would do
+#   powershell ... WN-43-safe-fixes.ps1 -Out C:\bt-out -Undo latest -Apply                               put the last run back
 #   Run in an elevated window.
 #
 # OPTIONS
@@ -87,7 +87,7 @@
 #   The registry, ADSI, WMI, auditpol, wevtutil, sfc, netsh (all Windows 7 /
 #   2008 R2 and later).  Get/Set-SmbServerConfiguration and the Defender
 #   cmdlets are used when present (Windows 8 / 2012 and later); otherwise the
-#   registry.  $env:CCDC_WN43_FAKE names a folder of stand-in state for the
+#   registry.  $env:BT_WN43_FAKE names a folder of stand-in state for the
 #   tests: then nothing on the machine is read or changed.
 #
 # TESTED ON
@@ -131,7 +131,7 @@ if ($Help -or $List) {
     exit 0
 }
 
-# >>> CCDC-LIB  (lib/lib.ps1 0.2.1 pasted in by tools/build.sh - edit lib/lib.ps1, not this copy)
+# >>> BT-LIB  (lib/lib.ps1 0.2.1 pasted in by tools/build.sh - edit lib/lib.ps1, not this copy)
 # =============================================================================
 # ID:       LB-02
 # NAME:     PowerShell library (lib.ps1)
@@ -165,9 +165,9 @@ if ($Help -or $List) {
 #           [switch]$ForceScored, [switch]$Quiet, [switch]$DebugLog,
 #           [string]$MyOwnOption
 #       )
-#       # >>> CCDC-LIB
+#       # >>> BT-LIB
 #       ...the loader lines from templates/script-template.ps1...
-#       # <<< CCDC-LIB
+#       # <<< BT-LIB
 #       Initialize-Cc -Id 'WN-99' -Name 'Example script' -Kind changes -Bound $PSBoundParameters
 #       Invoke-CcChange -Description 'stop Telnet' -Action { Stop-Service TlntSvr } `
 #                       -Undo 'Start-Service TlntSvr' | Out-Null
@@ -304,10 +304,10 @@ function Assert-CcAdmin {
 }
 
 # Confirm-Cc 'question'   -> ask the operator; $true for yes.
-#   $env:CCDC_ASSUME_YES = '1' answers yes without asking (for fan-out).
+#   $env:BT_ASSUME_YES = '1' answers yes without asking (for fan-out).
 function Confirm-Cc {
     param([string]$Question)
-    if ($env:CCDC_ASSUME_YES -eq '1') { return $true }
+    if ($env:BT_ASSUME_YES -eq '1') { return $true }
     $a = Read-Host ($Question + ' [y/N]')
     return ($a -eq 'y' -or $a -eq 'yes')
 }
@@ -378,8 +378,8 @@ function Initialize-Cc {
     # Output folder: operator-chosen, never inside the kit (rule 11).
     $out = $null
     if ($Bound.ContainsKey('Out') -and $Bound['Out']) { $out = [string]$Bound['Out'] }
-    elseif ($env:CCDC_OUT) { $out = $env:CCDC_OUT }
-    else { $out = Join-Path $HOME 'ccdc-out' }
+    elseif ($env:BT_OUT) { $out = $env:BT_OUT }
+    else { $out = Join-Path $HOME 'bt-out' }
     $out = Resolve-CcPath $out
     if ($c.Kit) {
         $kitFull = (Resolve-CcPath $c.Kit).TrimEnd('\','/')
@@ -404,7 +404,7 @@ function Initialize-Cc {
     # Protected list.
     $prot = $null
     if ($Bound.ContainsKey('Protected') -and $Bound['Protected']) { $prot = [string]$Bound['Protected'] }
-    elseif ($env:CCDC_PROTECTED) { $prot = $env:CCDC_PROTECTED }
+    elseif ($env:BT_PROTECTED) { $prot = $env:BT_PROTECTED }
     else { $prot = Join-Path $out 'protected.csv' }
     $c.ProtectedRows = $null
     if (Test-Path -LiteralPath $prot) {
@@ -940,15 +940,15 @@ function Show-CcFlagReport {
 # Test-CcSelf
 #   Rule 15: the kit's hash is checked before each run.  If a MANIFEST.sha256
 #   (written by tools/build.sh) sits in the script's folder or one of the two
-#   folders above it, or $env:CCDC_MANIFEST points to one, the running script's
+#   folders above it, or $env:BT_MANIFEST points to one, the running script's
 #   hash must match its line there.  A mismatch stops the script with exit 3:
 #   the file on this host is not the one you built.
-#   $env:CCDC_SKIP_VERIFY = '1' turns the check off (for development).
+#   $env:BT_SKIP_VERIFY = '1' turns the check off (for development).
 function Test-CcSelf {
     $c = $script:Cc
-    if ($env:CCDC_SKIP_VERIFY -eq '1') { Write-CcLog -Level DEBUG -Message 'verify: skipped (CCDC_SKIP_VERIFY=1)'; return }
+    if ($env:BT_SKIP_VERIFY -eq '1') { Write-CcLog -Level DEBUG -Message 'verify: skipped (BT_SKIP_VERIFY=1)'; return }
     if (-not $c.ScriptPath) { Write-CcLog -Level DEBUG -Message 'verify: script was not started from a file, nothing to hash'; return }
-    $man = $env:CCDC_MANIFEST
+    $man = $env:BT_MANIFEST
     if (-not $man) {
         $d = $c.Kit
         for ($i = 0; $i -lt 3 -and $d; $i++) {
@@ -990,7 +990,7 @@ function Complete-Cc {
     if ($c.Log) { Write-CcLog -Level INFO -Message ('log: {0}' -f $c.Log) }
     exit $ExitCode
 }
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 # ---- Options ----------------------------------------------------------------
 # Lists are split inline, not by a function: Windows PowerShell 5.1 turns an
@@ -1007,7 +1007,7 @@ foreach ($n in $onlyL) { if (($ServiceFixes -contains $n) -and -not ($inclL -con
 
 # ---- Start ------------------------------------------------------------------
 Initialize-Cc -Id 'WN-43' -Name 'Windows safe fixes' -Kind changes -Bound $PSBoundParameters
-$Fake = $env:CCDC_WN43_FAKE
+$Fake = $env:BT_WN43_FAKE
 if ($Fake) { Write-CcLog -Level WARN -Message "TEST MODE: stand-in state from $Fake; nothing on this machine is read or changed" }
 else {
     # Several fixes use WMI objects' own methods (GetOwner, Delete, GetText),
@@ -1022,7 +1022,7 @@ function Q([string]$s) { return "'" + $s.Replace("'", "''") + "'" }
 
 # =============================================================================
 # State providers.  Every read and write of the machine goes through these,
-# so the tests can use stand-in state ($env:CCDC_WN43_FAKE) and never touch
+# so the tests can use stand-in state ($env:BT_WN43_FAKE) and never touch
 # Windows.  Real mode uses the registry, ADSI, WMI and Windows' own tools.
 # =============================================================================
 
@@ -1085,7 +1085,7 @@ function R-Del([string]$k, [string]$n) {
 # R-Export KEY FILE -> $true when saved (a key that does not exist is $false).
 function R-Export([string]$k, [string]$file) {
     if ($Fake) {
-        if ($env:CCDC_WN43_FAIL -eq 'export') { return $false }
+        if ($env:BT_WN43_FAIL -eq 'export') { return $false }
         $pre = Lc $k
         $rows = @(Fake-Read 'registry.csv' | Where-Object { (Lc $_.key) -eq $pre -or (Lc $_.key).StartsWith($pre + '\') })
         if ($rows.Count -eq 0) { return $false }
@@ -1196,8 +1196,8 @@ function Get-Def {
 }
 function Set-DefRealtime([bool]$on) {
     if ($Fake) {
-        if ($env:CCDC_WN43_FAIL -eq 'defrt') { throw 'Tamper Protection blocked the change (test)' }
-        if ($env:CCDC_WN43_FAIL -eq 'defrt-silent') { return }
+        if ($env:BT_WN43_FAIL -eq 'defrt') { throw 'Tamper Protection blocked the change (test)' }
+        if ($env:BT_WN43_FAIL -eq 'defrt-silent') { return }
         $rows = @(Fake-Read 'defender.csv' | Where-Object { $_.kind -ne 'realtime' })
         $v = 'off'; if ($on) { $v = 'on' }
         $rows += New-Object PSObject -Property @{ kind = 'realtime'; value = $v }
@@ -1309,7 +1309,7 @@ function Get-SysHash([string]$name) {
 }
 function Repair-SysFile([string]$name) {
     if ($Fake) {
-        if ($env:CCDC_WN43_FAIL -eq 'sfc') { return }
+        if ($env:BT_WN43_FAIL -eq 'sfc') { return }
         $rows = @(Fake-Read 'files.csv'); foreach ($r in $rows) { if ($r.name -eq $name) { $r.sha = 'original-' + $name } }
         Fake-Write 'files.csv' @('name', 'sha') $rows; return
     }

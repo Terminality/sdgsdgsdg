@@ -12,12 +12,12 @@
 #   once.  Two halves, one script:
 #
 #     receiver (on the Splunk box)   a Splunk TCP input (default 1514) for
-#       syslog, written as its own small app (etc/apps/ccdc_receiver), then
+#       syslog, written as its own small app (etc/apps/bt_receiver), then
 #       a Splunk restart (asked).  Open the port with LX-25.
 #     sender (every other box)       rsyslog sends the system logs (auth,
 #       syslog, kern, mail, cron) and the service log files it finds -
 #       Apache / nginx access and error, mail.log, Dovecot, Roundcube,
-#       MySQL/MariaDB errors, audit.log, the CCDC logs - to the Splunk box.
+#       MySQL/MariaDB errors, audit.log, the kit's logs - to the Splunk box.
 #       Disk-buffered: if Splunk is down the logs wait and are sent later.
 #       Then a test line is sent; search Splunk for it.
 #
@@ -49,8 +49,8 @@
 #
 # OUTPUTS  (under --out, in logship-N/)
 #   output.txt, plan.txt, summary.txt, run.txt, revert.sh
-#   the config written: /etc/rsyslog.d/90-ccdc-splunk.conf (sender) or
-#   SPLUNK/etc/apps/ccdc_receiver/local/inputs.conf (receiver)
+#   the config written: /etc/rsyslog.d/90-bt-splunk.conf (sender) or
+#   SPLUNK/etc/apps/bt_receiver/local/inputs.conf (receiver)
 #
 # DEPENDS ON
 #   rsyslog with imfile (sender; installed on most Linux boxes); Splunk
@@ -70,7 +70,7 @@
 #     (apt-get install rsyslog) or forward with systemd-journal-upload.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -78,7 +78,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -180,7 +180,7 @@ go() {
 if [ "$MODE" = receive ]; then
     header "1/2  the Splunk box: a port for the other boxes' logs"
     [ -n "$SH_HOME" ] || { cc_show "$C_RED" "  [x] Splunk not found (give --splunk-home DIR)"; rm -rf "$W"; cc_finish; exit 3; }
-    APPD="$(P "$SH_HOME")/etc/apps/ccdc_receiver"; INP="$APPD/local/inputs.conf"
+    APPD="$(P "$SH_HOME")/etc/apps/bt_receiver"; INP="$APPD/local/inputs.conf"
     _have=$(grep -rls "^\[$PROTO://\(.*:\)\?$PORT\]" "$(P "$SH_HOME")"/etc/system/local/inputs.conf "$(P "$SH_HOME")"/etc/apps/*/local/inputs.conf 2>/dev/null | head -n 1)
     if [ -n "$_have" ]; then cc_show "$C_GRN" "  [ok] Splunk already listens on $PROTO $PORT (${_have#"$R"})"
     else plan "Splunk input $PROTO://$PORT, sourcetype syslog, index $INDEX, host = the sender's address (in ${INP#"$R"})"; fi
@@ -188,9 +188,9 @@ if [ "$MODE" = receive ]; then
     header "2/2  apply"
     if go; then
         mkdir -p "$APPD/local" "$APPD/default"
-        cc_undo_add "remove the ccdc_receiver Splunk app" "rm -rf $(cc_shquote "$APPD")"
-        printf '[install]\nstate = enabled\n\n[ui]\nis_visible = false\nlabel = CCDC log receiver (LX-43)\n' >"$APPD/default/app.conf"
-        printf '# Written by CCDC LX-43: logs from the other boxes.\n[%s://%s]\nsourcetype = syslog\nindex = %s\nconnection_host = ip\ndisabled = 0\n' "$PROTO" "$PORT" "$INDEX" >"$INP"
+        cc_undo_add "remove the bt_receiver Splunk app" "rm -rf $(cc_shquote "$APPD")"
+        printf '[install]\nstate = enabled\n\n[ui]\nis_visible = false\nlabel = log receiver (LX-43)\n' >"$APPD/default/app.conf"
+        printf '# Written by LX-43: logs from the other boxes.\n[%s://%s]\nsourcetype = syslog\nindex = %s\nconnection_host = ip\ndisabled = 0\n' "$PROTO" "$PORT" "$INDEX" >"$INP"
         _ow=$(ls -ld "$(P "$SH_HOME")" | awk '{ print $3 ":" $4 }'); chown -R "$_ow" "$APPD" 2>/dev/null
         cc_show "$C_GRN" "  [+] Splunk input $PROTO://$PORT written"; NOK=1
         if [ -z "$R" ] && cc_ask "Restart Splunk now so it listens (about a minute)?" Y "yes, restart it now" "no, I will restart it later"; then
@@ -225,7 +225,7 @@ for _e in "apache-access|/var/log/apache2/access.log" "apache-error|/var/log/apa
           "nginx-access|/var/log/nginx/access.log" "nginx-error|/var/log/nginx/error.log" "maillog|/var/log/mail.log" "maillog|/var/log/maillog" \
           "dovecot|/var/log/dovecot.log" "roundcube|/var/log/roundcube/errors.log" "roundcube-logins|/var/log/roundcube/userlogins.log" \
           "mysql-error|/var/log/mysql/error.log" "mariadb|/var/log/mariadb/mariadb.log" "postgresql|/var/log/postgresql/postgresql-*-main.log" \
-          "audit|/var/log/audit/audit.log" "splunk|/opt/splunk/var/log/splunk/splunkd.log" "ccdc-session|/var/log/ccdc/sessions.log" "fail2ban|/var/log/fail2ban.log"; do
+          "audit|/var/log/audit/audit.log" "splunk|/opt/splunk/var/log/splunk/splunkd.log" "bt-session|/var/log/bt/sessions.log" "fail2ban|/var/log/fail2ban.log"; do
     _t=${_e%%"|"*}; _f=${_e#*"|"}
     for _x in $(P "$_f"); do [ -f "$_x" ] && printf '%s|%s\n' "$_t" "${_x#"$R"}" >>"$W/files"; done
 done
@@ -242,26 +242,26 @@ case "$LOGS" in
 esac
 
 header "2/3  plan"
-CONF=/etc/rsyslog.d/90-ccdc-splunk.conf
+CONF=/etc/rsyslog.d/90-bt-splunk.conf
 {
-    printf '# Written by CCDC LX-43: send this box'"'"'s logs to Splunk (%s %s:%s).\n# Delete this file and restart rsyslog to stop.\n' "$PROTO" "$TO" "$PORT"
+    printf '# Written by LX-43: send this box'"'"'s logs to Splunk (%s %s:%s).\n# Delete this file and restart rsyslog to stop.\n' "$PROTO" "$TO" "$PORT"
     printf '# Logs wait on disk while the Splunk box cannot be reached.\n'
-    printf 'ruleset(name="ccdc_splunk") {\n    action(type="omfwd" target="%s" port="%s" protocol="%s"\n           queue.type="LinkedList" queue.filename="ccdc_splunk_q" queue.maxDiskSpace="200m" queue.saveOnShutdown="on"\n           action.resumeRetryCount="-1")\n}\n' "$TO" "$PORT" "$PROTO"
+    printf 'ruleset(name="bt_splunk") {\n    action(type="omfwd" target="%s" port="%s" protocol="%s"\n           queue.type="LinkedList" queue.filename="bt_splunk_q" queue.maxDiskSpace="200m" queue.saveOnShutdown="on"\n           action.resumeRetryCount="-1")\n}\n' "$TO" "$PORT" "$PROTO"
     if [ -s "$W/files" ]; then
         # Service log files go only to Splunk (they already have their own files here).
         printf 'module(load="imfile" PollingInterval="5")\n'
         while IFS='|' read -r _t _f; do
-            printf 'input(type="imfile" File="%s" Tag="%s:" Facility="local6" Severity="info" ruleset="ccdc_splunk")\n' "$_f" "$_t"
+            printf 'input(type="imfile" File="%s" Tag="%s:" Facility="local6" Severity="info" ruleset="bt_splunk")\n' "$_f" "$_t"
         done <"$W/files"
     fi
-    printf '# The system logs.\nif prifilt("auth,authpriv.*;*.info;mail.*;cron.*;kern.*") then {\n    call ccdc_splunk\n}\n'
+    printf '# The system logs.\nif prifilt("auth,authpriv.*;*.info;mail.*;cron.*;kern.*") then {\n    call bt_splunk\n}\n'
 } >"$W/conf"
 if [ -f "$(P "$CONF")" ] && cmp -s "$W/conf" "$(P "$CONF")"; then cc_show "$C_GRN" "  [ok] $CONF is already this"
 else plan "write $CONF: send $([ -s "$W/files" ] && echo "the system logs and $(grep -c . "$W/files") service log(s)" || echo 'the system logs') to $TO:$PORT over $PROTO"
     sed 's/^/      /' "$W/conf" | while IFS= read -r _l; do cc_show "$C_GRY" "$_l"; done
     [ -z "$R" ] && plan "restart rsyslog (config checked with rsyslogd -N1 first), then send a test line"
 fi
-_other=$(grep -lE '^[^#]*(@@?[0-9A-Za-z]|type="omfwd")' "$(P /etc/rsyslog.conf)" "$(P /etc/rsyslog.d)"/*.conf 2>/dev/null | grep -v "90-ccdc-splunk.conf" | sed "s|^$R||")
+_other=$(grep -lE '^[^#]*(@@?[0-9A-Za-z]|type="omfwd")' "$(P /etc/rsyslog.conf)" "$(P /etc/rsyslog.d)"/*.conf 2>/dev/null | grep -v "90-bt-splunk.conf" | sed "s|^$R||")
 [ -n "$_other" ] && cc_show "$C_YEL" "  [*] logs are already sent somewhere by: $_other - one of yours? (red team can send copies of logs out too)"
 
 header "3/3  apply"
@@ -291,7 +291,7 @@ if go; then
             fi
             if [ -n "$_p1" ] && [ "$_p1" != "$_p0" ]; then cc_show "$C_GRN" "  [+] rsyslog restarted (it reads the new config)"
             else cc_show "$C_RED" "  [x] rsyslog did not restart (still pid ${_p1:-none}): restart it by hand, then logger test"; NBAD=1; fi
-            TESTID="CCDC-LX43-TEST-$CC_HOST-$(date +%s)"
+            TESTID="BT-LX43-TEST-$CC_HOST-$(date +%s)"
             logger -p auth.info "$TESTID" 2>/dev/null && cc_show "$C_GRN" "  [+] test line sent: search Splunk for $TESTID"
         fi
     else cc_show "$C_GRN" "  [+] wrote $CONF"; NOK=1; fi

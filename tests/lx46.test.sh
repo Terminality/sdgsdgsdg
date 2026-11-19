@@ -11,10 +11,10 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/LX-46-safe-updates.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 O="$T_TMP/out"; S="$T_TMP/stub"; ST="$T_TMP/state"; E="$T_TMP/etc"
 mkdir -p "$S" "$ST" "$E/apt/sources.list.d" "$E/apt/apt.conf.d"
-export STUB_STATE="$ST" CCDC_TEST_ETC="$E" CCDC_TEST_APTCACHE="$T_TMP/cache"
+export STUB_STATE="$ST" BT_TEST_ETC="$E" BT_TEST_APTCACHE="$T_TMP/cache"
 
 cat >"$S/apt-get" <<'EOF'
 #!/bin/sh
@@ -119,7 +119,7 @@ if [ "$(id -u)" = 0 ]; then
         # sudo hold: r; ssh: s; openssl: Enter (u); system (breakme): u; kernel: Enter (s); vim: u;
         # apply: Enter; breakme broke: l (leave)
         printf 'r\ns\n\nu\n\nu\n\nl\n' >"$T_TMP/ans"
-        tt=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --url http://127.0.0.1:1/ --no-restart --no-refresh --no-protected --apply" /dev/null <"$T_TMP/ans" 2>&1)
+        tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --url http://127.0.0.1:1/ --no-restart --no-refresh --no-protected --apply" /dev/null <"$T_TMP/ans" 2>&1)
         t_has "$tt" "[u] update them" "each group lists its answers"
         t_has "$tt" "[r] roll back the system update now" "a broken group lists its answers"
         t_fail "r: the hold is released" grep -qx sudo "$ST/held"

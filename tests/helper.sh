@@ -26,7 +26,7 @@ T_FAILED=0
 T_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 # Scripts never stop to ask a question during the tests, even when the tests
 # are run from a terminal (a test that wants a terminal unsets this).
-CCDC_NO_TTY=1; export CCDC_NO_TTY
+BT_NO_TTY=1; export BT_NO_TTY
 T_TMP="${TMPDIR:-/tmp}/cctest.$$"
 (umask 077; mkdir -p "$T_TMP") || { echo "cannot create $T_TMP" >&2; exit 1; }
 trap 'rm -rf "$T_TMP"' EXIT

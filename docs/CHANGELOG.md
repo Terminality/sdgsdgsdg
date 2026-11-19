@@ -22,7 +22,7 @@ What changed, newest first. Each entry names the scripts touched and how they we
 ## 2026-11-19: AppArmor confinement (LX-44, new)
 
 - **LX-44** puts apache2, nginx, php-fpm and mariadb/mysql under AppArmor in three steps: **complain** (the profile is loaded, nothing is blocked, AppArmor logs what it would block), **learn** (the logged accesses are sorted: normal ones offered for the profile, writes into the site code asked on their own, programs it ran never added - a shell or curl is flagged as a web shell), **enforce** (the service is checked right after; if it stopped answering it goes back to complain, and a revert timer runs).
-- Asked per service by its state: unconfined `[c]omplain` / `[e]nforce` / `[k]eep`; complain `[l]earn` / `[e]nforce` / `[c]` stay; enforced `[k]eep` / `[c]` back. A profile the package ships (php-fpm, mysqld) is used instead of CCDC's.
+- Asked per service by its state: unconfined `[c]omplain` / `[e]nforce` / `[k]eep`; complain `[l]earn` / `[e]nforce` / `[c]` stay; enforced `[k]eep` / `[c]` back. A profile the package ships (php-fpm, mysqld) is used instead of the kit's.
 - Found while testing: AppArmor refuses `w` and `a` in one rule, so learned append+write lines keep only `w`.
 - Review fixes: the learning step never adds secrets or system files (`/etc/shadow`, SSH keys, `/root`, writes into `/etc`, `/usr`, cron) or dangerous capabilities (`sys_module`, `sys_admin`...) - they are shown as `[!]` (before, a web shell reading `/etc/shadow` during complain would have been offered as "normal"); a service started before its profile was loaded is seen (it logs nothing, so 10 quiet minutes no longer make enforce the default) and a restart is offered; the check after enforce only rolls back if the service answered before, and follows HTTPS; `*`, `?`, `[`, `{` in a learned path are escaped; a profile file left from an earlier run is backed up, not deleted, by the undo; the undo calls apparmor_parser by its full path (the revert timer may have a short PATH); the kernel journal is read when the log files have no AppArmor lines.
 - Tested: 51 checks under seven shells and three awks in a fake root; every profile and learned rule is checked by the real AppArmor 4.0 parser. Not yet run on a kernel with AppArmor on.
@@ -44,7 +44,7 @@ What changed, newest first. Each entry names the scripts touched and how they we
 
 ## 2026-11-18: Log shipping to Splunk (LX-43, new)
 
-- **LX-43 --receive** (the Splunk box): a Splunk syslog input (TCP 1514 by default) as its own app, `ccdc_receiver`, then a restart (asked).
+- **LX-43 --receive** (the Splunk box): a Splunk syslog input (TCP 1514 by default) as its own app, `bt_receiver`, then a restart (asked).
 - **LX-43 --send** (every other box): rsyslog sends auth, syslog, kern, mail and cron, plus the service log files it finds (Apache/nginx, mail, Dovecot, Roundcube, MySQL/MariaDB/PostgreSQL, audit, fail2ban), disk-buffered so nothing is lost while Splunk is down. Config checked with `rsyslogd -N1`; then a test line to search for in Splunk. Another forward already configured is flagged.
 - Found while testing: some init scripts have no `restart` and the old rsyslog kept running on the old config, so the script now checks for a NEW rsyslog process and falls back to stop + start; the shipping ruleset must be defined before the file inputs that use it.
 - Tested: 31 checks under seven shells and three awks; live rsyslog to a local listener. The receiver hasn't been run on a real Splunk.
@@ -91,14 +91,14 @@ What changed, newest first. Each entry names the scripts touched and how they we
 - **SV-50** checks every service on the box (web, php-fpm, database, mail, Splunk, SSH, time) the same way: running, masked or disabled, config test, port held by another program, answers the way scoring tests, firewall drops, tampered configs / systemd overrides / package files; and once for the box: disk, inodes, /tmp, out of memory. Each fix is asked; a service is only started on a config that passes its test.
 - `--watch N --auto-restart --apply` keeps checking and restarts what goes down (at most 3 times in 10 minutes each).
 - One script for all services: the checks are the same, only the names, ports and tests differ (a table in the script).
-- Tested: 29 checks with a real Apache under seven shells and three awks (CCDC_TEST_SVC=1); first real use found all eight services down after a container restart and brought them back.
+- Tested: 29 checks with a real Apache under seven shells and three awks (BT_TEST_SVC=1); first real use found all eight services down after a container restart and brought them back.
 
 ## 2026-11-18: Mail password rotation (SV-40, new)
 
 - **SV-40** reads Dovecot's config to find where mail passwords live and changes them there, asking about each user (`[r]andom [s]et [l]ock [k]eep [a]ll`): system accounts that have a mailbox (chpasswd), passwd-file users (new SHA512-CRYPT hash), Postfix sasldb. SQL/LDAP users are listed. Master users, a static passdb and empty passwords are flagged.
 - Each new password is tested with a real IMAP login; a failure puts the old one back. Undo restores every hash.
 - Found while testing: "a OK" from LOGOUT looked like a good login, so the login and logout now use different tags; a PAM login can take a few seconds, so the test waits and tries twice.
-- Tested: 36 checks under seven shells and three awks, including a live Dovecot login test (CCDC_TEST_MAIL=1).
+- Tested: 36 checks under seven shells and three awks, including a live Dovecot login test (BT_TEST_MAIL=1).
 
 ## 2026-11-18: Database password rotation (SV-42, new)
 
@@ -318,7 +318,7 @@ Every Linux script was run for real (dry run or read-only) on Ubuntu 24.04 under
 - LX-39 asks like sqlmap: which box (splunk / webmail / ecomm / other), then one question per fix; Enter takes the default; flags answer in advance; `--batch` takes every default.
 - LX-39 shows a dry-run plan, asks `Apply these N change(s)?`, applies, then asks `Keep these changes?`. A 2-minute revert timer starts with the script (`--timer`, `--no-timer`): unless kept, everything the run changed is undone by a systemd timer or detached job, so it still happens if the session dies. `revert.sh --force` undoes a run later.
 - LX-39 looks like the enum: linpeas-style sections and colours, numbered `safe-fixes-N` folders, `output.txt`, readable `plan.txt` and `fixes.txt`. A file is no longer listed twice in one plan.
-- lib.sh: `--batch`, `cc_ask`, `cc_ask_text`, `cc_color_init`, `cc_show`, `cc_now`, `cc_timer_start`, `cc_timer_finish`; changes are refused once the timer has run out. Tests never wait for answers (`CCDC_NO_TTY`).
+- lib.sh: `--batch`, `cc_ask`, `cc_ask_text`, `cc_color_init`, `cc_show`, `cc_now`, `cc_timer_start`, `cc_timer_finish`; changes are refused once the timer has run out. Tests never wait for answers (`BT_NO_TTY`).
 - Fixed: the SH-05 privesc test failed under ksh (a test bug, not a script bug) and a lint false alarm.
 
 ## 2026-11-14: Linux enum privesc section
@@ -356,7 +356,7 @@ Every Linux script was run for real (dry run or read-only) on Ubuntu 24.04 under
 **Added**
 
 - WN-25 Windows firewall (`roles/windows-ad/WN-25-firewall.ps1`): default-deny inbound with the scored, protected and safe listening ports open, admin and scoring addresses allowed, AD ports on DCs; allow-all and backdoor rules turned off; export first, SYSTEM rollback task, keep script, `-Undo`, `-Remove`, `-Strict`; dropped-connection logging. A rerun removes its own rules that are no longer wanted (so a new `-Exclude` really closes the port); `-Strict` keeps Windows core networking (DHCP, IPv6 neighbour discovery); discovery UDP ports (SSDP, WS-Discovery, mDNS, LLMNR) are not opened.
-- `tests/wn25.Tests.ps1` (stand-in state via `CCDC_WN25_FAKE`).
+- `tests/wn25.Tests.ps1` (stand-in state via `BT_WN25_FAKE`).
 - Review fixes before merge: a rollback task left behind by a run kept from a non-elevated window no longer blocks the next run (kept runs are recognised, the leftover task removed, and a rollback that finds the run kept deletes its task); a second run no longer adds every rule again (an existing rule is kept when identical, replaced when its addresses changed; addresses compared in Windows' mask form).
 
 **Tested**
@@ -368,7 +368,7 @@ Every Linux script was run for real (dry run or read-only) on Ubuntu 24.04 under
 **Added**
 
 - WN-43 Windows safe fixes (`roles/windows-ad/WN-43-safe-fixes.ps1`): 20 safe fixes, 8 more with `-Include`, an undo plan written before every change and `-Undo` to replay it; keys are changed only after a successful backup; Defender and sfc results checked afterwards.
-- `tests/wn43.Tests.ps1` (stand-in state via `CCDC_WN43_FAKE`).
+- `tests/wn43.Tests.ps1` (stand-in state via `BT_WN43_FAKE`).
 
 **Tested**
 
@@ -379,7 +379,7 @@ Every Linux script was run for real (dry run or read-only) on Ubuntu 24.04 under
 **Added**
 
 - WN-20 Windows password rotation (`roles/windows-ad/WN-20-password-rotation.ps1`): local accounts, or domain users on a DC, through ADSI; `-Exclude`/`-Users` with the typo stop, `-Passwords` sheet, service-account and SPN detection, protected list, logon test after each change, pending file against an interrupted change.
-- `tests/wn20.Tests.ps1` (stand-in accounts via `CCDC_WN20_FAKE`).
+- `tests/wn20.Tests.ps1` (stand-in accounts via `BT_WN20_FAKE`).
 
 **Tested**
 
@@ -482,7 +482,7 @@ Every Linux script was run for real (dry run or read-only) on Ubuntu 24.04 under
 **Added**
 
 - SV-14 Database backup (`roles/applications/SV-14-db-backup.sh`): one dump per MySQL/MariaDB database including `mysql`, PostgreSQL roles plus a custom-format dump per database, SQLite files from web roots; each dump verified; SHA256SUMS; RESTORE.txt; `--copy-to`, `--keep`, `--max-mb`.
-- `tests/sv14.test.sh` (the dump-drop-restore checks run only with `CCDC_TEST_DB=1`, so the suite never creates databases on a real server).
+- `tests/sv14.test.sh` (the dump-drop-restore checks run only with `BT_TEST_DB=1`, so the suite never creates databases on a real server).
 
 **Tested**
 

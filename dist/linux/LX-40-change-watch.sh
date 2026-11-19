@@ -88,7 +88,7 @@
 # DEPENDS ON
 #   awk, find, ls, cksum; sha256sum (or shasum / sha256 / openssl); ss or
 #   netstat; systemctl for timers and running services (optional).
-#   Stand-ins for tests: CCDC_SS (ss), CCDC_SYSTEMCTL, CCDC_PROC (/proc).
+#   Stand-ins for tests: BT_SS (ss), BT_SYSTEMCTL, BT_PROC (/proc).
 #
 # TESTED ON
 #   Ubuntu 24.04 under dash, bash, busybox sh, ksh93, mksh and yash, with
@@ -113,7 +113,7 @@
 #   baseline/ and last/ are plain text: diff them by hand.
 # =============================================================================
 
-# >>> CCDC-LIB  (lib/lib.sh 0.2.1 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.2.1 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
@@ -138,9 +138,9 @@
 #   development a script sources this file through the marker block below.  tools/build.sh replaces that block with the contents of this file
 #   so every built script in dist/ is one standalone file.
 #
-#       # >>> CCDC-LIB
+#       # >>> BT-LIB
 #       ...the loader lines from templates/script-template.sh...
-#       # <<< CCDC-LIB
+#       # <<< BT-LIB
 #
 #       while [ $# -gt 0 ]; do
 #           if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
@@ -198,8 +198,8 @@ CC_LIB_VERSION="0.2.1"
 : "${CC_QUIET:=0}"          # 1 = print only WARN and ERROR on screen
 : "${CC_FORCE_SCORED:=0}"   # 1 = allowed to touch a protected *account*
 : "${CC_NO_PROTECTED:=0}"   # 1 = operator accepted running with no list
-: "${CC_OUT:=${CCDC_OUT:-}}"              # output folder (operator-chosen)
-: "${CC_PROTECTED:=${CCDC_PROTECTED:-}}"  # protected-list CSV
+: "${CC_OUT:=${BT_OUT:-}}"              # output folder (operator-chosen)
+: "${CC_PROTECTED:=${BT_PROTECTED:-}}"  # protected-list CSV
 CC_ID="${CC_ID:-CC-00}"
 CC_LOG=""                   # set by cc_init; empty means "log file not open"
 CC_N_DONE=0                 # changes made
@@ -345,11 +345,11 @@ cc_require_root() {
 
 # cc_confirm QUESTION -> ask the operator; returns 0 for yes.
 #   Reads from the terminal, not stdin, so it still works when the script was
-#   piped in.  CCDC_ASSUME_YES=1 answers yes without asking (for fan-out).
+#   piped in.  BT_ASSUME_YES=1 answers yes without asking (for fan-out).
 cc_confirm() {
-    [ "${CCDC_ASSUME_YES:-0}" = 1 ] && return 0
+    [ "${BT_ASSUME_YES:-0}" = 1 ] && return 0
     if [ ! -r /dev/tty ]; then
-        cc_warn "no terminal to ask '$1' - treating as NO (set CCDC_ASSUME_YES=1 to skip questions)"
+        cc_warn "no terminal to ask '$1' - treating as NO (set BT_ASSUME_YES=1 to skip questions)"
         return 1
     fi
     printf '%s [y/N] ' "$1" >/dev/tty
@@ -368,8 +368,8 @@ Common options (every script in the kit):
   --apply            make changes (default is a dry run that changes nothing)
   --dry-run          show what would change (the default)
   --out DIR          folder for logs, CSV files, backups and the undo log
-                     (default: $CCDC_OUT, else ~/ccdc-out)
-  --protected FILE   protected-list CSV (default: $CCDC_PROTECTED, else
+                     (default: $BT_OUT, else ~/bt-out)
+  --protected FILE   protected-list CSV (default: $BT_PROTECTED, else
                      DIR/protected.csv)
   --no-protected     allow --apply without a protected list (dangerous)
   --force-scored     allow changes to accounts on the protected list
@@ -401,7 +401,7 @@ cc_common_flag() {
         --batch)        CC_BATCH=1 ;;
         --quiet)        CC_QUIET=1 ;;
         --debug)        CC_DEBUG=1 ;;
-        --version)      printf 'ccdc kit library %s\n' "$CC_LIB_VERSION"; exit 0 ;;
+        --version)      printf 'kit library %s\n' "$CC_LIB_VERSION"; exit 0 ;;
         *)              return 1 ;;
     esac
     return 0
@@ -440,7 +440,7 @@ cc_init() {
 
     # Output folder: operator-chosen, never inside the kit (rule 11: the kit
     # may be on read-only media and must stay unchanged so its hash matches).
-    [ -n "$CC_OUT" ] || CC_OUT="${HOME:-/root}/ccdc-out"
+    [ -n "$CC_OUT" ] || CC_OUT="${HOME:-/root}/bt-out"
     (umask 077; mkdir -p "$CC_OUT") 2>/dev/null \
         || cc_die 3 "cannot create output folder: $CC_OUT (pass --out DIR)"
     CC_OUT=$(cc_abspath "$CC_OUT")
@@ -710,9 +710,9 @@ cc_choose() {
 }
 
 # _cc_can_ask -> true when there is someone to ask.
-#   CCDC_NO_TTY=1 says there is nobody (the test suite sets it, so tests
+#   BT_NO_TTY=1 says there is nobody (the test suite sets it, so tests
 #   never wait for an answer when run from a terminal).
-_cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${CCDC_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
+_cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${BT_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
 
 # cc_ask QUESTION DEFAULT [YES-MEANS] [NO-MEANS] -> 0 for yes, 1 for no.
 #   DEFAULT is Y or N.  Shown like cc_choose, with what each answer does:
@@ -806,8 +806,8 @@ REVERT
     CC_TIMER_DEADLINE=$(( $(cc_now) + _cc_ts_s ))
     CC_TIMER_HOW=""
     # 1. A systemd transient timer: survives logout and a killed session.
-    if [ "${CCDC_TIMER_METHOD:-}" != background ] && cc_is_root && [ -d /run/systemd/system ] && cc_have systemd-run; then
-        CC_TIMER_ID="ccdc-revert-$$-$(cc_now)"
+    if [ "${BT_TIMER_METHOD:-}" != background ] && cc_is_root && [ -d /run/systemd/system ] && cc_have systemd-run; then
+        CC_TIMER_ID="bt-revert-$$-$(cc_now)"
         if systemd-run --quiet --unit "$CC_TIMER_ID" --on-active="${_cc_ts_s}s" --timer-property=AccuracySec=1s /bin/sh "$_cc_ts_r" >>"$CC_LOG" 2>&1; then
             CC_TIMER_HOW=systemd
         fi
@@ -1349,14 +1349,14 @@ cc_flag_report() {
 # cc_verify_self
 #   Rule 15: the kit's hash is checked before each run.  If a MANIFEST.sha256
 #   (written by tools/build.sh) sits in the script's folder or one of the two
-#   folders above it, or CCDC_MANIFEST points to one, the running script's
+#   folders above it, or BT_MANIFEST points to one, the running script's
 #   hash must match its line there.  A mismatch stops the script: the file on
 #   this host is not the one you built, and a red team may have edited it.
-#   CCDC_SKIP_VERIFY=1 turns the check off (for development).
+#   BT_SKIP_VERIFY=1 turns the check off (for development).
 cc_verify_self() {
-    [ "${CCDC_SKIP_VERIFY:-0}" = 1 ] && { cc_debug "verify: skipped (CCDC_SKIP_VERIFY=1)"; return 0; }
+    [ "${BT_SKIP_VERIFY:-0}" = 1 ] && { cc_debug "verify: skipped (BT_SKIP_VERIFY=1)"; return 0; }
     [ -f "$0" ] || { cc_debug "verify: script was not started from a file, nothing to hash"; return 0; }
-    _cc_vs_man=${CCDC_MANIFEST:-}
+    _cc_vs_man=${BT_MANIFEST:-}
     if [ -z "$_cc_vs_man" ]; then
         for _cc_vs_d in "$CC_KIT" "$CC_KIT/.." "$CC_KIT/../.."; do
             if [ -r "$_cc_vs_d/MANIFEST.sha256" ]; then _cc_vs_man="$_cc_vs_d/MANIFEST.sha256"; break; fi
@@ -1390,7 +1390,7 @@ cc_finish() {
     [ -n "$CC_LOG" ] && cc_info "log: $CC_LOG"
     exit "$_cc_fin_rc"
 }
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -1478,10 +1478,10 @@ IS_ROOT=0; cc_is_root && IS_ROOT=1
 [ -n "$STATE" ] || STATE="$CC_OUT/watch-$CC_HOST"
 (umask 077; mkdir -p "$STATE") || cc_die 3 "cannot create $STATE"
 STATE=$(cc_abspath "$STATE")
-SS=${CCDC_SS:-$(cc_which ss)} || SS=""
-SYSCTL=${CCDC_SYSTEMCTL:-}
+SS=${BT_SS:-$(cc_which ss)} || SS=""
+SYSCTL=${BT_SYSTEMCTL:-}
 [ -z "$SYSCTL" ] && [ -z "$R" ] && [ "$CC_INIT" = systemd ] && SYSCTL=$(cc_which systemctl)
-PROCROOT=${CCDC_PROC:-}
+PROCROOT=${BT_PROC:-}
 [ -z "$PROCROOT" ] && [ -z "$R" ] && PROCROOT=/proc
 ALERTS="$STATE/alerts.log"
 W="$CC_RUN_DIR/.work"; mkdir -p "$W"

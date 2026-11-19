@@ -79,7 +79,7 @@
 #
 # DEPENDS ON
 #   sshd (to read the current settings, test and reload), ssh-keygen
-#   (fingerprints), awk.  CCDC_SSHD may name a stand-in sshd (the tests).
+#   (fingerprints), awk.  BT_SSHD may name a stand-in sshd (the tests).
 #
 # TESTED ON
 #   Ubuntu 24.04 with OpenSSH 9.6 under dash, bash, busybox sh, ksh93, mksh
@@ -99,7 +99,7 @@
 #   sshd -t output are in the log.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -107,7 +107,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -195,7 +195,7 @@ grep -v '\[NOTE\]\|\[DEBUG\]' "$CC_LOG" >"$OUTF" 2>/dev/null || : >"$OUTF"
 CC_TEE=$OUTF
 header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
 CONF="$R/etc/ssh/sshd_config"
-SSHD=${CCDC_SSHD:-$(cc_which sshd)} || SSHD=""
+SSHD=${BT_SSHD:-$(cc_which sshd)} || SSHD=""
 KEYGEN=$(cc_which ssh-keygen) || KEYGEN=""
 : >"$W/report"
 report() { printf '%s\n' "$*" >>"$W/report"; }
@@ -210,7 +210,7 @@ header "1/5  how SSH is set up now"
 # Effective settings: sshd -T on a live box, else the config file (first
 # value outside Match, which is what sshd uses), else sshd's default.
 : >"$W/eff"
-if [ -z "$R" ] && [ -n "$SSHD" ] && [ -z "${CCDC_SSHD:-}" ]; then
+if [ -z "$R" ] && [ -n "$SSHD" ] && [ -z "${BT_SSHD:-}" ]; then
     "$SSHD" -T 2>/dev/null >"$W/eff"
     _ver=$("$SSHD" -V 2>&1 | head -n 1)
     [ -n "$_ver" ] && cc_show "" "  sshd:     $_ver"
@@ -484,9 +484,9 @@ case "$ROOTMODE" in yes) printf 'PermitRootLogin yes\n' >>"$W/lines" ;; no) prin
 header "4/5  the plan"
 SCSV=$(cc_csv_new settings "setting,before,after,status")
 NSET=0
-{ printf '# >>> CCDC LX-22 (sshd uses the first value it reads, so this block wins)\n'; cat "$W/lines"; printf '# <<< CCDC LX-22\n'; } >"$W/block"  # text, not a here-string: posix-ok
+{ printf '# >>> BT LX-22 (sshd uses the first value it reads, so this block wins)\n'; cat "$W/lines"; printf '# <<< BT LX-22\n'; } >"$W/block"  # text, not a here-string: posix-ok
 while read -r _k _v; do
-    # The value in effect now: the first one sshd reads (an older CCDC block included).
+    # The value in effect now: the first one sshd reads (an older LX-22 block included).
     _b=$(awk -v k="$(printf '%s' "$_k" | tr 'A-Z' 'a-z')" 'tolower($1) == "match" { exit } tolower($1) == k { $1 = ""; sub(/^ /, ""); print; exit }' "$CONF" 2>/dev/null)
     if [ "$(printf '%s' "$_b" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$_v" | tr 'A-Z' 'a-z')" ]; then _st="already ok"
     else _st=$([ "$CC_APPLY" = 1 ] && echo changed || echo "would change"); NSET=$((NSET + 1)); cc_show "$C_YEL" "  [~] $_k: ${_b:-(default)} -> $_v"; fi
@@ -514,7 +514,7 @@ done <"$W/keydec"
 # Candidate config: our block, then the file without any older block.
 _cfg_status="not changed"
 if [ -f "$CONF" ]; then
-    awk '/^# >>> CCDC LX-22/ { skip = 1 } !skip { print } /^# <<< CCDC LX-22/ { skip = 0 }' "$CONF" >"$W/rest"  # awk regex: posix-ok
+    awk '/^# >>> BT LX-22/ { skip = 1 } !skip { print } /^# <<< BT LX-22/ { skip = 0 }' "$CONF" >"$W/rest"  # awk regex: posix-ok
     cat "$W/block" "$W/rest" >"$W/sshd_config.new"
     if cmp -s "$W/sshd_config.new" "$CONF"; then _cfg_status="already in place"
     elif [ -z "$SSHD" ]; then _cfg_status="not changed: sshd not found, so the new config cannot be tested"

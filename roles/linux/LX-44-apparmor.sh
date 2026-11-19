@@ -29,8 +29,8 @@
 #                 blocked.  The service is checked right after; if it
 #                 stopped answering it goes back to complain on its own.
 #
-#   Profiles: CCDC's own for apache2, nginx, php-fpm and mariadb/mysql
-#   (written to /etc/apparmor.d/ccdc-*), or the one a package already ships
+#   Profiles: the kit's own for apache2, nginx, php-fpm and mariadb/mysql
+#   (written to /etc/apparmor.d/bt-*), or the one a package already ships
 #   (php-fpm, mysqld) - then only its mode is changed.  Mail (Postfix,
 #   Dovecot) runs many helper programs: not covered here.
 #   On Red Hat / Rocky / CentOS (SELinux, not AppArmor) the SELinux mode is
@@ -68,7 +68,7 @@
 #
 # DEPENDS ON
 #   apparmor_parser (the apparmor package: installed by default on Ubuntu
-#   and Debian).  apparmor-utils is NOT needed.  CCDC_AA_PARSER may name a
+#   and Debian).  apparmor-utils is NOT needed.  BT_AA_PARSER may name a
 #   stand-in (tests).
 #
 # TESTED ON
@@ -86,7 +86,7 @@
 #   - A restart is needed for a running service to pick up a new profile.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -94,7 +94,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -150,9 +150,9 @@ CC_TEE=$OUTF
 W="$CC_RUN_DIR/.work"; mkdir -p "$W"
 header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
 P() { printf '%s%s' "$R" "$1"; }
-AAD=$(P /etc/apparmor.d); STATE=$(P /var/lib/ccdc/apparmor)
+AAD=$(P /etc/apparmor.d); STATE=$(P /var/lib/bt/apparmor)
 # A full path: the revert timer may run the undo lines with a short PATH.
-PARSER=${CCDC_AA_PARSER:-$(cc_which apparmor_parser 2>/dev/null || echo apparmor_parser)}
+PARSER=${BT_AA_PARSER:-$(cc_which apparmor_parser 2>/dev/null || echo apparmor_parser)}
 
 cc_show "$C_CYN" "LX-44 AppArmor confinement | host $CC_HOST | results in $CC_RUN_DIR"
 cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it   ${C_GRN}[ok]${C_OFF} fine   ${C_YEL}[~] would change${C_OFF}   ${C_GRN}[+] changed${C_OFF}   ${C_RED}[x] failed${C_OFF}"
@@ -178,10 +178,10 @@ cc_show "$C_GRN" "  [ok] AppArmor is on ($_np profiles loaded)"
 # ---- The services ---------------------------------------------------------------------------
 # kind|binaries (first found)|our profile name|service names|check
 cat >"$W/svcs" <<'EOF'
-apache2|/usr/sbin/apache2|ccdc-apache2|apache2|http
-nginx|/usr/sbin/nginx|ccdc-nginx|nginx|http
-php-fpm|/usr/sbin/php-fpm8.4 /usr/sbin/php-fpm8.3 /usr/sbin/php-fpm8.2 /usr/sbin/php-fpm8.1 /usr/sbin/php-fpm8.0 /usr/sbin/php-fpm7.4 /usr/sbin/php-fpm|ccdc-php-fpm|php8.4-fpm php8.3-fpm php8.2-fpm php8.1-fpm php8.0-fpm php7.4-fpm php-fpm|http
-mysql|/usr/sbin/mariadbd /usr/sbin/mysqld|ccdc-mysqld|mariadb mysql|mysql
+apache2|/usr/sbin/apache2|bt-apache2|apache2|http
+nginx|/usr/sbin/nginx|bt-nginx|nginx|http
+php-fpm|/usr/sbin/php-fpm8.4 /usr/sbin/php-fpm8.3 /usr/sbin/php-fpm8.2 /usr/sbin/php-fpm8.1 /usr/sbin/php-fpm8.0 /usr/sbin/php-fpm7.4 /usr/sbin/php-fpm|bt-php-fpm|php8.4-fpm php8.3-fpm php8.2-fpm php8.1-fpm php8.0-fpm php7.4-fpm php-fpm|http
+mysql|/usr/sbin/mariadbd /usr/sbin/mysqld|bt-mysqld|mariadb mysql|mysql
 EOF
 # The writable folders for the web: upload, cache and session folders of the apps.
 {
@@ -195,9 +195,9 @@ EOF
 } | grep . | sort -u >"$W/writable"
 # kernel_mode PROFILE -> enforce | complain | (nothing: not loaded)
 kernel_mode() { awk -v p="$1" '{ n = $0; sub(/ \(.*$/, "", n) } n == p { m = $NF; gsub(/[()]/, "", m); print m; exit }' "$(P /sys/kernel/security/apparmor/profiles)" 2>/dev/null; }
-# proc_label KIND -> the AppArmor label of the running service ("unconfined", "ccdc-apache2 (complain)")
+# proc_label KIND -> the AppArmor label of the running service ("unconfined", "bt-apache2 (complain)")
 proc_label() {
-    if [ -n "$R" ]; then cat "$R/run/ccdc-test/$1.label" 2>/dev/null; return; fi
+    if [ -n "$R" ]; then cat "$R/run/bt-test/$1.label" 2>/dev/null; return; fi
     _pid=$(pgrep -o -x "$(basename "$2")" 2>/dev/null)
     [ -n "$_pid" ] || return 0
     cat "/proc/$_pid/attr/apparmor/current" 2>/dev/null || cat "/proc/$_pid/attr/current" 2>/dev/null
@@ -207,7 +207,7 @@ proc_label() {
 packaged() {
     for _pf in "$AAD"/*; do
         [ -f "$_pf" ] || continue
-        case "$_pf" in */ccdc-*|*.dpkg-*|*~) continue ;; esac
+        case "$_pf" in */bt-*|*.dpkg-*|*~) continue ;; esac
         awk -v b="$1" -v f="$_pf" '
             { sub(/^[ \t]+/, "") }
             /^profile[ \t]/ { n = $2; a = $3 } /^\// { n = $1; a = $1 }
@@ -222,7 +222,7 @@ packaged() {
 # write_profile KIND BIN NAME MODE -> the profile text on stdout
 write_profile() {
     _flags=""; [ "$4" = complain ] && _flags=" flags=(complain)"  # posix-ok: AppArmor text, not an array
-    printf '# Written by CCDC LX-44 (%s).  Learned rules go in local/%s.\n# Delete this file and run "apparmor_parser -R" on it to remove.\nabi <abi/3.0>,\ninclude <tunables/global>\n\nprofile %s %s%s {\n' "$1" "$3" "$3" "$2" "$_flags"
+    printf '# Written by LX-44 (%s).  Learned rules go in local/%s.\n# Delete this file and run "apparmor_parser -R" on it to remove.\nabi <abi/3.0>,\ninclude <tunables/global>\n\nprofile %s %s%s {\n' "$1" "$3" "$3" "$2" "$_flags"
     printf '  include <abstractions/base>\n  include <abstractions/nameservice>\n  include <abstractions/openssl>\n  include <abstractions/ssl_certs>\n'
     case "$1" in
         apache2|nginx|php-fpm)
@@ -313,7 +313,7 @@ while IFS='|' read -r _kind _bins _name _units _chk; do
     _bin=""; for _b in $_bins; do [ -x "$(P "$_b")" ] && { _bin=$_b; break; }; done
     [ -n "$_bin" ] || continue
     _seen=1
-    _pk=$(packaged "$_bin"); _pname=$_name; _src=ccdc
+    _pk=$(packaged "$_bin"); _pname=$_name; _src=bt
     [ -n "$_pk" ] && { _src=package; _pname=${_pk#*"|"}; }
     _km=$(kernel_mode "$_pname"); _lab=$(proc_label "$_kind" "$_bin")
     _state=unconfined
@@ -321,7 +321,7 @@ while IFS='|' read -r _kind _bins _name _units _chk; do
     _since=$(cat "$STATE/$_pname.$_state" 2>/dev/null)
     printf '%-9s %-11s %-8s %s\n' "$_kind" "$_state" "$_src" "$_pname" >>"$W/status"
     cc_show "" ""
-    cc_show "$C_CYN" "  $_kind ($_bin): $_state$([ "$_src" = package ] && echo ", the package's profile $_pname" || echo ", CCDC profile $_name")$([ -n "$_lab" ] && echo "; the running service: $_lab")"
+    cc_show "$C_CYN" "  $_kind ($_bin): $_state$([ "$_src" = package ] && echo ", the package's profile $_pname" || echo ", kit profile $_name")$([ -n "$_lab" ] && echo "; the running service: $_lab")"
     _ans=""
     # Loaded, but the running service started before it: AppArmor neither logs
     # nor blocks anything for it until it is restarted.
@@ -361,7 +361,7 @@ while IFS='|' read -r _kind _bins _name _units _chk; do
             _d=c; if [ $((_nn + _nw)) -gt 0 ]; then _d=l; elif [ $((_np + _nb)) -gt 0 ] || [ "$_stale" = y ]; then _d=c; elif [ -n "$_since" ] && [ $((NOW - _since)) -ge 600 ]; then _d=e; fi
             [ "$_src" = package ] && [ "$_d" = l ] && _d=c
             set -- "c=stay in complain (keep using the site, look again later)" "e=enforce: block everything not in the profile$([ $((_nn + _nw + _np)) -gt 0 ] && echo ' (it would block the logged things)')"
-            [ "$_src" = ccdc ] && [ $((_nn + _nw)) -gt 0 ] && set -- "l=learn: add the normal ones to its profile, then look again later" "$@"
+            [ "$_src" = bt ] && [ $((_nn + _nw)) -gt 0 ] && set -- "l=learn: add the normal ones to its profile, then look again later" "$@"
             cc_choose "$_kind is in complain mode: what now?" "$_d" "$@"
             _ans=$CC_CHOICE
             if [ "$_ans" = l ]; then
@@ -398,7 +398,7 @@ done <"$W/plan"
 
 # ---- Apply ----------------------------------------------------------------------------------
 header "4/5  apply"
-load() { if [ -n "$R" ] && [ -z "${CCDC_AA_PARSER:-}" ]; then return 0; fi; "$PARSER" "$@"; }
+load() { if [ -n "$R" ] && [ -z "${BT_AA_PARSER:-}" ]; then return 0; fi; "$PARSER" "$@"; }
 svc_restart() {
     [ -z "$R" ] || return 0
     for _u in $1; do
@@ -415,9 +415,9 @@ check() {   # check KIND -> 0 still answers
         *) _s=$(curl -k -s -m 10 -o /dev/null -w '%{http_code}' "$URL" 2>/dev/null); case "$_s" in [23]??|401|403|404) return 0 ;; *) return 1 ;; esac ;;
     esac
 }
-# set_mode FILE NAME ccdc|package complain|enforce -> switch and reload
+# set_mode FILE NAME bt|package complain|enforce -> switch and reload
 set_mode() {
-    if [ "$3" = ccdc ]; then
+    if [ "$3" = bt ]; then
         if [ "$4" = complain ]; then sed "s|^\(profile $2 [^ {]*\) {|\1 flags=(complain) {|" "$1" >"$1.n"  # posix-ok: AppArmor text
         else sed 's/ flags=(complain)//' "$1" >"$1.n"; fi  # posix-ok: AppArmor text
         cat "$1.n" >"$1"; rm -f "$1.n"
@@ -460,12 +460,12 @@ elif cc_ask "Apply these $NCH change(s)?" Y "yes, apply them$(grep -q '|e|' "$W/
                 if [ -z "$R" ]; then svc_restart "$_units" >>"$CC_LOG" 2>&1; sleep 2; [ "$(proc_label "$_kind" "$_bin")" = unconfined ] && { _ok=0; cc_show "$C_RED" "    [x] still unconfined after the restart (another program name? see $CC_LOG)"; }; fi ;;
             unconfined:c|unconfined:e)
                 _mode=complain; [ "$_ans" = e ] && _mode=enforce
-                if [ "$_src" = ccdc ]; then
+                if [ "$_src" = bt ]; then
                     if [ -f "$_pf" ]; then
                         # a file from an earlier run, not loaded now: put it back as it was
                         cc_undo_add "unload $_pname" "$_qp -R $_qf 2>/dev/null; $(svc_restart_cmd "$_units")"
                         cc_backup_file "$_pf" >/dev/null
-                    else cc_undo_add "remove the CCDC profile $_pname" "$_qp -R $_qf 2>/dev/null; rm -f $_qf; $(svc_restart_cmd "$_units")"; fi
+                    else cc_undo_add "remove the kit profile $_pname" "$_qp -R $_qf 2>/dev/null; rm -f $_qf; $(svc_restart_cmd "$_units")"; fi
                     write_profile "$_kind" "$_bin" "$_pname" "$_mode" >"$_pf"
                     [ -f "$AAD/local/$_pname" ] || : >"$AAD/local/$_pname"
                     load -r -K "$_pf" >>"$CC_LOG" 2>&1 </dev/null || { _ok=0; rm -f "$_pf"; cc_show "$C_RED" "    [x] apparmor_parser refused the profile: $CC_LOG"; }
@@ -483,12 +483,12 @@ elif cc_ask "Apply these $NCH change(s)?" Y "yes, apply them$(grep -q '|e|' "$W/
                 _lf="$AAD/local/$_pname"
                 cc_undo_add "reload $_pname" "$_qp -r -K $_qf"
                 if [ -f "$_lf" ]; then cc_backup_file "$_lf" >/dev/null; else : >"$_lf"; cc_undo_add "empty the learned rules for $_pname" ": > $(cc_shquote "$_lf")"; fi
-                { printf '# learned by CCDC LX-44 %s\n' "$(date '+%F %T')"; sed 's/^/  /' "$W/plans/$_kind.add"; } >>"$_lf"
+                { printf '# learned by LX-44 %s\n' "$(date '+%F %T')"; sed 's/^/  /' "$W/plans/$_kind.add"; } >>"$_lf"
                 load -r -K "$_pf" >>"$CC_LOG" 2>&1 </dev/null || { _ok=0; cc_show "$C_RED" "    [x] apparmor_parser refused the learned rules: they are in $_lf"; }
                 [ "$_ok" = 1 ] && date +%s >"$STATE/$_pname.complain" ;;
             complain:e|enforce:c)
                 _to=enforce; [ "$_ans" = c ] && _to=complain
-                if [ "$_src" = ccdc ]; then
+                if [ "$_src" = bt ]; then
                     cc_undo_add "reload $_pname" "$_qp -r -K $_qf"
                     cc_backup_file "$_pf" >/dev/null
                 else
@@ -515,7 +515,7 @@ header "5/5  summary"
     [ -s "$CC_RUN_DIR/plan.txt" ] && { printf 'Changes%s:\n' "$([ "$APPLIED" = 1 ] || echo ' planned')"; sed 's/^/  /' "$CC_RUN_DIR/plan.txt"; }
     [ "$APPLIED" = 1 ] && printf 'Done: %d   Failed: %d\n' "$NOK" "$NBAD"
     printf '\nThe steps: complain -> use the site normally for a while (log in, buy, upload) -> run this again: learn -> again: enforce.\n'
-    printf 'Learned rules live in %s/local/ccdc-*; the profiles in %s/ccdc-*.\n' "${AAD#"$R"}" "${AAD#"$R"}"
+    printf 'Learned rules live in %s/local/bt-*; the profiles in %s/bt-*.\n' "${AAD#"$R"}" "${AAD#"$R"}"
     [ "$APPLIED" = 1 ] && [ -f "$CC_RUN_DIR/revert.sh" ] && printf 'Undo this run: sh %s/revert.sh --force\n' "$CC_RUN_DIR"
     [ "$APPLIED" = 1 ] && [ ! -f "$CC_RUN_DIR/revert.sh" ] && printf 'Undo: the lines in %s/undo-%s.log\n' "$CC_OUT" "$CC_HOST"
 } >"$CC_RUN_DIR/summary.txt"

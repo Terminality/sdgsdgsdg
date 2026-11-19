@@ -11,7 +11,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/applications/SV-32-tls-check.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 O="$T_TMP/out"; F="$T_TMP/root"; K="$T_TMP/keys"
 command -v openssl >/dev/null 2>&1 || { echo "openssl missing: skipped"; t_done; exit 0; }
 fpr() { openssl x509 -in "$1" -noout -fingerprint -sha256 | sed 's/.*=//'; }
@@ -106,7 +106,7 @@ if command -v script >/dev/null 2>&1; then
     mkroot; O2="$T_TMP/out2"
     # web: l; mail: n; weak (smtp): l; weak key perm: f; apply: Enter
     printf 'l\nn\nl\nf\n\n' >"$T_TMP/ans"
-    tt=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --out '$O2' --no-color --root '$F' --no-protected --no-probe --apply" /dev/null <"$T_TMP/ans" 2>&1)
+    tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --out '$O2' --no-color --root '$F' --no-protected --no-probe --apply" /dev/null <"$T_TMP/ans" 2>&1)
     t_has "$tt" "[n] new self-signed certificate and key" "a certificate lists its answers"
     t_has "$tt" "[f] fix it: only the owner" "a key lists its answers"
     t_eq "$(fpr "$F/etc/ssl/certs/web.pem")" "$(fpr "$K/web.pem")" "l: the web certificate stays"

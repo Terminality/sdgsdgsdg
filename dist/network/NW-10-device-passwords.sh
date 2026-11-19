@@ -25,22 +25,22 @@
 #   safe CLI for it) - change those in the web GUI; they are listed.
 #
 # USAGE
-#   CCDC_NET_PASS='current' sh NW-10-device-passwords.sh --hosts hosts.csv          dry run
-#   CCDC_NET_PASS='current' sh NW-10-device-passwords.sh --hosts hosts.csv --apply
+#   BT_NET_PASS='current' sh NW-10-device-passwords.sh --hosts hosts.csv          dry run
+#   BT_NET_PASS='current' sh NW-10-device-passwords.sh --hosts hosts.csv --apply
 #   sh NW-10-device-passwords.sh --device r1,10.0.0.1,cisco-ios,admin --ask-password --apply
 #
 # OPTIONS
 #   --hosts FILE / --device SPEC   the devices, as for NW-01
 #   --user NAME          default login account (admin)
-#   --ask-password       ask for the CURRENT password (else $CCDC_NET_PASS)
-#   --new-password-env   use $CCDC_NET_NEWPASS as the new password for every
+#   --ask-password       ask for the CURRENT password (else $BT_NET_PASS)
+#   --new-password-env   use $BT_NET_NEWPASS as the new password for every
 #                        device (default: a new random one per device)
 #   --passwords FILE     chosen new passwords: "device,password" lines (the
 #                        device's name or address).  Devices not in the file
-#                        get a random one (or $CCDC_NET_NEWPASS).  Same
+#                        get a random one (or $BT_NET_NEWPASS).  Same
 #                        characters as below, 8 or more.  Names in the file
 #                        that are not devices in this run are listed
-#   --enable-env         Cisco: log in through enable with $CCDC_NET_ENABLE
+#   --enable-env         Cisco: log in through enable with $BT_NET_ENABLE
 #   --enable-too         Cisco: also set a new enable secret (verified too)
 #   --length N           random password length (default 16, minimum 12)
 #   --wait N             seconds to let a change apply before testing it
@@ -67,8 +67,8 @@
 #   address; protected account = the login account, unless --force-scored).
 #
 # DEPENDS ON
-#   ssh, sshpass, mkfifo; openssl for Palo Alto (password hash).  CCDC_SSH and
-#   CCDC_SSHPASS may name stand-ins (the tests use them).
+#   ssh, sshpass, mkfifo; openssl for Palo Alto (password hash).  BT_SSH and
+#   BT_SSHPASS may name stand-ins (the tests use them).
 #
 # TESTED ON
 #   Live against a real OpenSSH server (vendor linux): the password changed,
@@ -91,7 +91,7 @@
 #   NOT logged: it can echo the new password.
 # =============================================================================
 
-# >>> CCDC-LIB  (lib/lib.sh 0.2.1 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.2.1 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
@@ -116,9 +116,9 @@
 #   development a script sources this file through the marker block below.  tools/build.sh replaces that block with the contents of this file
 #   so every built script in dist/ is one standalone file.
 #
-#       # >>> CCDC-LIB
+#       # >>> BT-LIB
 #       ...the loader lines from templates/script-template.sh...
-#       # <<< CCDC-LIB
+#       # <<< BT-LIB
 #
 #       while [ $# -gt 0 ]; do
 #           if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
@@ -176,8 +176,8 @@ CC_LIB_VERSION="0.2.1"
 : "${CC_QUIET:=0}"          # 1 = print only WARN and ERROR on screen
 : "${CC_FORCE_SCORED:=0}"   # 1 = allowed to touch a protected *account*
 : "${CC_NO_PROTECTED:=0}"   # 1 = operator accepted running with no list
-: "${CC_OUT:=${CCDC_OUT:-}}"              # output folder (operator-chosen)
-: "${CC_PROTECTED:=${CCDC_PROTECTED:-}}"  # protected-list CSV
+: "${CC_OUT:=${BT_OUT:-}}"              # output folder (operator-chosen)
+: "${CC_PROTECTED:=${BT_PROTECTED:-}}"  # protected-list CSV
 CC_ID="${CC_ID:-CC-00}"
 CC_LOG=""                   # set by cc_init; empty means "log file not open"
 CC_N_DONE=0                 # changes made
@@ -323,11 +323,11 @@ cc_require_root() {
 
 # cc_confirm QUESTION -> ask the operator; returns 0 for yes.
 #   Reads from the terminal, not stdin, so it still works when the script was
-#   piped in.  CCDC_ASSUME_YES=1 answers yes without asking (for fan-out).
+#   piped in.  BT_ASSUME_YES=1 answers yes without asking (for fan-out).
 cc_confirm() {
-    [ "${CCDC_ASSUME_YES:-0}" = 1 ] && return 0
+    [ "${BT_ASSUME_YES:-0}" = 1 ] && return 0
     if [ ! -r /dev/tty ]; then
-        cc_warn "no terminal to ask '$1' - treating as NO (set CCDC_ASSUME_YES=1 to skip questions)"
+        cc_warn "no terminal to ask '$1' - treating as NO (set BT_ASSUME_YES=1 to skip questions)"
         return 1
     fi
     printf '%s [y/N] ' "$1" >/dev/tty
@@ -346,8 +346,8 @@ Common options (every script in the kit):
   --apply            make changes (default is a dry run that changes nothing)
   --dry-run          show what would change (the default)
   --out DIR          folder for logs, CSV files, backups and the undo log
-                     (default: $CCDC_OUT, else ~/ccdc-out)
-  --protected FILE   protected-list CSV (default: $CCDC_PROTECTED, else
+                     (default: $BT_OUT, else ~/bt-out)
+  --protected FILE   protected-list CSV (default: $BT_PROTECTED, else
                      DIR/protected.csv)
   --no-protected     allow --apply without a protected list (dangerous)
   --force-scored     allow changes to accounts on the protected list
@@ -379,7 +379,7 @@ cc_common_flag() {
         --batch)        CC_BATCH=1 ;;
         --quiet)        CC_QUIET=1 ;;
         --debug)        CC_DEBUG=1 ;;
-        --version)      printf 'ccdc kit library %s\n' "$CC_LIB_VERSION"; exit 0 ;;
+        --version)      printf 'kit library %s\n' "$CC_LIB_VERSION"; exit 0 ;;
         *)              return 1 ;;
     esac
     return 0
@@ -418,7 +418,7 @@ cc_init() {
 
     # Output folder: operator-chosen, never inside the kit (rule 11: the kit
     # may be on read-only media and must stay unchanged so its hash matches).
-    [ -n "$CC_OUT" ] || CC_OUT="${HOME:-/root}/ccdc-out"
+    [ -n "$CC_OUT" ] || CC_OUT="${HOME:-/root}/bt-out"
     (umask 077; mkdir -p "$CC_OUT") 2>/dev/null \
         || cc_die 3 "cannot create output folder: $CC_OUT (pass --out DIR)"
     CC_OUT=$(cc_abspath "$CC_OUT")
@@ -688,9 +688,9 @@ cc_choose() {
 }
 
 # _cc_can_ask -> true when there is someone to ask.
-#   CCDC_NO_TTY=1 says there is nobody (the test suite sets it, so tests
+#   BT_NO_TTY=1 says there is nobody (the test suite sets it, so tests
 #   never wait for an answer when run from a terminal).
-_cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${CCDC_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
+_cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${BT_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
 
 # cc_ask QUESTION DEFAULT [YES-MEANS] [NO-MEANS] -> 0 for yes, 1 for no.
 #   DEFAULT is Y or N.  Shown like cc_choose, with what each answer does:
@@ -784,8 +784,8 @@ REVERT
     CC_TIMER_DEADLINE=$(( $(cc_now) + _cc_ts_s ))
     CC_TIMER_HOW=""
     # 1. A systemd transient timer: survives logout and a killed session.
-    if [ "${CCDC_TIMER_METHOD:-}" != background ] && cc_is_root && [ -d /run/systemd/system ] && cc_have systemd-run; then
-        CC_TIMER_ID="ccdc-revert-$$-$(cc_now)"
+    if [ "${BT_TIMER_METHOD:-}" != background ] && cc_is_root && [ -d /run/systemd/system ] && cc_have systemd-run; then
+        CC_TIMER_ID="bt-revert-$$-$(cc_now)"
         if systemd-run --quiet --unit "$CC_TIMER_ID" --on-active="${_cc_ts_s}s" --timer-property=AccuracySec=1s /bin/sh "$_cc_ts_r" >>"$CC_LOG" 2>&1; then
             CC_TIMER_HOW=systemd
         fi
@@ -1327,14 +1327,14 @@ cc_flag_report() {
 # cc_verify_self
 #   Rule 15: the kit's hash is checked before each run.  If a MANIFEST.sha256
 #   (written by tools/build.sh) sits in the script's folder or one of the two
-#   folders above it, or CCDC_MANIFEST points to one, the running script's
+#   folders above it, or BT_MANIFEST points to one, the running script's
 #   hash must match its line there.  A mismatch stops the script: the file on
 #   this host is not the one you built, and a red team may have edited it.
-#   CCDC_SKIP_VERIFY=1 turns the check off (for development).
+#   BT_SKIP_VERIFY=1 turns the check off (for development).
 cc_verify_self() {
-    [ "${CCDC_SKIP_VERIFY:-0}" = 1 ] && { cc_debug "verify: skipped (CCDC_SKIP_VERIFY=1)"; return 0; }
+    [ "${BT_SKIP_VERIFY:-0}" = 1 ] && { cc_debug "verify: skipped (BT_SKIP_VERIFY=1)"; return 0; }
     [ -f "$0" ] || { cc_debug "verify: script was not started from a file, nothing to hash"; return 0; }
-    _cc_vs_man=${CCDC_MANIFEST:-}
+    _cc_vs_man=${BT_MANIFEST:-}
     if [ -z "$_cc_vs_man" ]; then
         for _cc_vs_d in "$CC_KIT" "$CC_KIT/.." "$CC_KIT/../.."; do
             if [ -r "$_cc_vs_d/MANIFEST.sha256" ]; then _cc_vs_man="$_cc_vs_d/MANIFEST.sha256"; break; fi
@@ -1368,21 +1368,21 @@ cc_finish() {
     [ -n "$CC_LOG" ] && cc_info "log: $CC_LOG"
     exit "$_cc_fin_rc"
 }
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 VENDORS="cisco-ios cisco-asa paloalto fortigate vyos mikrotik linux pfsense opnsense"
 
 usage() {
     cat <<'USAGE'
 NW-10 Network device password rotation - change, prove the new login, then save (or revert)
-  CCDC_NET_PASS=current sh NW-10-device-passwords.sh --hosts FILE | --device SPEC [--apply] [options]
+  BT_NET_PASS=current sh NW-10-device-passwords.sh --hosts FILE | --device SPEC [--apply] [options]
 
   --hosts FILE / --device NAME,ADDRESS,VENDOR[,USER[,PORT]]
   --user NAME          default login account (admin)
   --ask-password       ask for the current password
-  --new-password-env   new password from $CCDC_NET_NEWPASS (default: random per device)
+  --new-password-env   new password from $BT_NET_NEWPASS (default: random per device)
   --passwords FILE     "device,password" lines: chosen new passwords
-  --enable-env         Cisco: enable password from $CCDC_NET_ENABLE
+  --enable-env         Cisco: enable password from $BT_NET_ENABLE
   --enable-too         Cisco: also set a new enable secret
   --length N           random password length (default 16)
   --wait N             seconds before testing a change (default 5)
@@ -1430,24 +1430,24 @@ W="$CC_RUN_DIR/.work"
 (umask 077; mkdir -p "$CONFIGS") || cc_die 3 "cannot create $CONFIGS"
 ENTEST=""
 DCSV=$(cc_csv_new devices "device,address,vendor,account,status")
-SSH=${CCDC_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
-SSHPASS_BIN=${CCDC_SSHPASS:-$(cc_which sshpass)} || cc_die 3 "sshpass not found (apt install sshpass): password changes need password logins"
+SSH=${BT_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
+SSHPASS_BIN=${BT_SSHPASS:-$(cc_which sshpass)} || cc_die 3 "sshpass not found (apt install sshpass): password changes need password logins"
 cc_have mkfifo || cc_die 3 "mkfifo not found"
 
 # ---- Passwords --------------------------------------------------------------
 if [ "$ASK" = 1 ]; then
-    [ -r /dev/tty ] || cc_die 3 "--ask-password needs a terminal; set CCDC_NET_PASS"
+    [ -r /dev/tty ] || cc_die 3 "--ask-password needs a terminal; set BT_NET_PASS"
     printf 'CURRENT device password: ' >/dev/tty; stty -echo </dev/tty 2>/dev/null
-    read -r CCDC_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
+    read -r BT_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
 fi
-OLDPW=${CCDC_NET_PASS:-}
-[ -n "$OLDPW" ] || cc_die 3 "the current password is needed: set CCDC_NET_PASS or use --ask-password"
+OLDPW=${BT_NET_PASS:-}
+[ -n "$OLDPW" ] || cc_die 3 "the current password is needed: set BT_NET_PASS or use --ask-password"
 if [ "$NEWENV" = 1 ]; then
-    [ -n "${CCDC_NET_NEWPASS:-}" ] || cc_die 3 "--new-password-env: set CCDC_NET_NEWPASS"
+    [ -n "${BT_NET_NEWPASS:-}" ] || cc_die 3 "--new-password-env: set BT_NET_NEWPASS"
     # Only characters every device CLI takes literally ("?" is Cisco help,
     # quotes and spaces end a word, "#" and "!" start comments).
-    case "$CCDC_NET_NEWPASS" in *[!A-Za-z0-9_.,@%+=-]*) cc_die 2 "CCDC_NET_NEWPASS may only use letters, digits and _ . , @ % + = -" ;; esac
-    [ "${#CCDC_NET_NEWPASS}" -ge 12 ] || cc_die 2 "CCDC_NET_NEWPASS must be at least 12 characters"
+    case "$BT_NET_NEWPASS" in *[!A-Za-z0-9_.,@%+=-]*) cc_die 2 "BT_NET_NEWPASS may only use letters, digits and _ . , @ % + = -" ;; esac
+    [ "${#BT_NET_NEWPASS}" -ge 12 ] || cc_die 2 "BT_NET_NEWPASS must be at least 12 characters"
 fi
 # Chosen passwords per device: "device,password" lines -> $W/given.
 : >"$W/given"
@@ -1461,7 +1461,7 @@ fi
 # given_pw NAME ADDRESS -> the chosen password for that device, if any.
 given_pw() { awk -F'\t' -v n="$1" -v a="$2" '$1 == n || $1 == a { print $2; exit }' "$W/given"; }
 case "$OLDPW" in *[\ \"\'?#]*) cc_warn "the current password has a space, quote, ? or #: an automatic revert may not be able to type it" ;; esac
-[ "$ENABLE" = 1 ] && [ -z "${CCDC_NET_ENABLE:-}" ] && cc_die 3 "--enable-env: set CCDC_NET_ENABLE"
+[ "$ENABLE" = 1 ] && [ -z "${BT_NET_ENABLE:-}" ] && cc_die 3 "--enable-env: set BT_NET_ENABLE"
 
 # ---- Devices (same rules as NW-01) ---------------------------------------------
 vendor_of() {
@@ -1508,7 +1508,7 @@ priv() {
 # preamble VENDOR -> lines that start a session (enable for Cisco)
 preamble() {
     case "$1" in
-        cisco-ios|cisco-asa) [ "$ENABLE" = 1 ] && printf 'enable\n%s\n' "$CCDC_NET_ENABLE"
+        cisco-ios|cisco-asa) [ "$ENABLE" = 1 ] && printf 'enable\n%s\n' "$BT_NET_ENABLE"
                              [ "$1" = cisco-ios ] && printf 'terminal length 0\n' || printf 'terminal pager 0\n' ;;
         paloalto) printf 'set cli pager off\n' ;;
     esac
@@ -1607,7 +1607,7 @@ while IFS='|' read -r _n _a _v _u _p; do
     esac
     _new=$(given_pw "$_n" "$_a"); _src=""
     if [ -n "$_new" ]; then _src=" (from --passwords)"
-    elif [ "$NEWENV" = 1 ]; then _new=$CCDC_NET_NEWPASS; else _new=$(cc_genpass "$LEN") || { row "$_n" "$_a" "$_v" "$_u" "failed: no random password"; continue; }; fi
+    elif [ "$NEWENV" = 1 ]; then _new=$BT_NET_NEWPASS; else _new=$(cc_genpass "$LEN") || { row "$_n" "$_a" "$_v" "$_u" "failed: no random password"; continue; }; fi
     _newen=""
     [ "$ENTOO" = 1 ] && case "$_v" in cisco-*) _newen=$(cc_genpass "$LEN") ;; esac
     if [ "$CC_APPLY" != 1 ]; then

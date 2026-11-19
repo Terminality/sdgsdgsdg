@@ -8,7 +8,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/applications/SV-01-web-db-enum.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 O="$T_TMP/out"; mkdir -p "$O"
@@ -111,7 +111,7 @@ t_has "$out" "runtimes: languages and app servers" "runtimes section runs"
 if command -v script >/dev/null 2>&1; then
     # everything? n | sections: paths | content search? Enter | folders: Enter | databases? n
     printf 'n\npaths\n\n\nn\n' >"$T_TMP/ans"
-    tt=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --apache-conf '$T_TMP/apache.conf'" /dev/null <"$T_TMP/ans" 2>&1)
+    tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --apache-conf '$T_TMP/apache.conf'" /dev/null <"$T_TMP/ans" 2>&1)
     t_has "$tt" "[y] yes, every section" "the first question lists its answers"
     t_has "$tt" "type: names separated by spaces" "the section question says what to type"
     t_has "$tt" "1/1  paths" "only the picked section ran"

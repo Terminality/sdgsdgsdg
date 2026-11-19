@@ -72,7 +72,7 @@
 #   --batch            never ask: take every default (common option)
 #   --root DIR         treat DIR as / when reading passwd, shadow and
 #                      login.defs (for the tests; changes still go through
-#                      the tools, see CCDC_CHPASSWD below)
+#                      the tools, see BT_CHPASSWD below)
 #   --help             this text plus the common options
 #
 # OUTPUTS  (under --out, one numbered folder per run: passwords-1, -2, ...)
@@ -96,7 +96,7 @@
 #   usermod (Alpine) accounts are locked with "passwd -l" only; pw on FreeBSD
 #   (reads /etc/master.passwd; NOT yet tried on a real FreeBSD box);
 #   pwconv for the hidden-hash fix; /dev/urandom for passwords.
-#   CCDC_CHPASSWD, CCDC_USERMOD and CCDC_PWCONV may name stand-in programs
+#   BT_CHPASSWD, BT_USERMOD and BT_PWCONV may name stand-in programs
 #   (the tests use them so they never touch real accounts).
 #
 # TESTED ON
@@ -118,7 +118,7 @@
 #   Passwords are never in the log, even with --debug.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -126,7 +126,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -224,13 +224,13 @@ fi
 
 # ---- Tools ----------------------------------------------------------------------
 # Full paths (cc_which), so busybox sh cannot swap in its built-in versions.
-if [ "$CC_OS_KERNEL" = freebsd ] && [ -z "${CCDC_CHPASSWD:-}" ]; then
+if [ "$CC_OS_KERNEL" = freebsd ] && [ -z "${BT_CHPASSWD:-}" ]; then
     PW=$(cc_which pw) || cc_die 3 "pw not found"
     TOOLS=pw
 else
-    CHPASSWD=${CCDC_CHPASSWD:-$(cc_which chpasswd)} || CHPASSWD=""
-    USERMOD=${CCDC_USERMOD:-$(cc_which usermod)} || USERMOD=""
-    PWCONV=${CCDC_PWCONV:-$(cc_which pwconv)} || PWCONV=""
+    CHPASSWD=${BT_CHPASSWD:-$(cc_which chpasswd)} || CHPASSWD=""
+    USERMOD=${BT_USERMOD:-$(cc_which usermod)} || USERMOD=""
+    PWCONV=${BT_PWCONV:-$(cc_which pwconv)} || PWCONV=""
     PASSWD_BIN=$(cc_which passwd) || PASSWD_BIN=""
     [ -n "$CHPASSWD" ] || cc_die 3 "chpasswd not found (install the shadow or passwd package)"
     TOOLS=shadow

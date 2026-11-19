@@ -7,7 +7,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/LX-31-backup.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 O="$T_TMP/out"; mkdir -p "$O"
@@ -78,7 +78,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     # Answers: homes? n; hash system programs? n; other paths: the app
     # folder; leave out: its hidden file; copy to: (Enter, none).
     printf 'n\nn\n%s\n%s\n\n' "$D" "$D/conf/.hidden" >"$T_TMP/answers"
-    CCDC_NO_TTY=0 script -qc "$SH $C --out $T_TMP/o9 --box other --no-webroots --no-color" /dev/null <"$T_TMP/answers" >"$T_TMP/tty.out" 2>&1
+    BT_NO_TTY=0 script -qc "$SH $C --out $T_TMP/o9 --box other --no-webroots --no-color" /dev/null <"$T_TMP/answers" >"$T_TMP/tty.out" 2>&1
     d9="$T_TMP/o9/backup-1"
     t_has "$(cat "$d9/contents.txt")" "${D#/}/conf/app.conf" "a typed path was backed up"
     t_hasnt "$(cat "$d9/contents.txt")" ".hidden" "a typed leave-out path was left out"

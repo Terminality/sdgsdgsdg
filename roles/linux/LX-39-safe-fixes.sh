@@ -98,8 +98,8 @@
 #   under <out>/backup/<host>/.
 #
 # WHAT IT CHANGES  (only with --apply)
-#   /etc/sysctl.d/99-zz-ccdc-safe.conf (new) and the running kernel settings,
-#   /etc/security/limits.d/99-ccdc-safe.conf (new), file modes listed above,
+#   /etc/sysctl.d/99-zz-bt-safe.conf (new) and the running kernel settings,
+#   /etc/security/limits.d/99-bt-safe.conf (new), file modes listed above,
 #   /etc/environment (LD_PRELOAD lines commented out), the logging services.
 #   Moves /etc/ld.so.preload and rhosts-style files to the quarantine folder.
 #   Never deletes anything.  A path on the protected list is skipped.
@@ -130,7 +130,7 @@
 #   with --apply is in the log with its output.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -138,7 +138,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 ALL_FIXES="sysctl ipv6 forwarding coredumps perms tmp logging preload trust uid0 emptypw suid hosts"
 # Fixes that act on named items, so they can ask which ones to leave alone.
@@ -226,9 +226,9 @@ FIXES=$_keep
 # SETTLED: true when a flag already decided the fixes, so no per-fix questions.
 SETTLED=0; [ -n "$ONLY$SKIP" ] && SETTLED=1
 
-# The sysctl program.  CCDC_SYSCTL lets the tests use a stand-in by full
+# The sysctl program.  BT_SYSCTL lets the tests use a stand-in by full
 # path: busybox sh runs its own built-in sysctl in preference to PATH.
-SYSCTL=${CCDC_SYSCTL:-sysctl}
+SYSCTL=${BT_SYSCTL:-sysctl}
 
 cc_color_init
 
@@ -236,7 +236,7 @@ cc_color_init
 #   Sets CC_NO_PROTECTED=1 on yes; returns 1 on no.
 protected_check() {
     [ "$CC_NO_PROTECTED" = 1 ] && return 0
-    _pc=${CC_PROTECTED:-${CC_OUT:-${CCDC_OUT:-${HOME:-/root}/ccdc-out}}/protected.csv}
+    _pc=${CC_PROTECTED:-${CC_OUT:-${BT_OUT:-${HOME:-/root}/bt-out}}/protected.csv}
     [ -r "$_pc" ] && return 0
     cc_show "$C_YEL" "[*] No protected list at $_pc (the list of scored ports, services and accounts no script may touch)."
     if cc_ask "Continue without a protected list? (LX-39 does not touch ports or services anyway)" N "yes, continue" "no, stop"; then CC_NO_PROTECTED=1; return 0; fi
@@ -453,15 +453,15 @@ fix_coredumps() {
     [ "$CC_OS_KERNEL" = linux ] && want_sysctl fs.suid_dumpable 0
     _lim=$(P /etc/security/limits.d)
     if [ -d "$_lim" ]; then
-        _f="$_lim/99-ccdc-safe.conf"
-        if [ -f "$_f" ] && grep -q '^\* *hard *core *0' "$_f"; then row "/etc/security/limits.d/99-ccdc-safe.conf" "" "* hard core 0" "already ok"; return 0; fi
-        if ! cc_guard path "/etc/security/limits.d/99-ccdc-safe.conf"; then row "/etc/security/limits.d/99-ccdc-safe.conf" "" "" refused; return 0; fi
-        printf '# Written by LX-39 (CCDC kit): no core dumps for any account.\n* hard core 0\n' >"$W/limits.conf"
+        _f="$_lim/99-bt-safe.conf"
+        if [ -f "$_f" ] && grep -q '^\* *hard *core *0' "$_f"; then row "/etc/security/limits.d/99-bt-safe.conf" "" "* hard core 0" "already ok"; return 0; fi
+        if ! cc_guard path "/etc/security/limits.d/99-bt-safe.conf"; then row "/etc/security/limits.d/99-bt-safe.conf" "" "" refused; return 0; fi
+        printf '# Written by LX-39 (the kit): no core dumps for any account.\n* hard core 0\n' >"$W/limits.conf"
         cc_backup_file "$_f" || return 0
-        cc_run "core size limit 0 in /etc/security/limits.d/99-ccdc-safe.conf" cp "$W/limits.conf" "$_f"
+        cc_run "core size limit 0 in /etc/security/limits.d/99-bt-safe.conf" cp "$W/limits.conf" "$_f"
         _rc=$?
         [ "$_rc" -eq 0 ] && [ -z "$CC_LAST_BACKUP" ] && cc_undo_add "remove core limit file" "rm -f $(cc_shquote "$_f")"
-        row "/etc/security/limits.d/99-ccdc-safe.conf" "" "* hard core 0" "$(result "$_rc")"
+        row "/etc/security/limits.d/99-bt-safe.conf" "" "* hard core 0" "$(result "$_rc")"
     else
         row "/etc/security/limits.d" "" "" "skipped (no limits.d folder)"
     fi
@@ -651,7 +651,7 @@ lock_account() {
     _la_rc=$?
     rm -f "$W/shadow.new"
     if [ "$_la_rc" -eq 0 ]; then
-        _la_q=$(cc_shquote "$_la_sf"); _la_t=$(cc_shquote "$_la_sf.ccdc-tmp")
+        _la_q=$(cc_shquote "$_la_sf"); _la_t=$(cc_shquote "$_la_sf.bt-tmp")
         cc_undo_add "unlock account $_la_u" "awk -F: -v OFS=: -v u=$(cc_shquote "$_la_u") -v b=$_la_bang -v e=$_la_exp -v o=$(cc_shquote "$_la_old8") '\$1 == u { if (b == 1) sub(/^!/, \"\", \$2); if (e == 1) \$8 = o } { print }' $_la_q >$_la_t && cat $_la_t >$_la_q && rm -f $_la_t"
     fi
     row "$_la_u" "$_la_before" "$_la_after" "$(result "$_la_rc")"
@@ -800,12 +800,12 @@ fi
 if [ -s "$W/sysctl_want" ]; then
     header "kernel settings (sysctl, ipv6, forwarding, coredumps)"
     _sd=$(P /etc/sysctl.d)
-    if [ -d "$_sd" ]; then _sf="$_sd/99-zz-ccdc-safe.conf"; _sfi=/etc/sysctl.d/99-zz-ccdc-safe.conf
+    if [ -d "$_sd" ]; then _sf="$_sd/99-zz-bt-safe.conf"; _sfi=/etc/sysctl.d/99-zz-bt-safe.conf
     else _sf=$(P /etc/sysctl.conf); _sfi=/etc/sysctl.conf; fi
     # The boot file holds every wanted key (also those already right), so the
     # values survive a reboot even if another file sets them differently.
     {
-        printf '# Written by LX-39 (CCDC kit). Read last at boot (99-zz). Undo log has the old values.\n'
+        printf '# Written by LX-39 (the kit). Read last at boot (99-zz). Undo log has the old values.\n'
         awk -F'|' '{ print $2 " = " $3 }' "$W/sysctl_want"
         # Must come after "all": the last value written to an interface wins.
         [ "$KEEPLO" = 1 ] && printf '# loopback keeps IPv6 (::1) so services bound to it still start\nnet.ipv6.conf.lo.disable_ipv6 = 0\n'

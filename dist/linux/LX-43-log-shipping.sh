@@ -12,12 +12,12 @@
 #   once.  Two halves, one script:
 #
 #     receiver (on the Splunk box)   a Splunk TCP input (default 1514) for
-#       syslog, written as its own small app (etc/apps/ccdc_receiver), then
+#       syslog, written as its own small app (etc/apps/bt_receiver), then
 #       a Splunk restart (asked).  Open the port with LX-25.
 #     sender (every other box)       rsyslog sends the system logs (auth,
 #       syslog, kern, mail, cron) and the service log files it finds -
 #       Apache / nginx access and error, mail.log, Dovecot, Roundcube,
-#       MySQL/MariaDB errors, audit.log, the CCDC logs - to the Splunk box.
+#       MySQL/MariaDB errors, audit.log, the kit's logs - to the Splunk box.
 #       Disk-buffered: if Splunk is down the logs wait and are sent later.
 #       Then a test line is sent; search Splunk for it.
 #
@@ -49,8 +49,8 @@
 #
 # OUTPUTS  (under --out, in logship-N/)
 #   output.txt, plan.txt, summary.txt, run.txt, revert.sh
-#   the config written: /etc/rsyslog.d/90-ccdc-splunk.conf (sender) or
-#   SPLUNK/etc/apps/ccdc_receiver/local/inputs.conf (receiver)
+#   the config written: /etc/rsyslog.d/90-bt-splunk.conf (sender) or
+#   SPLUNK/etc/apps/bt_receiver/local/inputs.conf (receiver)
 #
 # DEPENDS ON
 #   rsyslog with imfile (sender; installed on most Linux boxes); Splunk
@@ -70,7 +70,7 @@
 #     (apt-get install rsyslog) or forward with systemd-journal-upload.
 # =============================================================================
 
-# >>> CCDC-LIB  (lib/lib.sh 0.2.1 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.2.1 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
@@ -95,9 +95,9 @@
 #   development a script sources this file through the marker block below.  tools/build.sh replaces that block with the contents of this file
 #   so every built script in dist/ is one standalone file.
 #
-#       # >>> CCDC-LIB
+#       # >>> BT-LIB
 #       ...the loader lines from templates/script-template.sh...
-#       # <<< CCDC-LIB
+#       # <<< BT-LIB
 #
 #       while [ $# -gt 0 ]; do
 #           if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
@@ -155,8 +155,8 @@ CC_LIB_VERSION="0.2.1"
 : "${CC_QUIET:=0}"          # 1 = print only WARN and ERROR on screen
 : "${CC_FORCE_SCORED:=0}"   # 1 = allowed to touch a protected *account*
 : "${CC_NO_PROTECTED:=0}"   # 1 = operator accepted running with no list
-: "${CC_OUT:=${CCDC_OUT:-}}"              # output folder (operator-chosen)
-: "${CC_PROTECTED:=${CCDC_PROTECTED:-}}"  # protected-list CSV
+: "${CC_OUT:=${BT_OUT:-}}"              # output folder (operator-chosen)
+: "${CC_PROTECTED:=${BT_PROTECTED:-}}"  # protected-list CSV
 CC_ID="${CC_ID:-CC-00}"
 CC_LOG=""                   # set by cc_init; empty means "log file not open"
 CC_N_DONE=0                 # changes made
@@ -302,11 +302,11 @@ cc_require_root() {
 
 # cc_confirm QUESTION -> ask the operator; returns 0 for yes.
 #   Reads from the terminal, not stdin, so it still works when the script was
-#   piped in.  CCDC_ASSUME_YES=1 answers yes without asking (for fan-out).
+#   piped in.  BT_ASSUME_YES=1 answers yes without asking (for fan-out).
 cc_confirm() {
-    [ "${CCDC_ASSUME_YES:-0}" = 1 ] && return 0
+    [ "${BT_ASSUME_YES:-0}" = 1 ] && return 0
     if [ ! -r /dev/tty ]; then
-        cc_warn "no terminal to ask '$1' - treating as NO (set CCDC_ASSUME_YES=1 to skip questions)"
+        cc_warn "no terminal to ask '$1' - treating as NO (set BT_ASSUME_YES=1 to skip questions)"
         return 1
     fi
     printf '%s [y/N] ' "$1" >/dev/tty
@@ -325,8 +325,8 @@ Common options (every script in the kit):
   --apply            make changes (default is a dry run that changes nothing)
   --dry-run          show what would change (the default)
   --out DIR          folder for logs, CSV files, backups and the undo log
-                     (default: $CCDC_OUT, else ~/ccdc-out)
-  --protected FILE   protected-list CSV (default: $CCDC_PROTECTED, else
+                     (default: $BT_OUT, else ~/bt-out)
+  --protected FILE   protected-list CSV (default: $BT_PROTECTED, else
                      DIR/protected.csv)
   --no-protected     allow --apply without a protected list (dangerous)
   --force-scored     allow changes to accounts on the protected list
@@ -358,7 +358,7 @@ cc_common_flag() {
         --batch)        CC_BATCH=1 ;;
         --quiet)        CC_QUIET=1 ;;
         --debug)        CC_DEBUG=1 ;;
-        --version)      printf 'ccdc kit library %s\n' "$CC_LIB_VERSION"; exit 0 ;;
+        --version)      printf 'kit library %s\n' "$CC_LIB_VERSION"; exit 0 ;;
         *)              return 1 ;;
     esac
     return 0
@@ -397,7 +397,7 @@ cc_init() {
 
     # Output folder: operator-chosen, never inside the kit (rule 11: the kit
     # may be on read-only media and must stay unchanged so its hash matches).
-    [ -n "$CC_OUT" ] || CC_OUT="${HOME:-/root}/ccdc-out"
+    [ -n "$CC_OUT" ] || CC_OUT="${HOME:-/root}/bt-out"
     (umask 077; mkdir -p "$CC_OUT") 2>/dev/null \
         || cc_die 3 "cannot create output folder: $CC_OUT (pass --out DIR)"
     CC_OUT=$(cc_abspath "$CC_OUT")
@@ -667,9 +667,9 @@ cc_choose() {
 }
 
 # _cc_can_ask -> true when there is someone to ask.
-#   CCDC_NO_TTY=1 says there is nobody (the test suite sets it, so tests
+#   BT_NO_TTY=1 says there is nobody (the test suite sets it, so tests
 #   never wait for an answer when run from a terminal).
-_cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${CCDC_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
+_cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${BT_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
 
 # cc_ask QUESTION DEFAULT [YES-MEANS] [NO-MEANS] -> 0 for yes, 1 for no.
 #   DEFAULT is Y or N.  Shown like cc_choose, with what each answer does:
@@ -763,8 +763,8 @@ REVERT
     CC_TIMER_DEADLINE=$(( $(cc_now) + _cc_ts_s ))
     CC_TIMER_HOW=""
     # 1. A systemd transient timer: survives logout and a killed session.
-    if [ "${CCDC_TIMER_METHOD:-}" != background ] && cc_is_root && [ -d /run/systemd/system ] && cc_have systemd-run; then
-        CC_TIMER_ID="ccdc-revert-$$-$(cc_now)"
+    if [ "${BT_TIMER_METHOD:-}" != background ] && cc_is_root && [ -d /run/systemd/system ] && cc_have systemd-run; then
+        CC_TIMER_ID="bt-revert-$$-$(cc_now)"
         if systemd-run --quiet --unit "$CC_TIMER_ID" --on-active="${_cc_ts_s}s" --timer-property=AccuracySec=1s /bin/sh "$_cc_ts_r" >>"$CC_LOG" 2>&1; then
             CC_TIMER_HOW=systemd
         fi
@@ -1306,14 +1306,14 @@ cc_flag_report() {
 # cc_verify_self
 #   Rule 15: the kit's hash is checked before each run.  If a MANIFEST.sha256
 #   (written by tools/build.sh) sits in the script's folder or one of the two
-#   folders above it, or CCDC_MANIFEST points to one, the running script's
+#   folders above it, or BT_MANIFEST points to one, the running script's
 #   hash must match its line there.  A mismatch stops the script: the file on
 #   this host is not the one you built, and a red team may have edited it.
-#   CCDC_SKIP_VERIFY=1 turns the check off (for development).
+#   BT_SKIP_VERIFY=1 turns the check off (for development).
 cc_verify_self() {
-    [ "${CCDC_SKIP_VERIFY:-0}" = 1 ] && { cc_debug "verify: skipped (CCDC_SKIP_VERIFY=1)"; return 0; }
+    [ "${BT_SKIP_VERIFY:-0}" = 1 ] && { cc_debug "verify: skipped (BT_SKIP_VERIFY=1)"; return 0; }
     [ -f "$0" ] || { cc_debug "verify: script was not started from a file, nothing to hash"; return 0; }
-    _cc_vs_man=${CCDC_MANIFEST:-}
+    _cc_vs_man=${BT_MANIFEST:-}
     if [ -z "$_cc_vs_man" ]; then
         for _cc_vs_d in "$CC_KIT" "$CC_KIT/.." "$CC_KIT/../.."; do
             if [ -r "$_cc_vs_d/MANIFEST.sha256" ]; then _cc_vs_man="$_cc_vs_d/MANIFEST.sha256"; break; fi
@@ -1347,7 +1347,7 @@ cc_finish() {
     [ -n "$CC_LOG" ] && cc_info "log: $CC_LOG"
     exit "$_cc_fin_rc"
 }
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -1449,7 +1449,7 @@ go() {
 if [ "$MODE" = receive ]; then
     header "1/2  the Splunk box: a port for the other boxes' logs"
     [ -n "$SH_HOME" ] || { cc_show "$C_RED" "  [x] Splunk not found (give --splunk-home DIR)"; rm -rf "$W"; cc_finish; exit 3; }
-    APPD="$(P "$SH_HOME")/etc/apps/ccdc_receiver"; INP="$APPD/local/inputs.conf"
+    APPD="$(P "$SH_HOME")/etc/apps/bt_receiver"; INP="$APPD/local/inputs.conf"
     _have=$(grep -rls "^\[$PROTO://\(.*:\)\?$PORT\]" "$(P "$SH_HOME")"/etc/system/local/inputs.conf "$(P "$SH_HOME")"/etc/apps/*/local/inputs.conf 2>/dev/null | head -n 1)
     if [ -n "$_have" ]; then cc_show "$C_GRN" "  [ok] Splunk already listens on $PROTO $PORT (${_have#"$R"})"
     else plan "Splunk input $PROTO://$PORT, sourcetype syslog, index $INDEX, host = the sender's address (in ${INP#"$R"})"; fi
@@ -1457,9 +1457,9 @@ if [ "$MODE" = receive ]; then
     header "2/2  apply"
     if go; then
         mkdir -p "$APPD/local" "$APPD/default"
-        cc_undo_add "remove the ccdc_receiver Splunk app" "rm -rf $(cc_shquote "$APPD")"
-        printf '[install]\nstate = enabled\n\n[ui]\nis_visible = false\nlabel = CCDC log receiver (LX-43)\n' >"$APPD/default/app.conf"
-        printf '# Written by CCDC LX-43: logs from the other boxes.\n[%s://%s]\nsourcetype = syslog\nindex = %s\nconnection_host = ip\ndisabled = 0\n' "$PROTO" "$PORT" "$INDEX" >"$INP"
+        cc_undo_add "remove the bt_receiver Splunk app" "rm -rf $(cc_shquote "$APPD")"
+        printf '[install]\nstate = enabled\n\n[ui]\nis_visible = false\nlabel = log receiver (LX-43)\n' >"$APPD/default/app.conf"
+        printf '# Written by LX-43: logs from the other boxes.\n[%s://%s]\nsourcetype = syslog\nindex = %s\nconnection_host = ip\ndisabled = 0\n' "$PROTO" "$PORT" "$INDEX" >"$INP"
         _ow=$(ls -ld "$(P "$SH_HOME")" | awk '{ print $3 ":" $4 }'); chown -R "$_ow" "$APPD" 2>/dev/null
         cc_show "$C_GRN" "  [+] Splunk input $PROTO://$PORT written"; NOK=1
         if [ -z "$R" ] && cc_ask "Restart Splunk now so it listens (about a minute)?" Y "yes, restart it now" "no, I will restart it later"; then
@@ -1494,7 +1494,7 @@ for _e in "apache-access|/var/log/apache2/access.log" "apache-error|/var/log/apa
           "nginx-access|/var/log/nginx/access.log" "nginx-error|/var/log/nginx/error.log" "maillog|/var/log/mail.log" "maillog|/var/log/maillog" \
           "dovecot|/var/log/dovecot.log" "roundcube|/var/log/roundcube/errors.log" "roundcube-logins|/var/log/roundcube/userlogins.log" \
           "mysql-error|/var/log/mysql/error.log" "mariadb|/var/log/mariadb/mariadb.log" "postgresql|/var/log/postgresql/postgresql-*-main.log" \
-          "audit|/var/log/audit/audit.log" "splunk|/opt/splunk/var/log/splunk/splunkd.log" "ccdc-session|/var/log/ccdc/sessions.log" "fail2ban|/var/log/fail2ban.log"; do
+          "audit|/var/log/audit/audit.log" "splunk|/opt/splunk/var/log/splunk/splunkd.log" "bt-session|/var/log/bt/sessions.log" "fail2ban|/var/log/fail2ban.log"; do
     _t=${_e%%"|"*}; _f=${_e#*"|"}
     for _x in $(P "$_f"); do [ -f "$_x" ] && printf '%s|%s\n' "$_t" "${_x#"$R"}" >>"$W/files"; done
 done
@@ -1511,26 +1511,26 @@ case "$LOGS" in
 esac
 
 header "2/3  plan"
-CONF=/etc/rsyslog.d/90-ccdc-splunk.conf
+CONF=/etc/rsyslog.d/90-bt-splunk.conf
 {
-    printf '# Written by CCDC LX-43: send this box'"'"'s logs to Splunk (%s %s:%s).\n# Delete this file and restart rsyslog to stop.\n' "$PROTO" "$TO" "$PORT"
+    printf '# Written by LX-43: send this box'"'"'s logs to Splunk (%s %s:%s).\n# Delete this file and restart rsyslog to stop.\n' "$PROTO" "$TO" "$PORT"
     printf '# Logs wait on disk while the Splunk box cannot be reached.\n'
-    printf 'ruleset(name="ccdc_splunk") {\n    action(type="omfwd" target="%s" port="%s" protocol="%s"\n           queue.type="LinkedList" queue.filename="ccdc_splunk_q" queue.maxDiskSpace="200m" queue.saveOnShutdown="on"\n           action.resumeRetryCount="-1")\n}\n' "$TO" "$PORT" "$PROTO"
+    printf 'ruleset(name="bt_splunk") {\n    action(type="omfwd" target="%s" port="%s" protocol="%s"\n           queue.type="LinkedList" queue.filename="bt_splunk_q" queue.maxDiskSpace="200m" queue.saveOnShutdown="on"\n           action.resumeRetryCount="-1")\n}\n' "$TO" "$PORT" "$PROTO"
     if [ -s "$W/files" ]; then
         # Service log files go only to Splunk (they already have their own files here).
         printf 'module(load="imfile" PollingInterval="5")\n'
         while IFS='|' read -r _t _f; do
-            printf 'input(type="imfile" File="%s" Tag="%s:" Facility="local6" Severity="info" ruleset="ccdc_splunk")\n' "$_f" "$_t"
+            printf 'input(type="imfile" File="%s" Tag="%s:" Facility="local6" Severity="info" ruleset="bt_splunk")\n' "$_f" "$_t"
         done <"$W/files"
     fi
-    printf '# The system logs.\nif prifilt("auth,authpriv.*;*.info;mail.*;cron.*;kern.*") then {\n    call ccdc_splunk\n}\n'
+    printf '# The system logs.\nif prifilt("auth,authpriv.*;*.info;mail.*;cron.*;kern.*") then {\n    call bt_splunk\n}\n'
 } >"$W/conf"
 if [ -f "$(P "$CONF")" ] && cmp -s "$W/conf" "$(P "$CONF")"; then cc_show "$C_GRN" "  [ok] $CONF is already this"
 else plan "write $CONF: send $([ -s "$W/files" ] && echo "the system logs and $(grep -c . "$W/files") service log(s)" || echo 'the system logs') to $TO:$PORT over $PROTO"
     sed 's/^/      /' "$W/conf" | while IFS= read -r _l; do cc_show "$C_GRY" "$_l"; done
     [ -z "$R" ] && plan "restart rsyslog (config checked with rsyslogd -N1 first), then send a test line"
 fi
-_other=$(grep -lE '^[^#]*(@@?[0-9A-Za-z]|type="omfwd")' "$(P /etc/rsyslog.conf)" "$(P /etc/rsyslog.d)"/*.conf 2>/dev/null | grep -v "90-ccdc-splunk.conf" | sed "s|^$R||")
+_other=$(grep -lE '^[^#]*(@@?[0-9A-Za-z]|type="omfwd")' "$(P /etc/rsyslog.conf)" "$(P /etc/rsyslog.d)"/*.conf 2>/dev/null | grep -v "90-bt-splunk.conf" | sed "s|^$R||")
 [ -n "$_other" ] && cc_show "$C_YEL" "  [*] logs are already sent somewhere by: $_other - one of yours? (red team can send copies of logs out too)"
 
 header "3/3  apply"
@@ -1560,7 +1560,7 @@ if go; then
             fi
             if [ -n "$_p1" ] && [ "$_p1" != "$_p0" ]; then cc_show "$C_GRN" "  [+] rsyslog restarted (it reads the new config)"
             else cc_show "$C_RED" "  [x] rsyslog did not restart (still pid ${_p1:-none}): restart it by hand, then logger test"; NBAD=1; fi
-            TESTID="CCDC-LX43-TEST-$CC_HOST-$(date +%s)"
+            TESTID="BT-LX43-TEST-$CC_HOST-$(date +%s)"
             logger -p auth.info "$TESTID" 2>/dev/null && cc_show "$C_GRN" "  [+] test line sent: search Splunk for $TESTID"
         fi
     else cc_show "$C_GRN" "  [+] wrote $CONF"; NOK=1; fi

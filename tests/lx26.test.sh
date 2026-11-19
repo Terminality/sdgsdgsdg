@@ -9,7 +9,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/LX-26-remote-access.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 O="$T_TMP/out"; B="$T_TMP/bin"
 mkdir -p "$B"
 # The sleep program itself (ksh and busybox have a built-in sleep, so
@@ -65,7 +65,7 @@ if [ "$(id -u)" = 0 ]; then
         _i=0; while ! ps -eo comm= | grep -qx x11vnc && [ "$_i" -lt 20 ]; do sleep 1; _i=$((_i + 1)); done
         # remote desktop (x11vnc) first: keep; tunnel (ngrok): stop; apply: Enter
         printf 'k\ns\n\n' >"$T_TMP/ans"
-        tt=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --box ecomm --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans" 2>&1)
+        tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --box ecomm --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans" 2>&1)
         t_has "$tt" "[s] stop it (kill it; quarantine" "each finding lists its answers"
         t_ok "k: x11vnc keeps running" up "$P2"
         t_fail "s: ngrok is stopped" up "$P1"

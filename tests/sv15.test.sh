@@ -4,13 +4,13 @@
 # file, plant a web shell; check finds each one; a dry-run restore changes
 # nothing; restore --apply puts it right; replaying the undo lines brings the
 # defaced state back; a .htaccess change is HIGH; app configs give the
-# database name; questions on a terminal.  With CCDC_TEST_DB=1 and a local
+# database name; questions on a terminal.  With BT_TEST_DB=1 and a local
 # MariaDB/MySQL: the database is backed up, changed, restored and reverted.
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/applications/SV-15-site-backup.sh"
-export CCDC_SKIP_VERIFY=1
-CCDC_TIMER_METHOD=background; export CCDC_TIMER_METHOD
+export BT_SKIP_VERIFY=1
+BT_TIMER_METHOD=background; export BT_TIMER_METHOD
 O="$T_TMP/out"; S="$T_TMP/shop"
 # shellcheck disable=SC2086
 run() { $SH "$C" --out "$O" --no-color --site shop "$@"; }
@@ -20,7 +20,7 @@ mksite() {
     printf '<?php echo "ok";\n' >"$S/index.php"
     printf 'body{}\n' >"$S/style.css"
     printf 'RewriteEngine On\n' >"$S/.htaccess"
-    printf "<?php\ndefine( 'DB_NAME', 'ccdc_sv15_test' );\ndefine( 'DB_PASSWORD', 'PlantedSecret55' );\ndefine( 'DB_HOST', 'localhost' );\n" >"$S/wp-config.php"
+    printf "<?php\ndefine( 'DB_NAME', 'bt_sv15_test' );\ndefine( 'DB_PASSWORD', 'PlantedSecret55' );\ndefine( 'DB_HOST', 'localhost' );\n" >"$S/wp-config.php"
     chmod 640 "$S/wp-config.php"
 }
 
@@ -33,7 +33,7 @@ t_start "backup"
 mksite
 out=$(run --backup --batch --no-db --webroot "$S" 2>&1); rc=$?
 t_eq "$rc" 0 "exit 0"
-t_has "$out" "WordPress, mysql database ccdc_sv15_test" "the app and its database are found"
+t_has "$out" "WordPress, mysql database bt_sv15_test" "the app and its database are found"
 t_has "$out" "[+] shop" "the site is backed up"
 B="$O/site-backup-1"
 for f in output.txt summary.txt sites.txt RESTORE.txt run.txt shop/files.tar.gz shop/files.sha256; do t_file "$B/$f" "$f written"; done
@@ -93,21 +93,21 @@ if command -v script >/dev/null 2>&1; then
     printf 'X\n' >"$S/index.html"
     # mode: r | site: f
     printf 'r\nf\n' >"$T_TMP/ans"
-    tt=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --site shop --no-protected" /dev/null <"$T_TMP/ans" 2>&1)
+    tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --site shop --no-protected" /dev/null <"$T_TMP/ans" 2>&1)
     t_has "$tt" "[b] back up the sites now" "the mode question lists its answers"
     t_has "$tt" "[a] all back to the backup" "the restore question lists its answers"
     t_has "$tt" "put back 1 file(s), quarantine 0 new file(s)" "the typed answer f is used"
 fi
 
-if [ "${CCDC_TEST_DB:-0}" = 1 ] && command -v mysql >/dev/null 2>&1 && mysql -e 'SELECT 1' >/dev/null 2>&1; then
-    t_start "database (CCDC_TEST_DB=1)"
+if [ "${BT_TEST_DB:-0}" = 1 ] && command -v mysql >/dev/null 2>&1 && mysql -e 'SELECT 1' >/dev/null 2>&1; then
+    t_start "database (BT_TEST_DB=1)"
     mksite
-    mysql -e "DROP DATABASE IF EXISTS ccdc_sv15_test; CREATE DATABASE ccdc_sv15_test; CREATE TABLE ccdc_sv15_test.p (t VARCHAR(30)); INSERT INTO ccdc_sv15_test.p VALUES ('good');"
+    mysql -e "DROP DATABASE IF EXISTS bt_sv15_test; CREATE DATABASE bt_sv15_test; CREATE TABLE bt_sv15_test.p (t VARCHAR(30)); INSERT INTO bt_sv15_test.p VALUES ('good');"
     run --backup --batch --webroot "$S" >/dev/null 2>&1
-    mysql -e "UPDATE ccdc_sv15_test.p SET t='HACKED'"
+    mysql -e "UPDATE bt_sv15_test.p SET t='HACKED'"
     out=$(run --restore --batch --no-protected --apply --no-timer --restore-db 2>&1)
-    t_has "$out" "put the database ccdc_sv15_test back" "the database is offered even when the files are unchanged"
-    t_eq "$(mysql -N -e 'SELECT t FROM ccdc_sv15_test.p')" good "the database is back"
-    mysql -e "DROP DATABASE ccdc_sv15_test"
+    t_has "$out" "put the database bt_sv15_test back" "the database is offered even when the files are unchanged"
+    t_eq "$(mysql -N -e 'SELECT t FROM bt_sv15_test.p')" good "the database is back"
+    mysql -e "DROP DATABASE bt_sv15_test"
 fi
 t_done

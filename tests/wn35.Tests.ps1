@@ -18,7 +18,7 @@ $psExe = (Get-Process -Id $PID).Path
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('cctest_wn35_' + $PID)
 $out = Join-Path $tmp 'out'
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
-$env:CCDC_SKIP_VERIFY = '1'
+$env:BT_SKIP_VERIFY = '1'
 $script:pass = 0; $script:fail = 0
 function T-Start($t) { Write-Host "  -- $t" }
 function T-Eq($got, $want, $label) { if ("$got" -ceq "$want") { $script:pass++ } else { $script:fail++; Write-Host "     FAIL: $label"; Write-Host "           got [$got], wanted [$want]" } }
@@ -118,7 +118,7 @@ esac
     T-Has (Item $b 'dns').detail '2 zones: _msdcs.corp.local, corp.local' 'zones exported (cache and TrustAnchors left out)'
     T-Has (Item $b 'dns').detail 'FAILED: 0.0.10.in-addr.arpa' 'a zone that fails is named'
     T-True (Test-Path -LiteralPath (Join-Path $b 'dns/corp.local.dns')) 'zone file in the backup'
-    T-Eq (@(Get-ChildItem -LiteralPath (Join-Path $sr 'System32/dns') -Filter 'ccdc-backup-*').Count) 0 'no export file is left in the DNS folder'
+    T-Eq (@(Get-ChildItem -LiteralPath (Join-Path $sr 'System32/dns') -Filter 'bt-backup-*').Count) 0 'no export file is left in the DNS folder'
     T-Eq (Item $b 'dhcp').status 'ok' 'DHCP saved'
     T-Eq (Item $b 'gpo').status 'failed' 'GPO fails without the GroupPolicy module (as on a broken DC)'
     T-Eq (Item $b 'sysvol').status 'ok' 'SYSVOL saved'

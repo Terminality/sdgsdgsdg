@@ -12,7 +12,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/applications/SV-31-mail-tamper.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 O="$T_TMP/out"; F="$T_TMP/root"
 
 mkroot() {
@@ -95,7 +95,7 @@ if command -v script >/dev/null 2>&1; then
     # in order: always_bcc y, mailbox_command n, content_filter y, mynetworks y, relay n,
     #           evil y, backup y, boss y, .forward n, global.sieve y, fwd.sieve n; apply Enter
     printf 'y\nn\ny\ny\nn\ny\ny\ny\nn\ny\nn\n\n' >"$T_TMP/ans"
-    tt=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --root '$F' --out '$O' --no-color --box webmail --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans" 2>&1)
+    tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --root '$F' --out '$O' --no-color --box webmail --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans" 2>&1)
     t_has "$tt" "[y] yes, remove always_bcc from main.cf" "each fix spells out its answers"
     t_has "$(cat "$F/etc/postfix/main.cf")" "mailbox_command = /tmp/.x/deliver.sh" "n: mailbox_command stays"
     t_has "$(cat "$F/etc/postfix/main.cf")" "#SV-31: content_filter" "y on a MED: content_filter goes"

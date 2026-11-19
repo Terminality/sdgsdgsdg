@@ -10,7 +10,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/LX-20-password-rotation.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 O="$T_TMP/out"; R="$T_TMP/root"; B="$T_TMP/bin"
@@ -44,8 +44,8 @@ awk -F: -v OFS=: 'NR == FNR { if ($2 != "x" && $2 != "*") h[$1] = $2; next } ($1
 awk -F: -v OFS=: '$2 != "x" && $2 != "*" { $2 = "x" } { print }' "$STUB_ROOT/etc/passwd" >"$STUB_ROOT/etc/passwd.t" && mv "$STUB_ROOT/etc/passwd.t" "$STUB_ROOT/etc/passwd"
 STUB
 chmod +x "$B/chpasswd" "$B/usermod" "$B/pwconv"
-CCDC_CHPASSWD="$B/chpasswd"; CCDC_USERMOD="$B/usermod"; CCDC_PWCONV="$B/pwconv"
-export CCDC_CHPASSWD CCDC_USERMOD CCDC_PWCONV
+BT_CHPASSWD="$B/chpasswd"; BT_USERMOD="$B/usermod"; BT_PWCONV="$B/pwconv"
+export BT_CHPASSWD BT_USERMOD BT_PWCONV
 unset SUDO_USER
 
 plant() {
@@ -194,7 +194,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     # (all the rest: toor's default is disable); end sessions? n; apply? y;
     # keep? y.
     printf 'y\nk\nk\ns\nTyped-Pass-123\nTyped-Pass-123\nr\ny\nd\n\na\nn\ny\ny\n' >"$T_TMP/answers"
-    CCDC_NO_TTY=0 script -qc "$SH $C --out $T_TMP/o9 --root $R --protected $T_TMP/protected.csv --no-color --timer 120" /dev/null <"$T_TMP/answers" >"$T_TMP/tty.out" 2>&1
+    BT_NO_TTY=0 script -qc "$SH $C --out $T_TMP/o9 --root $R --protected $T_TMP/protected.csv --no-color --timer 120" /dev/null <"$T_TMP/answers" >"$T_TMP/tty.out" 2>&1
     d9="$T_TMP/o9/passwords-1"
     t_eq "$(f2 root)" "\$6\$a\$root" "root: keep"
     t_eq "$(f2 svc)" "\$6\$a\$svc" "svc: keep"

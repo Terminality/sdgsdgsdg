@@ -120,7 +120,7 @@
 #   --engine python  forces the fallback, to compare with nmap's results
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -128,9 +128,9 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
-# Ports the fallback engines check (TCP only).  Chosen for CCDC networks:
+# Ports the fallback engines check (TCP only).  Chosen for competition networks:
 # the usual scored services, Windows/AD, databases, remote admin, and ports
 # red teams like.
 FALLBACK_PORTS="21,22,23,25,53,80,88,110,111,135,139,143,389,443,445,464,465,514,587,593,636,993,995,1080,1433,1521,2049,2375,3000,3268,3306,3389,4444,5000,5432,5601,5900,5985,5986,6379,6667,8000,8080,8081,8443,8888,9000,9090,9200,10000,11211,27017,31337"
@@ -965,7 +965,7 @@ while IFS='|' read -r _ip _pr _p _svc _ver; do
         tcp/3306|tcp/1433|tcp/5432|tcp/1521) flag LOW ports "$_it" "database reachable over the network ($_svc); fine if the scoring engine or a web server needs it" ;;
         tcp/21) flag LOW ports "$_it" "FTP: cleartext logins" ;;
     esac
-    # Versions with known backdoors or trivial remote root, common in CCDC
+    # Versions with known backdoors or trivial remote root, common in competitions
     # images.
     case "$_ver" in
         *"vsftpd 2.3.4"*) flag HIGH ports "$_it" "vsftpd 2.3.4 has a known backdoor: replace it" ;;

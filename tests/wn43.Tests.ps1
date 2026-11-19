@@ -2,7 +2,7 @@
 # Tests for WN-43 Windows safe fixes.
 #   pwsh -NoProfile -File tests/wn43.Tests.ps1
 #
-# Everything the script reads or changes goes through $env:CCDC_WN43_FAKE: a
+# Everything the script reads or changes goes through $env:BT_WN43_FAKE: a
 # folder of stand-in state (registry.csv, accounts.csv, services.csv,
 # smb.csv, defender.csv, auditpol.csv, logs.csv, wmi.csv, files.csv,
 # firewall.csv, hosts).  The tests plant a badly configured domain
@@ -17,7 +17,7 @@ $wn43 = Join-Path (Join-Path (Join-Path $root 'roles') 'windows-ad') 'WN-43-safe
 $psExe = (Get-Process -Id $PID).Path
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('cctest_wn43_' + $PID)
 $out = Join-Path $tmp 'out'; $fake = Join-Path $tmp 'fake'
-$env:CCDC_SKIP_VERIFY = '1'; $env:CCDC_WN43_FAKE = $fake
+$env:BT_SKIP_VERIFY = '1'; $env:BT_WN43_FAKE = $fake
 $script:pass = 0; $script:fail = 0
 function T-Start($t) { Write-Host "  -- $t" }
 function T-Eq($got, $want, $label) { if ("$got" -ceq "$want") { $script:pass++ } else { $script:fail++; Write-Host "     FAIL: $label"; Write-Host "           got [$got], wanted [$want]" } }
@@ -236,32 +236,32 @@ T-Has $r.Text 'refused: protected' 'refusals listed'
 
 T-Start 'a failing fix is reported and the rest still run'
 Plant
-$env:CCDC_WN43_FAIL = 'defrt'
+$env:BT_WN43_FAIL = 'defrt'
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-Only', 'defender,wdigest')
-Remove-Item Env:\CCDC_WN43_FAIL
+Remove-Item Env:\BT_WN43_FAIL
 T-Eq $r.Code 5 'exits 5'
 T-Has $r.Text 'Tamper Protection blocked the change' 'the reason is shown'
 T-Eq (Reg "$CCS\Control\SecurityProviders\WDigest" 'UseLogonCredential') '0' 'the other fixes still ran'
 
 T-Start 'a fix that does not stick is caught'
 Plant
-$env:CCDC_WN43_FAIL = 'defrt-silent'
+$env:BT_WN43_FAIL = 'defrt-silent'
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-Only', 'defender')
 T-Eq $r.Code 5 'real-time protection still off afterwards: exits 5'
 T-Has $r.Text 'still off afterwards' 'and says so'
 T-Has ([IO.File]::ReadAllText((Join-Path $r.Dir 'fixes.csv'))) 'still off afterwards' 'fixes.csv has the corrected result'
 Plant
-$env:CCDC_WN43_FAIL = 'sfc'
+$env:BT_WN43_FAIL = 'sfc'
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-Only', 'stickykeys')
-Remove-Item Env:\CCDC_WN43_FAIL
+Remove-Item Env:\BT_WN43_FAIL
 T-Eq $r.Code 5 'sfc that does not repair: exits 5'
 T-Has $r.Text 'sfc did not repair it' 'and says so'
 
 T-Start 'a key that cannot be backed up is not changed'
 Plant; $before = Snap
-$env:CCDC_WN43_FAIL = 'export'
+$env:BT_WN43_FAIL = 'export'
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-Only', 'wdigest,winlogon,llmnr')
-Remove-Item Env:\CCDC_WN43_FAIL
+Remove-Item Env:\BT_WN43_FAIL
 T-Eq $r.Code 5 'exits 5'
 T-Eq (Reg "$CCS\Control\SecurityProviders\WDigest" 'UseLogonCredential') '1' 'existing key without a backup: not changed'
 T-Eq (Reg "$NT\Winlogon" 'DefaultPassword') 'Planted-Secret-Pw-42' 'Winlogon without a backup: not changed'

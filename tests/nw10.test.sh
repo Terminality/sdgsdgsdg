@@ -8,7 +8,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/network/NW-10-device-passwords.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 O="$T_TMP/out"; B="$T_TMP/bin"; D="$T_TMP/dev"; mkdir -p "$O" "$B" "$D"
@@ -47,7 +47,7 @@ exit 0
 STUB
 printf '#!/bin/sh\n[ "$1" = -e ] || exit 9\nshift\nexec "$@"\n' >"$B/sshpass"
 chmod +x "$B/ssh" "$B/sshpass"
-CCDC_SSH="$B/ssh"; CCDC_SSHPASS="$B/sshpass"; export CCDC_SSH CCDC_SSHPASS
+BT_SSH="$B/ssh"; BT_SSHPASS="$B/sshpass"; export BT_SSH BT_SSHPASS
 OLD='Old-Device-Pass1'
 devices() {
     for h in ios asa pan fg vyos mt lnx bad; do printf '%s\n' "$OLD" >"$D/$h.pw"; rm -f "$D/$h.mode" "$D/$h.log" "$D/$h.priv" "$D/$h.en"; done
@@ -59,11 +59,11 @@ devices() {
     printf 'username admin privilege 15 secret 9 $9$x\n' >"$O/net-configs/bad/T1.cfg"; echo T1 >"$O/net-configs/bad/latest"
 }
 DEVS="--device r1,ios,cisco-ios --device a1,asa,cisco-asa --device p1,pan,paloalto --device f1,fg,fortigate --device v1,vyos,vyos,vyos --device m1,mt,mikrotik --device l1,lnx,linux,ops --device pf1,pfx,pfsense"
-CCDC_NET_PASS=$OLD; export CCDC_NET_PASS
+BT_NET_PASS=$OLD; export BT_NET_PASS
 
 t_start "options"
-(unset CCDC_NET_PASS; run --device r1,ios,cisco-ios >/dev/null 2>&1); t_eq "$?" 3 "no current password exits 3"
-(CCDC_NET_NEWPASS='has space and ?'; export CCDC_NET_NEWPASS; run --device r1,ios,cisco-ios --new-password-env >/dev/null 2>&1); t_eq "$?" 2 "unsafe new password exits 2"
+(unset BT_NET_PASS; run --device r1,ios,cisco-ios >/dev/null 2>&1); t_eq "$?" 3 "no current password exits 3"
+(BT_NET_NEWPASS='has space and ?'; export BT_NET_NEWPASS; run --device r1,ios,cisco-ios --new-password-env >/dev/null 2>&1); t_eq "$?" 2 "unsafe new password exits 2"
 run --device r1,ios,junos >/dev/null 2>&1; t_eq "$?" 2 "unknown vendor exits 2"
 
 t_start "dry run"
@@ -101,7 +101,7 @@ t_eq "$rc" 5 "exit 5 when the new password does not work"
 t_has "$out" "failed: new password did not work; old password restored and tested" "old password put back"
 t_eq "$(cat "$D/bad.pw")" "$OLD" "device still has the old password"
 devices
-out=$(CCDC_NET_PASS=wrong-password-1; export CCDC_NET_PASS; run --out "$O" --device r1,ios,cisco-ios --apply --no-protected --wait 1 2>&1)
+out=$(BT_NET_PASS=wrong-password-1; export BT_NET_PASS; run --out "$O" --device r1,ios,cisco-ios --apply --no-protected --wait 1 2>&1)
 t_has "$out" "failed: could not log in with the current password" "wrong current password: nothing changed"
 t_eq "$(cat "$D/ios.pw")" "$OLD" "device unchanged"
 rm -rf "$O/net-configs/r1"
