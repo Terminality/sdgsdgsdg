@@ -1,6 +1,6 @@
 # Network — routes + firewall
 
-Scripts owned by this role. 6 of 6 are built.
+Scripts owned by this role. 7 of 7 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -12,5 +12,6 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | NW-01 | Network config backup and diff | Backup and prep | none | built | [`roles/network/NW-01-config-backup.sh`](../../roles/network/NW-01-config-backup.sh) |
 | NW-10 | Network device password rotation | Management | access | built | [`roles/network/NW-10-device-passwords.sh`](../../roles/network/NW-10-device-passwords.sh) |
 | NW-12 | Device accounts and sessions | Management | access | built | [`roles/network/NW-12-device-sessions.sh`](../../roles/network/NW-12-device-sessions.sh) |
+| NW-21 | Network device hardening | Hardening: hard | access | built | [`roles/network/NW-21-device-hardening.sh`](../../roles/network/NW-21-device-hardening.sh) |
 
 Script files in this folder are named `<ID>-<short-name>.sh` or `.ps1`. What the tiers and risk levels mean, and the rules for each: `docs/PLAN.md`.

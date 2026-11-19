@@ -1,6 +1,6 @@
 # Build status
 
-44 of 48 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+45 of 49 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -13,7 +13,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | wave1 | 3 | 3 |
 | Hardening: easy | 3 | 3 |
 | Hardening: medium | 2 | 2 |
-| Hardening: hard | 2 | 4 |
+| Hardening: hard | 3 | 5 |
 | Management | 4 | 4 |
 | Alerts | 3 | 4 |
 | Kit | 3 | 3 |
@@ -94,6 +94,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LX-25 | Linux firewall | access | built | `roles/linux/LX-25-firewall.sh` |
 | WN-27 | Windows remote access lockdown | access | planned |  |
 | WN-23 | Account lockdown (Windows / AD) | access | planned |  |
+| NW-21 | Network device hardening | access | built | `roles/network/NW-21-device-hardening.sh` |
 
 ## Management
 
