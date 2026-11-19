@@ -1,6 +1,6 @@
 # Build status
 
-38 of 43 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+39 of 43 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -12,8 +12,8 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | any | 1 | 1 |
 | Hardening: easy | 3 | 3 |
 | Hardening: medium | 2 | 2 |
-| Hardening: hard | 2 | 5 |
-| wave1 | 1 | 1 |
+| Hardening: hard | 2 | 4 |
+| wave1 | 2 | 2 |
 | Management | 3 | 3 |
 | Alerts | 3 | 4 |
 | Kit | 3 | 3 |
@@ -82,13 +82,13 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | WN-25 | Windows firewall | access | built | `roles/windows-ad/WN-25-firewall.ps1` |
 | LX-25 | Linux firewall | access | built | `roles/linux/LX-25-firewall.sh` |
 | WN-27 | Windows remote access lockdown | access | planned |  |
-| LX-26 | Linux remote access lockdown | access | planned |  |
 | WN-23 | Account lockdown (Windows / AD) | access | planned |  |
 
 ## wave1
 
 | ID | Script | Risk | Status | File |
 | --- | --- | --- | --- | --- |
+| LX-26 | Remote access lockdown (everything but SSH) | medium | built | `roles/linux/LX-26-remote-access.sh` |
 | LX-21 | Account lockdown (Linux) | medium | built | `roles/linux/LX-21-account-lockdown.sh` |
 
 ## Management

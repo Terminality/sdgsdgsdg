@@ -52,6 +52,7 @@ Contents:
 42. Mail tamper check, `roles/applications/SV-31-mail-tamper.sh` (SV-31)
 43. Webmail (Roundcube) hardening, `roles/applications/SV-41-roundcube-hardening.sh` (SV-41)
 44. Log shipping to Splunk, `roles/linux/LX-43-log-shipping.sh` (LX-43)
+45. Remote access lockdown, `roles/linux/LX-26-remote-access.sh` (LX-26)
 
 ---
 
@@ -3017,3 +3018,49 @@ In `logship-N/`: `output.txt`, `plan.txt`, `summary.txt` (with the test line and
 - **Plain syslog isn't encrypted.** Fine inside the team network.
 - **A box with only journald:** `apt-get install rsyslog` first.
 - **The receiver hasn't been run on a real Splunk yet.** Check `splunk list tcp` after the restart.
+
+## 45. Remote access lockdown, `roles/linux/LX-26-remote-access.sh` (LX-26)
+
+SSH is LX-22. This covers **every other way in**: a remote screen, a shell in a web browser, a tunnel out past the firewall, a shell listening on a port. It looks at running programs, listening ports and installed services.
+
+### How to run it
+
+```sh
+sudo sh LX-26-remote-access.sh                                  # look + dry run
+sudo sh LX-26-remote-access.sh --protected p.csv --apply        # asks about each one
+sudo sh LX-26-remote-access.sh --protected p.csv --apply --batch
+```
+
+### What it finds
+
+| Level | Found |
+| --- | --- |
+| HIGH | **Tunnels out:** ngrok, chisel, frpc/frps, cloudflared, bore, gost, ligolo, rathole, inlets, `ssh -R`. **Web terminals:** ttyd, gotty, shellinabox, wetty, tmate. **Bind/reverse shells:** `nc -e`, `ncat --exec`, `socat ... exec:`, a shell whose keyboard is a network connection. **Remote desktops:** x11vnc, Xvnc, vncserver, xrdp, NoMachine, TeamViewer, AnyDesk, RustDesk. |
+| MED | **Admin panels:** Webmin (10000), Cockpit (9090), Usermin, ISPConfig, Virtualmin. **Quick file servers:** `python -m http.server`, `php -S`, busybox httpd. |
+| LOW | **Database panels:** phpMyAdmin, Adminer (listed only) |
+
+Things on a scored port for the box, or on the protected list, are shown as kept and never offered.
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Each finding | `[s]top` / `[k]eep` / `[a]ll the rest default` (default: stop for HIGH, keep for MED) | `--batch` |
+| Stop these? | `[y]` / `[n]` | `--apply` |
+
+### What "stop" does
+
+- **A service** (xrdp, webmin, cockpit...): stopped and disabled at boot. The undo enables and starts it again.
+- **A program:** killed (then `kill -9` if needed).
+- **A program file in `/tmp`, `/var/tmp`, `/dev/shm` or a home folder:** quarantined, so it can't just be started again.
+
+### What it produces
+
+In `remote-access-N/`: `output.txt`, `findings.txt`, `plan.txt`, `summary.txt`, `revert.sh` (services only; killed programs aren't restarted).
+
+### What to watch for
+
+- **It comes back?** A cron job, service or `.bashrc` restarts it: find that with **LX-42**, then run LX-26 again.
+- **A remote desktop your team uses:** put its port on the protected list.
+- telnet, rsh, FTP, SNMP and the other old services: **SV-30**.
