@@ -54,6 +54,7 @@ Contents:
 44. Log shipping to Splunk, `roles/linux/LX-43-log-shipping.sh` (LX-43)
 45. Remote access lockdown, `roles/linux/LX-26-remote-access.sh` (LX-26)
 46. Rootkit and malware scan, `roles/linux/LX-45-rootkit-scan.sh` (LX-45)
+47. AppArmor confinement, `roles/linux/LX-44-apparmor.sh` (LX-44)
 
 ---
 
@@ -3116,3 +3117,58 @@ In `rootkit-N/`: `output.txt`, `findings.txt`, `summary.txt`, `clamav.txt` / `rk
 - **A kernel rootkit can hide from `/proc` too.** If nothing shows but the box still feels wrong, scan it from another box (SH-03): a port open there but not in `ss` is hidden.
 - **Run it twice before acting** on a "hidden" finding: a process that ended between the two views can show once.
 - **ClamAV needs signatures** (`freshclam`). Without internet, there are none.
+
+## 47. AppArmor confinement, `roles/linux/LX-44-apparmor.sh` (LX-44)
+
+AppArmor gives a program a list of what it may touch, and the kernel holds it to that list **even when the program is hacked**. With Apache confined, a web shell inside it cannot run `bash`, read `/root` or write outside the upload folders. It comes with Ubuntu and Debian; nothing to install.
+
+### How to run it
+
+```sh
+sudo sh LX-44-apparmor.sh                                  # status, dry run
+sudo sh LX-44-apparmor.sh --protected p.csv --apply        # step by step
+```
+
+Run it three times, with time between:
+
+| Run | Step | What happens |
+| --- | --- | --- |
+| 1 | **complain** | The profile is loaded but **nothing is blocked**: AppArmor only logs what it would block. Now use the site: log in, buy, upload, read mail. |
+| 2 | **learn** | The log lines are sorted. Normal ones (reads, logs, capabilities) are offered for the profile. Writes into the site code are asked on their own (an upload, or a web shell?). Programs it ran are **never** added: a shell, `curl`, `nc` or `python` is shown as `[!]`. Look at the site with SV-16 first. |
+| 3 | **enforce** | Everything not in the profile is blocked. The service is checked right after; if it stopped answering, it goes back to complain on its own. A revert timer also runs. |
+
+### The services
+
+| Service | Profile |
+| --- | --- |
+| apache2, nginx | CCDC's `ccdc-apache2` / `ccdc-nginx`: sites read only, upload and cache folders writable (found on their own, more with `--writable DIR`), PHP mail through Postfix allowed, no shells |
+| php-fpm | The package's own profile when there is one (Ubuntu 24.04), else `ccdc-php-fpm` |
+| mariadb / mysql | The package's own profile when there is one, else `ccdc-mysqld` |
+| postfix, dovecot | Not covered: they run many helper programs |
+
+On Red Hat / Rocky (SELinux, not AppArmor) it only shows the SELinux mode and how to turn it on.
+
+### The questions
+
+| State | Answers | Flag |
+| --- | --- | --- |
+| unconfined | `[c]omplain` (default) / `[e]nforce now` / `[k]eep` | `--batch` takes complain |
+| complain | `[l]earn` (default when there are lines) / `[e]nforce` (default after 10 quiet minutes) / `[c]` stay | `--batch` |
+| enforced | `[k]eep` (default) / `[c]` back to complain | `--batch` |
+| Add the normal lines? / the writes into the site code? | `[y]` / `[n]` (site code: default no) | `--batch` |
+| Restart the service so it runs under its profile? | `[y]` / `[n]` | `--batch` |
+| Apply? | `[y]` / `[n]` | `--apply` |
+
+### What it changes
+
+Only with `--apply`: profiles in `/etc/apparmor.d/ccdc-*`, learned rules in `/etc/apparmor.d/local/ccdc-*`, `force-complain/` links for packaged profiles. Every change has an undo line; `revert.sh` puts back an enforce.
+
+### What it produces
+
+In `apparmor-N/`: `output.txt`, `status.txt` (mode of each service), `plan.txt`, `learned-NAME.txt` (the sorted log lines), `summary.txt`, `revert.sh`.
+
+### What to watch for
+
+- **Not yet tried on a real AppArmor kernel** (the test box is a container). Do the whole cycle on a practice VM first.
+- **Enforcing too early breaks features quietly**: the home page loads but upload fails. The check only loads the home page. Click through everything before you confirm.
+- A running service only picks up a new profile after a restart (asked).

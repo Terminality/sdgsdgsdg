@@ -1,6 +1,6 @@
 # Linux — hosts + services
 
-Scripts owned by this role. 14 of 14 are built.
+Scripts owned by this role. 15 of 15 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -19,6 +19,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LX-42 | Linux persistence sweep | Hardening: medium | service | built | [`roles/linux/LX-42-persistence-sweep.sh`](../../roles/linux/LX-42-persistence-sweep.sh) |
 | LX-43 | Log shipping to Splunk | wave2 | medium | built | [`roles/linux/LX-43-log-shipping.sh`](../../roles/linux/LX-43-log-shipping.sh) |
 | LX-45 | Rootkit and malware scan | wave2 | medium | built | [`roles/linux/LX-45-rootkit-scan.sh`](../../roles/linux/LX-45-rootkit-scan.sh) |
+| LX-44 | AppArmor confinement | wave2 | medium | built | [`roles/linux/LX-44-apparmor.sh`](../../roles/linux/LX-44-apparmor.sh) |
 | SV-26 | Brute-force and spam banning | Alerts | service | built | [`roles/linux/SV-26-banning.sh`](../../roles/linux/SV-26-banning.sh) |
 
 Script files in this folder are named `<ID>-<short-name>.sh` or `.ps1`. What the tiers and risk levels mean, and the rules for each: `docs/PLAN.md`.

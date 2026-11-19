@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-19: AppArmor confinement (LX-44, new)
+
+- **LX-44** puts apache2, nginx, php-fpm and mariadb/mysql under AppArmor in three steps: **complain** (the profile is loaded, nothing is blocked, AppArmor logs what it would block), **learn** (the logged accesses are sorted: normal ones offered for the profile, writes into the site code asked on their own, programs it ran never added - a shell or curl is flagged as a web shell), **enforce** (the service is checked right after; if it stopped answering it goes back to complain, and a revert timer runs).
+- Asked per service by its state: unconfined `[c]omplain` / `[e]nforce` / `[k]eep`; complain `[l]earn` / `[e]nforce` / `[c]` stay; enforced `[k]eep` / `[c]` back. A profile the package ships (php-fpm, mysqld) is used instead of CCDC's.
+- Found while testing: AppArmor refuses `w` and `a` in one rule, so learned append+write lines keep only `w`.
+- Tested: 44 checks under seven shells and three awks in a fake root; every profile and learned rule is checked by the real AppArmor 4.0 parser. Not yet run on a kernel with AppArmor on.
+
 ## 2026-11-19: Rootkit and malware scan (LX-45, new)
 
 - **LX-45** looks for what hides: processes in /proc that ps doesn't show, listening ports in /proc/net that ss doesn't show (both checked twice, a second apart), kernel modules hidden from lsmod or with a rootkit's name, kernel taint, core programs (ps, ss, ls, ssh, sudo, login...) that don't match their package, known rootkit paths, programs in /dev and /dev/shm, fake kernel threads, miners, promiscuous interfaces, and ClamAV/rkhunter/chkrootkit when installed (installing them is offered).
