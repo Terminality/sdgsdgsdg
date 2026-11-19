@@ -1,6 +1,6 @@
 # Build status
 
-37 of 42 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+38 of 43 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -8,7 +8,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | --- | --- | --- |
 | Enum (look only) | 6 | 7 |
 | Backup and prep | 5 | 5 |
-| wave2 | 8 | 8 |
+| wave2 | 9 | 9 |
 | any | 1 | 1 |
 | Hardening: easy | 3 | 3 |
 | Hardening: medium | 2 | 2 |
@@ -52,6 +52,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | SV-40 | Mail password rotation | medium | built | `roles/applications/SV-40-mail-passwords.sh` |
 | SV-44 | Splunk hardening and passwords | medium | built | `roles/applications/SV-44-splunk-hardening.sh` |
 | SV-31 | Mail tamper check | medium | built | `roles/applications/SV-31-mail-tamper.sh` |
+| LX-43 | Log shipping to Splunk | medium | built | `roles/linux/LX-43-log-shipping.sh` |
 
 ## any
 

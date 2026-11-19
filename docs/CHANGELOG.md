@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Log shipping to Splunk (LX-43, new)
+
+- **LX-43 --receive** (the Splunk box): a Splunk syslog input (TCP 1514 by default) as its own app, `ccdc_receiver`, then a restart (asked).
+- **LX-43 --send** (every other box): rsyslog sends auth, syslog, kern, mail and cron, plus the service log files it finds (Apache/nginx, mail, Dovecot, Roundcube, MySQL/MariaDB/PostgreSQL, audit, fail2ban), disk-buffered so nothing is lost while Splunk is down. Config checked with `rsyslogd -N1`; then a test line to search for in Splunk. Another forward already configured is flagged.
+- Found while testing: some init scripts have no `restart` and the old rsyslog kept running on the old config, so the script now checks for a NEW rsyslog process and falls back to stop + start; the shipping ruleset must be defined before the file inputs that use it.
+- Tested: 31 checks under seven shells and three awks; live rsyslog to a local listener. The receiver hasn't been run on a real Splunk.
+
 ## 2026-11-18: Webmail (Roundcube) hardening (SV-41, new)
 
 - **SV-41** finds each Roundcube and checks: its version against CVE-2025-49113 (logged-in users run code; fixed 1.6.11 / 1.5.10) and CVE-2024-42009 (1.6.8 / 1.5.8), reading the distribution changelog for backported fixes; logins sent to a server that isn't this box; the installer; debug options that write passwords to logs; the default `des_key`; `log_logins`; plugin files newer than Roundcube itself; readable configs; logs, config, SQL and bin downloadable from the web.
