@@ -49,6 +49,7 @@ Contents:
 39. Splunk hardening and passwords, `roles/applications/SV-44-splunk-hardening.sh` (SV-44)
 40. Web shell hunter, `roles/applications/SV-16-webshell-hunter.sh` (SV-16)
 41. Account lockdown, `roles/linux/LX-21-account-lockdown.sh` (LX-21)
+42. Mail tamper check, `roles/applications/SV-31-mail-tamper.sh` (SV-31)
 
 ---
 
@@ -2856,3 +2857,55 @@ In `accounts-N/`: `output.txt`, `accounts.txt` (every account and the decision),
 - **An already logged-in session stays logged in.** LX-40 shows it; kill it by hand.
 - **LDAP / AD accounts** (sssd, winbind) aren't in `/etc/passwd`, so they're not seen.
 - Cron jobs, PAM, services and the rest red team plants: **LX-42**.
+
+## 42. Mail tamper check, `roles/applications/SV-31-mail-tamper.sh` (SV-31)
+
+The quiet backdoors red team leaves in a mail server: a copy of every mail sent to them, a program run on every delivery, mail forwarded out, an open relay. It reads Postfix, Dovecot, the aliases and every user's mail files, then offers to undo each one.
+
+### How to run it
+
+```sh
+sudo sh SV-31-mail-tamper.sh                                  # look + dry run
+sudo sh SV-31-mail-tamper.sh --protected p.csv --apply        # asks about each fix
+sudo sh SV-31-mail-tamper.sh --protected p.csv --apply --batch --domain shop.local
+```
+
+### What it finds
+
+| Level | Found |
+| --- | --- |
+| HIGH | `always_bcc`, `sender_bcc_maps`, `recipient_bcc_maps` (a copy of mail goes somewhere); `mailbox_command` / `mailbox_transport` that isn't Dovecot or procmail (a program on every delivery); an unknown `content_filter`; a `master.cf` pipe service running a program Postfix doesn't ship; `mynetworks` open to the world; relay rules without `reject_unauth_destination`; aliases, `.forward` or `.procmailrc` that run a program (`"\| cmd"`) or `:include:` a file; sieve scripts that run programs |
+| MED | Aliases, `.forward`, virtual aliases or sieve scripts sending mail outside your domains; `header_checks`/`body_checks` that REDIRECT / DISCARD / BCC; a `relayhost` or `transport_maps`; a known filter (amavis, spamassassin, rspamd); a Dovecot post-login script; a big mail queue (spam going out?) |
+
+"Outside" means not one of `mydestination`, `myhostname`, `mydomain` or `--domain`.
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Each fix | `[y]` / `[n]`: default yes for HIGH, no for MED | `--batch` |
+| Apply? | `[y]` / `[n]` | `--apply` |
+
+### The fixes
+
+- A Postfix setting is commented out with `#SV-31: `, together with its continuation lines.
+- `mynetworks` is set to `127.0.0.0/8 [::1]/128`, and the relay rules get `reject_unauth_destination`.
+- A `master.cf` service or an alias line is commented out (then `newaliases`).
+- `.forward`, `.procmailrc` and sieve files are moved to quarantine.
+
+### Safety
+
+- Dry run unless `--apply`. Revert timer (120 s).
+- After the changes: `postfix check`, a reload, and **SMTP (25) and IMAP (143) must still answer** (they're scored), or everything is put back.
+- The undo restores every file and reloads Postfix.
+
+### What it produces
+
+In `mail-tamper-N/`: `output.txt`, `findings.txt`, `plan.txt`, `summary.txt`, `revert.sh`.
+
+### What to watch for
+
+- **A real filter (amavis, rspamd)** shows as MED. Keep it if it's yours.
+- **Exim and Sendmail** aren't read. **SQL/LDAP maps** are named, not opened.
+- Banner, VRFY, HELO: **SV-30**. Mail passwords: **SV-40**.

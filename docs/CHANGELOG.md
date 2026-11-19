@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Mail tamper check (SV-31, new)
+
+- **SV-31** finds mail backdoors and offers to undo each one: `always_bcc` / bcc maps (a copy of all mail), `mailbox_command` / `mailbox_transport` (a program on every delivery), unknown `content_filter`, `master.cf` pipe services that run a program Postfix doesn't ship, an open `mynetworks`, relay rules without `reject_unauth_destination`, aliases / `.forward` / `.procmailrc` that run a program or forward outside, sieve scripts that execute or redirect out, `header_checks` redirects, Dovecot post-login scripts, a big queue.
+- Fixes: the setting commented out (with its continuation lines), the service or alias line commented out (then newaliases), files quarantined, mynetworks set to this box. After: `postfix check`, reload, and SMTP 25 / IMAP 143 must still answer or it is all put back.
+- Found while testing: field values hold `|` (alias pipes, `name|value` pairs), so findings are now tab-separated; Debian's stock `uucp` service runs `uux` without a path, so standard services are matched by program name.
+- Tested: 39 checks under seven shells and three awks; live Postfix with five planted backdoors.
+
 ## 2026-11-18: Account lockdown (LX-21, new)
 
 - **LX-21** goes through every account one by one: a second UID 0, empty passwords, hashes in /etc/passwd, admin groups (sudo, wheel, docker, lxd, disk ...), its sudo lines and NOPASSWD, SSH keys and key options, service accounts with a login shell, passwords changed in the last 2 days. Each account worth a decision is asked: `[k]eep [l]ock [d] take admin away [r]emove keys [b]oth [n]o-login shell [a]ll the rest`. Root, you and protected accounts are never locked.
