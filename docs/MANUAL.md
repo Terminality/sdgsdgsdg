@@ -51,6 +51,7 @@ Contents:
 41. Account lockdown, `roles/linux/LX-21-account-lockdown.sh` (LX-21)
 42. Mail tamper check, `roles/applications/SV-31-mail-tamper.sh` (SV-31)
 43. Webmail (Roundcube) hardening, `roles/applications/SV-41-roundcube-hardening.sh` (SV-41)
+44. Log shipping to Splunk, `roles/linux/LX-43-log-shipping.sh` (LX-43)
 
 ---
 
@@ -2970,3 +2971,49 @@ In `roundcube-N/`: `output.txt`, `findings.txt`, `plan.txt`, `summary.txt`, `rev
 
 - **Upgrading isn't done here.** Use `apt-get install --only-upgrade roundcube-core`, or a new release for a tarball.
 - **Web shells inside Roundcube:** `SV-16 --webroot /usr/share/roundcube`. Mail passwords: **SV-40**. Its database password: **SV-42**. Mail backdoors: **SV-31**.
+
+## 44. Log shipping to Splunk, `roles/linux/LX-43-log-shipping.sh` (LX-43)
+
+Red team clears the logs on the box they're on. Logs that already went to the Splunk box are safe, and one search there shows every box. Run it on **the Splunk box first** (receive), **then every other Linux box** (send).
+
+### How to run it
+
+```sh
+sudo sh LX-43-log-shipping.sh --receive --apply                         # on the Splunk box
+sudo sh LX-43-log-shipping.sh --send --to 10.0.0.20 --apply             # on every other box
+sudo sh LX-43-log-shipping.sh --send --to 10.0.0.20 --apply --batch --logs all
+```
+
+Then open the port on the Splunk box (`LX-25`) and on any firewall between the boxes.
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| What does this box do with logs? | `[s]end` its logs / `[r]eceive` (this IS the Splunk box); default r when Splunk is installed | `--send` / `--receive` |
+| Port | typed, Enter = 1514 | `--port` |
+| TCP or UDP? | `[t]` TCP (nothing lost, waits on disk) / `[u]` UDP | `--udp` |
+| The Splunk box's address (send) | typed | `--to` |
+| Which logs? (send) | `[a]ll` found / `[s]ystem only` / `[p]ick` one by one | `--logs all\|system` |
+| Apply? | `[y]` / `[n]` | `--apply` |
+
+### What it does
+
+- **Receive:** writes the Splunk app `etc/apps/ccdc_receiver` with a `[tcp://1514]` input (sourcetype syslog, the sender's address as host, `--index`, default main), then restarts Splunk (asked) and checks the port listens.
+- **Send:** writes `/etc/rsyslog.d/90-ccdc-splunk.conf`:
+  - the system logs: auth, syslog (`*.info`), mail, cron, kern
+  - the service log files it finds, read with `imfile`: Apache/httpd/nginx access and error, `mail.log`/`maillog`, Dovecot, Roundcube errors and user logins, MySQL/MariaDB/PostgreSQL, `audit.log`, fail2ban, Splunk's own log
+  - a disk-backed queue, so logs wait while Splunk is down and are sent later
+- The config is checked with `rsyslogd -N1`, rsyslog restarts (the script makes sure a new rsyslog is running), and a test line `CCDC-LX43-TEST-HOST-TIME` is sent. **Search Splunk for it.**
+- Another forward already in the rsyslog config is flagged: red team can send copies of your logs out too.
+
+### What it produces
+
+In `logship-N/`: `output.txt`, `plan.txt`, `summary.txt` (with the test line and the search to run), `revert.sh`.
+
+### What to watch for
+
+- **No test line in Splunk?** The port isn't open on the Splunk box, or `--receive` wasn't run there.
+- **Plain syslog isn't encrypted.** Fine inside the team network.
+- **A box with only journald:** `apt-get install rsyslog` first.
+- **The receiver hasn't been run on a real Splunk yet.** Check `splunk list tcp` after the restart.
