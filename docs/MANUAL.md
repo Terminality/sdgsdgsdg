@@ -3425,7 +3425,7 @@ Only a person can say a change was ours. When every new line carries NW-20 or NW
 - **added, removed or moved.** Each line is compared with the section it sits in, so `shutdown` under one interface is not the same as under another. Moved means a rule changed places (above or below another).
 - **HIGH** for accounts, passwords and keys, SNMP, scheduled jobs, AAA, VPN and tunnels, NAT, management access, firewall rules, logging, routes, anything turned off. **MED** for the rest.
 - **The undo** is a suggestion for Cisco, VyOS, FortiGate, Linux iptables and MikroTik, and a place to look for Palo Alto and pfSense / OPNsense. It is never sent: check it, then type it.
-- A change is shown once. It stays on the open list until it goes away ("back as in the baseline") or you say it was ours.
+- A change is shown once. It stays on the open list until it goes away ("back as in the baseline") or you say it was ours. If a change you said was ours is later undone by someone, that is shown as HIGH.
 - A changed SSH host key is HIGH and that device is no longer read. A device that cannot be read is tried again next round.
 
 ### What it produces

@@ -211,12 +211,12 @@ fi
 printf '%s' "$DEVICES" | grep . | while IFS=',' read -r _n _a _v _u _p; do
     case " $VENDORS " in *" $_v "*) ;; *) echo "BADV|$_v"; continue ;; esac
     [ -n "$_n" ] && [ -n "$_a" ] || { echo "BAD|$_n"; continue; }
-    case "${_p:-22}" in *[!0-9]*) echo "BAD|$_n"; continue ;; esac
     printf '%s|%s|%s|%s|%s\n' "$_n" "$_a" "$_v" "${_u:-$DEFUSER}" "${_p:-22}"
 done >>"$W/devices"
 grep -q '^BAD' "$W/devices" && cc_die 2 "--device needs NAME,ADDRESS,VENDOR with a known vendor ($VENDORS)"
 [ -s "$W/devices" ] || cc_die 3 "no network devices found (os must be network or a vendor name)"
 for _n in $(cut -d'|' -f1 "$W/devices"); do case "$_n" in *[!A-Za-z0-9_.-]*) cc_die 2 "device name '$_n' may only use letters, digits, '.', '_' and '-'" ;; esac; done
+_bp=$(awk -F'|' '$5 !~ /^[0-9]+$/ || $5 < 1 || $5 > 65535 { print $1; exit }' "$W/devices"); [ -z "$_bp" ] || cc_die 2 "device $_bp: the SSH port must be a number from 1 to 65535"
 
 # ---- Reading a device (the same reads as NW-01) ---------------------------------------------
 sshopts() {
@@ -236,7 +236,7 @@ read_cmds() {
         vyos)      printf '/opt/vyatta/bin/vyatta-op-cmd-wrapper show configuration commands' ;;
         pfsense|opnsense) printf 'cat /conf/config.xml' ;;
         mikrotik)  printf '/export' ;;
-        linux)     printf 'iptables-save 2>/dev/null; nft list ruleset 2>/dev/null; ip -o addr 2>/dev/null; ip route 2>/dev/null' ;;
+        linux)     printf 'S=; [ "$(id -u)" = 0 ] || S="sudo -n"; $S iptables-save 2>/dev/null; $S nft list ruleset 2>/dev/null; ip -o addr 2>/dev/null; ip route 2>/dev/null' ;;
     esac
 }
 # readdev VENDOR USER ADDRESS PORT OUT -> the device's config in OUT; errors in $W/err
@@ -311,26 +311,30 @@ where() {
         function path(   i, o) {  # awk, not shell: posix-ok
             o = ""; for (i = 1; i <= n; i++) o = o (o == "" ? "" : " > ") s[i]; return o }' "$2"
 }
-# judge -> reads "sign US line" and prints "sev US category US meaning US sign US line"
+# judge -> reads "sign US line US section"; the line decides, else its section
+# (a MikroTik "add name=x" under "/user" is an account)
 judge() {
-    awk -F"$US" -v OFS="$US" '{
-        l = tolower($2); c = ""; m = ""
-        if (l ~ /(username|local-user|system login user|config system admin|\/user add|user add|<user>|create user| admin )/) { c = "account"; m = "an account added or changed: a back door?" }
+    awk -F"$US" -v OFS="$US" '
+    function cls(l) {  # awk, not shell: posix-ok
+        c = ""; m = ""
+        if (l ~ /(username|local-user|system login user|config system admin|\/user add|user add|^\/user|<user>|create user| admin )/) { c = "account"; m = "an account added or changed: a back door?" }
         else if (l ~ /(password|secret|passwd|key-string|phash|psksecret|authorized-?keys|ssh-rsa|ssh-ed25519)/) { c = "password/key"; m = "a password or key changed: a known password or a planted key?" }
         else if (l ~ /(snmp|community)/) { c = "SNMP"; m = "a community the red team knows?" }
         else if (l ~ /(kron|event manager|scheduler|\/system script|cron|<cron>|crontab)/) { c = "scheduled job"; m = "a scheduled job or script: something that comes back by itself?" }
         else if (l ~ /(aaa|tacacs|radius|ldap)/) { c = "AAA"; m = "who may log in, or how, changed" }
         else if (l ~ /(crypto|tunnel|ipsec|vpn|wireguard|pre-shared|gre |l2tp|pptp)/) { c = "VPN/tunnel"; m = "a tunnel: a way in or a way out for data?" }
-        else if (l ~ /(nat|static \(|port-forward|dst-nat|dstnat|vip|destination-translation|masquerade|<rdr>)/) { c = "NAT"; m = "a port forwarded in to a box?" }
+        else if (l ~ /((^|[^a-z])nat([^a-z]|$)|static \(|port-forward|dst-nat|dstnat|vip|destination-translation|masquerade|<rdr>)/) { c = "NAT"; m = "a port forwarded in to a box?" }
         else if (l ~ /(telnet|http server|ip http|allowaccess|line vty|transport input|management|service www|winbox|service (ssh|api|ftp)|set ssh|ssh version|webgui|<webgui>|permitted-ip|trusthost|ssh [0-9])/) { c = "management access"; m = "who may manage the device, or over what, changed" }
         else if (l ~ /(access-list|access-group|permit|deny|allow|accept|drop|reject|rulebase|firewall policy|firewall filter|^-a |^-i |^-d |chain|rule|<filter>|security-policy)/) { c = "firewall rule"; m = "something let in, or something blocked (a scored service?)" }
         else if (l ~ /(logging|syslog|log-|log |<syslog>)/) { c = "logging"; m = "logging changed: someone hiding what they do?" }
-        else if (l ~ /(route|gateway|ospf|bgp|rip|eigrp)/) { c = "routing"; m = "traffic sent somewhere else?" }
+        else if (l ~ /(route|gateway|ospf|bgp|(^|[^a-z])rip([^a-z]|$)|eigrp)/) { c = "routing"; m = "traffic sent somewhere else?" }
         else if (l ~ /(shutdown|disable|disabled)/) { c = "turned off"; m = "a service or a port taken down?" }
         else if (l ~ /(dns|name-server|nameserver|ntp)/) { c = "DNS/time"; m = "where the device asks for names or time changed" }
-        sev = (c == "" || c == "DNS/time") ? "MED" : "HIGH"
-        if (c == "") { c = "other"; m = "a change" }
-        print sev, c, m, $1, $2 }'
+    }
+    { cls(tolower($2)); if (c == "" && $3 != "") cls(tolower($3))
+      sev = (c == "" || c == "DNS/time") ? "MED" : "HIGH"
+      if (c == "") { c = "other"; m = "a change" }
+      print sev, c, m, $1, $2 }'
 }
 # hint VENDOR SIGN LINE SECTION -> a suggested undo (shown only; never sent)
 hint() {
@@ -485,6 +489,18 @@ one_device() {
             s[t] = s[t] substr($0, 1, 1); if (!(t in o)) { o[t] = 1; l[++n] = t } }
          END { for (i = 1; i <= n; i++) { t = l[i]; g = s[t]; print ((g ~ /\+/ && g ~ /-/) ? "~" : substr(g, 1, 1)) t } }' >"$W/now.$_n"
     setdiff "$W/now.$_n" "$_d/ok" >"$W/cur2.$_n"
+    # A change you said was ours that is no longer there was UNDONE (by someone):
+    # shown once, and taken off the "ours" list.
+    setdiff "$_d/ok" "$W/now.$_n" >"$W/undone.$_n"
+    if [ -s "$W/undone.$_n" ]; then
+        while IFS= read -r _l; do
+            _gl=$(printf '%s' "${_l#?}" | cut -d"$US" -f1 | sed 's/^[ \t]*//' | awk "$MASK"'{ print mask($0) }')
+            cc_show "$C_RED" "  [!] HIGH $_n: a change you said was OURS was undone: $(printf '%s' "$_gl" | cut -c1-100)"
+            printf '%-20s %-14s %-5s %-8s %-18s %s\n' "$_t" "$_n" HIGH undone "ours, undone" "$_gl" >>"$CH"
+            NEWALL=$((NEWALL + 1)); HIGHALL=$((HIGHALL + 1))
+        done <"$W/undone.$_n"
+        setdiff "$_d/ok" "$W/undone.$_n" >"$W/ok.n"; cat "$W/ok.n" >"$_d/ok"
+    fi
     setdiff "$W/cur2.$_n" "$_d/open" >"$W/new.$_n"
     setdiff "$_d/open" "$W/cur2.$_n" >"$W/gone.$_n"
     _nn=$(grep -c . "$W/new.$_n"); _ng=$(grep -c . "$W/gone.$_n")
@@ -495,11 +511,11 @@ one_device() {
         printf '%-20s %-14s %-5s %-8s %-18s %s\n' "$_t" "$_n" "-" "gone" "back as before" "$_gl" >>"$CH"
     done <"$W/gone.$_n"
     cp "$W/cur2.$_n" "$_d/open"
-    [ "$_nn" -gt 0 ] || { [ "$_ng" -gt 0 ] || cc_show "$C_GRY" "  [-] $_t $_n: no new change"; return; }
+    [ "$_nn" -gt 0 ] || { [ "$_ng" -gt 0 ] || [ -s "$W/undone.$_n" ] || cc_show "$C_GRY" "  [-] $_t $_n: no new change"; return; }
     (umask 077; cp "$W/raw.$_n" "$_d/copies/$(date -u +%Y%m%dT%H%M%SZ).cfg")
     # sign US line US section
     awk -F"$US" -v OFS="$US" '{ print substr($1, 1, 1), substr($1, 2), $2 }' "$W/new.$_n" >"$W/nw"
-    awk -F"$US" -v OFS="$US" '{ print $1, $2 }' "$W/nw" | judge >"$W/jd"
+    judge <"$W/nw" >"$W/jd"
     paste -d"$US" "$W/jd" "$W/nw" >"$W/full"
     _nh=$(grep -c "^HIGH$US" "$W/full")
     NEWALL=$((NEWALL + _nn)); HIGHALL=$((HIGHALL + _nh))

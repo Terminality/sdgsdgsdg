@@ -63,6 +63,7 @@ $SH "$C" >/dev/null 2>&1; t_eq "$?" 2 "no device exits 2"
 $SH "$C" --device r1,ios,cisco-ios --baseline maybe >/dev/null 2>&1; t_eq "$?" 2 "a bad --baseline exits 2"
 $SH "$C" --device r1,ios,cisco-ios --every 3 >/dev/null 2>&1; t_eq "$?" 2 "--every under 10 seconds exits 2"
 $SH "$C" --device r1,ios,cisco-nope >/dev/null 2>&1; t_eq "$?" 2 "an unknown vendor exits 2"
+$SH "$C" --device r1,ios,cisco-ios,admin,22x >/dev/null 2>&1; t_eq "$?" 2 "a port that is not a number exits 2"
 out=$($SH "$C" --help 2>&1); t_has "$out" "--baseline" "--help"
 
 t_start "first run: the baseline"
@@ -163,6 +164,12 @@ if command -v script >/dev/null 2>&1; then
     out=$(run --device r3,ios3,cisco-ios --once --batch 2>&1)
     t_has "$out" "r3: no new change" "accepted lines are not shown again"
     t_has "$(cat "$(newest)/summary.txt")" "logging host 6.6.6.6" "the one left open is still listed"
+    # someone takes away a change we said was ours
+    edit_f "$D/ios3.cfg" grep -v 'permit ip 10.0.0.0 0.0.0.255 any'
+    out=$(run --device r3,ios3,cisco-ios --once --batch 2>&1)
+    t_has "$out" "[!] HIGH r3: a change you said was OURS was undone: permit ip 10.0.0.0 0.0.0.255 any" "an undone 'ours' change is shown"
+    out=$(run --device r3,ios3,cisco-ios --once --batch 2>&1)
+    t_hasnt "$out" "was undone" "once"
     # all ours by default when every line has NW-20/21 names
     printf 'access-list BT-IN extended deny ip any any log\n' >>"$D/ios3.cfg"
     printf '\n\n\no\n\n' >"$T_TMP/ans"
@@ -238,6 +245,8 @@ for d in v1 f1 m1 l1 p1 s1; do t_has "$out" "$d: no new change" "$d: no change f
 printf "set system login user evil authentication encrypted-password '\$6\$bad'\n" >>"$D/vy.cfg"
 edit_f "$D/fg.cfg" awk '$0 == "config firewall policy" { print "config system admin"; print "    edit \"evil\""; print "        set accprofile \"super_admin\""; print "    next"; print "end" } { print }'
 printf '/ip firewall nat\nadd action=dst-nat chain=dstnat dst-port=4444 protocol=tcp to-addresses=10.0.0.9\n' >>"$D/mt.cfg"
+printf '/user\nadd group=full name=evil\n' >>"$D/mt.cfg"
+printf 'set interfaces ethernet eth0 description %s\n' "'description with tripwire'" >>"$D/vy.cfg"
 edit_f "$D/lx.cfg" awk '$0 == "COMMIT" { print "-A INPUT -p tcp --dport 4444 -j ACCEPT" } { print }'
 printf 'table inet evil {\n\tchain c {\n\t\ttype filter hook input priority filter; policy accept;\n\t\ttcp dport 4444 accept\n\t}\n}\n' >>"$D/lx.cfg"
 edit_f "$D/pa.cfg" awk '{ print } $0 == "        to trust;" { print "        action allow;" }'
@@ -249,6 +258,8 @@ t_has "$out" 'undo (not sent): config system admin / delete "evil" / end' "Forti
 t_has "$out" "added: add action=dst-nat chain=dstnat dst-port=4444" "MikroTik: the new NAT"
 t_has "$out" "NAT: a port forwarded in to a box?" "MikroTik: what it may mean"
 t_has "$out" "/ip firewall nat print, find the new entry" "MikroTik: hint"
+t_ok "MikroTik: a user added under /user is an account, HIGH" grep -q 'HIGH  added    account .*add group=full name=evil' "$(newest)/changes.txt"
+t_ok "a description is not a route (no 'rip' inside a word)" grep -q 'MED   added    other .*description with tripwire' "$(newest)/changes.txt"
 t_has "$out" "undo (not sent): iptables -t filter -D INPUT -p tcp --dport 4444 -j ACCEPT" "Linux: iptables -D hint"
 t_has "$out" "in: rulebase > security > rules > web" "Palo Alto: the section path"
 t_has "$out" "undo (not sent): nft delete table inet evil" "Linux: a new nft table"
