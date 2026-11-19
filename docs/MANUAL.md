@@ -3109,7 +3109,7 @@ Only with `--apply`: processes killed, files quarantined (the undo puts files ba
 
 ### What it produces
 
-In `rootkit-N/`: `output.txt`, `findings.txt`, `summary.txt`, `clamav.txt` / `rkhunter.txt` / `chkrootkit.txt` when they ran, `revert.sh`.
+In `rootkit-N/`: `output.txt`, `findings.txt`, `summary.txt`, `clamav.txt` / `rkhunter.txt` / `chkrootkit.txt` when they ran. Quarantined files go to the quarantine folder; their undo lines (put them back) to the undo log.
 
 ### What to watch for
 
