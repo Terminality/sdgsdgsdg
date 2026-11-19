@@ -58,6 +58,7 @@ Contents:
 48. Safe security updates, `roles/linux/LX-46-safe-updates.sh` (LX-46)
 49. TLS certificate check, `roles/applications/SV-32-tls-check.sh` (SV-32)
 50. Device accounts and sessions, `roles/network/NW-12-device-sessions.sh` (NW-12)
+51. Network device hardening, `roles/network/NW-21-device-hardening.sh` (NW-21)
 
 ---
 
@@ -3331,3 +3332,57 @@ In `device-sessions-N/`: `output.txt`, `accounts.txt`, `sessions.txt`, `plan.txt
 - **A teammate outside `--team` looks like red team.** Give `--team`, and read each question.
 - **Only local accounts.** TACACS/RADIUS logins live on that server.
 - **Linux without `/var/run/utmp`** (some containers) shows no sessions.
+
+## 51. Network device hardening, `roles/network/NW-21-device-hardening.sh` (NW-21)
+
+Locks down how the firewalls, routers and switches themselves are managed: who can log in to them, over what, and where their logs go.
+
+### How to run it
+
+```sh
+BT_NET_PASS='pw' sh NW-21-device-hardening.sh --hosts config/hosts.csv --team 10.0.0.0/24 --log-host 10.0.0.20 --ntp 10.0.0.20            # look, dry run
+BT_NET_PASS='pw' sh NW-21-device-hardening.sh --device fw1,10.0.0.1,paloalto --team 10.0.0.0/24 --log-host 10.0.0.20 --ntp 10.0.0.20 --apply   # ONE device first
+```
+
+Run NW-01 before (backup) and after (the changes become the saved copy).
+
+### What it checks
+
+| Check | Cisco IOS | Cisco ASA | Palo Alto | FortiGate | VyOS | MikroTik |
+| --- | --- | --- | --- | --- | --- | --- |
+| Telnet / plain HTTP management | `transport input ssh`, `no ip http server` | `no telnet` lines | `disable-telnet` / `disable-http yes` | `allowaccess` without telnet/http | `delete service telnet` | `/ip service disable` telnet, ftp, www, api |
+| Management open to any address | ACL `BT-MGMT` on the vty lines | `ssh` / `http` lines for the team only | `permitted-ip` | `trusthost` per admin | reported (NW-20) | `address=` on ssh, winbox |
+| Idle timeout (`--timeout`, 10) | `exec-timeout` | `ssh timeout` | `idle-timeout` | `admintimeout` | | |
+| Default SNMP community | removed | removed | reported | reported | removed | reported |
+| Log server (`--log-host`) | `logging host` | `logging host` | reported (web GUI) | `syslogd setting` | `syslog remote` | remote logging action |
+| Time server (`--ntp`) | `ntp server` | `ntp server` | `ntp-servers` | `system ntp` | `ntp server` | `ntp client` |
+| Banner (`--banner`) | `banner login` | `banner login` | `login-banner` | `pre-login-banner` | `banner pre-login` | `/system note` |
+| Other | SSH v2, `service password-encryption` | | | | | MAC telnet / WinBox off |
+
+A non-default SNMP community is reported, but its value is never shown or written. The management limit always keeps this box (`--me`, else found with `ip route get`). Linux devices: use LX-22 and LX-25. pfSense / OPNsense: the web GUI places are listed.
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Each finding | `[f]ix` (default) / `[l]eave` / `[a]ll the rest default` | `--batch` |
+| Do these? | `[y]` / `[n]` | `--apply` |
+| After a management or telnet change: log in from another team machine, keep? | `[y]` within `--timer` seconds (60), else put back | `--batch` keeps |
+
+### How a device is changed
+
+1. One SSH session to the device stays open; the changes go in through it.
+2. A NEW login from this box is tried. If it fails, everything is put back through the open session, and a new login is tried again.
+3. For a management limit or telnet change, it asks you to log in from another team machine. No answer in time, or `n`: put back.
+4. Saved (`write memory`, `commit`, `save`), then the device is read again and each finding checked: `[+]` fixed or `[x]` still there.
+
+### What it produces
+
+In `device-hardening-N/`: `output.txt`, `findings.txt`, `plan.txt`, `summary.txt`, `undo/DEVICE.sh` (puts the device back; needs `BT_NET_PASS`).
+
+### What to watch for
+
+- **Not yet run on real devices.** The commands follow each brand's documentation. Run without `--apply`, then `--apply` on ONE device (`--device`).
+- **The management limit locks out anyone outside `--team`**, including a scoring engine that logs in to the device. Put its address in `--team`, or the device on the protected list.
+- **The confirm countdown only expires by itself in shells with `read -t`** (bash, ksh, mksh, yash, busybox); in dash it waits for an answer.
+- **If this script is killed during the countdown**, the open session dies with it and the changes stay (Cisco and VyOS: unsaved, a reload undoes them).

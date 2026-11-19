@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-19: Network device hardening (NW-21, new)
+
+- **NW-21** reads each firewall, router and switch (Cisco IOS and ASA, Palo Alto, FortiGate, VyOS, MikroTik) and checks: telnet and plain HTTP management, management open to any address, SSH version 1, idle timeout, default SNMP communities (others reported, value never shown), MikroTik MAC telnet/WinBox, log server (`--log-host`), time server (`--ntp`), login banner, Cisco password encryption.
+- Asked per finding: `[f]ix` (default) / `[l]eave` / `[a]ll the rest`. Then per device one session stays open: the changes go in, a NEW login from this box is tried, and for management changes you confirm a login from another team machine within `--timer` seconds. Not confirmed, or the new login fails: everything is put back through the open session. An undo script per device (needs `BT_NET_PASS`).
+- After saving, each device is read again and every finding is checked.
+- Tested: 106 checks with a stand-in device for every brand under seven shells and three awks; the Cisco IOS stand-in applies the commands, so the after-check, the undo and the put-back after a failed login are real. Not yet on real devices.
+
 ## 2026-11-19: Device accounts and sessions (NW-12, new)
 
 - **NW-12** reads every local admin account and every logged-in session on each firewall, router and switch (Cisco IOS and ASA, Palo Alto, FortiGate, VyOS, MikroTik, Linux; pfSense/OPNsense pointed at the web GUI). The first run saves the account names as a baseline; an account added later is `[!]`.
