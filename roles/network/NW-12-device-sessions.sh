@@ -156,6 +156,13 @@ CC_TEE=$OUTF
 W="$CC_RUN_DIR/.work"; (umask 077; mkdir -p "$W")
 US=$(printf '\037')
 header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
+# j FIELD... -> one line, fields split by \037 (values may hold spaces; empty ones stay)
+j() { _j=$1; shift; for _jx in "$@"; do _j="$_j$US$_jx"; done; printf '%s\n' "$_j"; }
+# safe TEXT -> 0 if TEXT can go into a device command as it is.  Names come
+# from the device, so red team chose them: a quote or ; in one must never
+# reach a command line.
+safe() { case "$1" in ''|*[!A-Za-z0-9_.@/:#\ -]*) return 1 ;; esac; return 0; }
+trap 'rm -rf "$W"; exit 130' INT TERM HUP
 [ -n "$CONFIGS" ] || CONFIGS="$CC_OUT/net-configs"
 mkdir -p "$CONFIGS" 2>/dev/null
 SSH=${BT_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
@@ -236,7 +243,8 @@ read_cmds() {
         fortigate) printf 'show system admin\nget system admin list\nexit\n' ;;
         vyos)      printf '/opt/vyatta/bin/vyatta-op-cmd-wrapper show configuration commands; who' ;;
         mikrotik)  printf '/user print terse without-paging; /user active print terse without-paging' ;;
-        linux)     printf 'getent passwd; echo ===groups; getent group sudo wheel admin; echo ===who; who' ;;
+        # passwd -S: L = locked (needs root or sudo; without it the state stays unknown)
+        linux)     printf 'getent passwd; echo ===groups; getent group sudo wheel admin; echo ===who; who; echo ===status; for u in $(getent passwd | awk -F: '"'"'$3 == 0 || $3 >= 1000 { print $1 }'"'"'); do passwd -S "$u" 2>/dev/null || sudo -n passwd -S "$u" 2>/dev/null; done' ;;
     esac
 }
 # parse VENDOR RAW -> $W/acc ("name US rights US state") and $W/ses ("id US user US from US via")
@@ -249,7 +257,8 @@ parse() {
         v == "cisco-ios" && /^[* ]*[0-9]+ +(vty|tty|con|aux) +[0-9]+ / {
             me = ($0 ~ /^ *\*/); l = $0; sub(/^[* ]+/, "", l); n = split(l, f, /[ \t]+/)
             from = f[n]; if (from ~ /^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]$/ || from == "idle") from = "-"
-            ses((me ? "*" : "") f[2] " " f[3], f[4], from, f[2]) }
+            u = f[4]; if (u == "idle" || u ~ /^[0-9:]+$/) u = "-"
+            ses((me ? "*" : "") f[2] " " f[3], u, from, f[2]) }
         v == "cisco-asa" && $1 == "username" && $2 != "" && $3 != "attributes" { r = "privilege 2"; for (i = 3; i < NF; i++) if ($i == "privilege") r = "privilege " $(i + 1); acc($2, r, "active") }
         v == "cisco-asa" && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9a-fA-F.:]+$/ && $4 == "IN" { ses($1, $NF, $2, "ssh") }
         v == "paloalto" && $1 == "set" && $2 == "mgt-config" && $3 == "users" { n = $4; if (!(n in role)) role[n] = "role-based"; if ($0 ~ /superuser yes/) role[n] = "superuser"; if ($0 ~ /superreader yes/ && role[n] != "superuser") role[n] = "superreader"; if (!(n in seen2)) { seen2[n] = 1; order[++no] = n } }
@@ -270,6 +279,8 @@ parse() {
             if ($0 ~ / via=/) ses(n "@" a, n, a, w); else acc(n, "group " g, st) }
         v == "linux" && /^===groups/ { ing = 1; next }
         v == "linux" && /^===who/ { ing = 0; next }
+        v == "linux" && /^===status/ { inst = 1; next }
+        v == "linux" && inst { if ($2 == "L" || $2 == "LK") lk[$1] = 1; next }
         v == "linux" && ing { split($0, gg, ":"); m = gg[4]; k = split(m, mm, ","); for (i = 1; i <= k; i++) adm[mm[i]] = gg[1] }
         v == "linux" && !ing && split($0, pw, ":") >= 7 && pw[3] ~ /^[0-9]+$/ {
             if (pw[3] == 0) lin[pw[1]] = "uid 0 (root)"
@@ -277,7 +288,7 @@ parse() {
             if (pw[1] in lin) lo[++nl] = pw[1] }
         END {
             for (i = 1; i <= no; i++) { n = order[i]; acc(n, (v == "paloalto") ? role[n] : prof[n], "active") }
-            for (i = 1; i <= nl; i++) { n = lo[i]; acc(n, (n in adm) ? "admin (" adm[n] ")" : lin[n], "active") }
+            for (i = 1; i <= nl; i++) { n = lo[i]; acc(n, (n in adm) ? "admin (" adm[n] ")" : lin[n], (n in lk) ? "disabled" : "active") }
         }'
 }
 # in_team ADDRESS -> 0 if it is in one of the --team ranges
@@ -287,7 +298,8 @@ in_team() {
         function n(a,   p) { split(a, p, "."); return ((p[1] * 256 + p[2]) * 256 + p[3]) * 256 + p[4] }  # awk, not shell: posix-ok
         ip !~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { exit 1 }
         { b = $0; m = 32; if (index(b, "/")) { m = substr(b, index(b, "/") + 1) + 0; b = substr(b, 1, index(b, "/") - 1) }
-          s = 2 ^ (32 - m); if (int(n(ip) / s) == int(n(b) / s)) { hit = 1; exit } }
+          s = 1; for (i = m; i < 32; i++) s *= 2  # no ^: busybox awk may lack math
+          if (int(n(ip) / s) == int(n(b) / s)) { hit = 1; exit } }
         END { exit hit ? 0 : 1 }'
 }
 known() { case ",$KNOWN," in *",$1,"*) return 0 ;; esac; return 1; }
@@ -324,9 +336,10 @@ while IFS='|' read -r _n _a _v _u _p; do
     : >"$W/acc"; : >"$W/ses"; parse "$_v" "$W/raw.$_n"
     NDEV=$((NDEV + 1))
     _me=$(my_addr "$_a")
+    [ -n "$_me" ] || cc_show "$C_YEL" "  [*] $_n: cannot tell this box's address towards it (no ip route?): pass --me ADDRESS so this script's own login is recognised"
     cc_show "$C_GRN" "  [ok] $_n ($_a, $_v): $(grep -c . "$W/acc") account(s), $(grep -c . "$W/ses") session(s)$([ -n "$_me" ] && echo "; this box is $_me")"
-    while IFS="$US" read -r _an _ar _as; do printf '%s%s%s%s%s%s%s%s%s%s%s%s%s\n' "$_n" "$US" "$_a" "$US" "$_v" "$US" "$_u" "$US" "$_p" "$US" "$_an" "$US$_ar$US" "$_as" >>"$W/allacc"; done <"$W/acc"
-    while IFS="$US" read -r _si _su _sf _sw; do printf '%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' "$_n" "$US" "$_a" "$US" "$_v" "$US" "$_u" "$US" "$_p" "$US" "$_si" "$US$_su$US$_sf$US" "$_sw" "$US" "$_me" >>"$W/allses"; done <"$W/ses"
+    while IFS="$US" read -r _an _ar _as; do j "$_n" "$_a" "$_v" "$_u" "$_p" "$_an" "$_ar" "$_as" >>"$W/allacc"; done <"$W/acc"
+    while IFS="$US" read -r _si _su _sf _sw; do j "$_n" "$_a" "$_v" "$_u" "$_p" "$_si" "$_su" "$_sf" "$_sw" "$_me" >>"$W/allses"; done <"$W/ses"
 done <"$W/devices"
 [ "$NDEV" -eq 0 ] && cc_show "$C_RED" "  [x] no device answered"
 
@@ -341,13 +354,14 @@ while IFS="$US" read -r _n _a _v _u _p _an _ar _as; do
     if [ "$_an" = "$_u" ]; then _verd="your login"; cc_show "$C_GRN" "  [ok] $_n: $_an ($_ar) - the account this script logs in with"
     elif known "$_an"; then _verd="known"; cc_show "$C_GRN" "  [ok] $_n: $_an ($_ar) - yours (--known)"
     elif [ "$_as" = disabled ]; then _verd="disabled"; cc_show "$C_GRY" "  $_n: $_an ($_ar) - disabled"
+    elif ! safe "$_an"; then _verd="odd name"; cc_show "$C_RED" "  [!] $_n: an account with an odd name ($(printf '%s' "$_an" | tr -cd 'A-Za-z0-9_.@ -')...): check it in the device's own interface - it is not put into a command"
     elif ! cc_is_protected account "$_an" && [ "$_new" = y ]; then
         _verd="NEW"; cc_show "$C_RED" "  [!] $_n: $_an ($_ar) - NEW since the first run: who made it?"
-        printf 'acc%sd%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' "$US" "$US" "$_n" "$US" "$_a" "$US" "$_v" "$US" "$_u" "$US" "$_p" "$US" "$_an" "$US" "$_ar" "$US" "NEW since the first run" >>"$W/ask"
+        j acc d "$_n" "$_a" "$_v" "$_u" "$_p" "$_an" "$_ar" "NEW since the first run" >>"$W/ask"
     elif cc_is_protected account "$_an"; then _verd="protected"; cc_show "$C_GRN" "  [ok] $_n: $_an ($_ar) - on the protected list"
     else
         _verd="look at it"; cc_show "$C_YEL" "  [*] $_n: $_an ($_ar) - $([ "$FIRST" = 1 ] && echo 'first run: is it yours? (--known NAME stops this question)' || echo 'there at the first run')"
-        printf 'acc%sk%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' "$US" "$US" "$_n" "$US" "$_a" "$US" "$_v" "$US" "$_u" "$US" "$_p" "$US" "$_an" "$US" "$_ar" "$US" "$([ "$FIRST" = 1 ] && echo 'first run' || echo 'there at the first run')" >>"$W/ask"
+        j acc k "$_n" "$_a" "$_v" "$_u" "$_p" "$_an" "$_ar" "$([ "$FIRST" = 1 ] && echo 'first run' || echo 'there at the first run')" >>"$W/ask"
     fi
     printf '%-14s %-10s %-20s %-24s %s\n' "$_n" "$_v" "$_an" "$_ar" "$_as, $_verd" >>"$CC_RUN_DIR/accounts.txt"
 done <"$W/allacc"
@@ -367,12 +381,13 @@ while IFS="$US" read -r _n _a _v _u _p _si _su _sf _sw _me; do
         _verd="console"; cc_show "$C_YEL" "  [*] $_n: $_su on the console ($_id) - someone at the device itself"
     elif in_team "$_sf"; then
         _verd="team"; cc_show "$C_GRN" "  [ok] $_n: $_su from $_sf ($_sw) - your team (--team)"
-        printf 'ses%sl%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' "$US" "$US" "$_n" "$US" "$_a" "$US" "$_v" "$US" "$_u" "$US" "$_p" "$US" "$_id" "$US" "$_su" "$US" "$_sf" "$US" "$_sw" >>"$W/ask"
+    elif ! safe "$_id" || ! safe "$_su" || ! safe "$_sf"; then
+        _verd="odd"; cc_show "$C_RED" "  [!] $_n: a session with odd characters in its name or address: end it in the device's own interface"
     else
         _verd="NOT your team"
         if [ -n "$TEAM" ]; then cc_show "$C_RED" "  [!] $_n: $_su from $_sf ($_sw) - not from your team"
         else cc_show "$C_YEL" "  [*] $_n: $_su from $_sf ($_sw) - yours? (--team CIDR tells your addresses apart)"; _verd="unknown"; fi
-        printf 'ses%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' "$US" "$([ -n "$TEAM" ] && echo k || echo l)" "$US" "$_n" "$US" "$_a" "$US" "$_v" "$US" "$_u" "$US" "$_p" "$US" "$_id" "$US" "$_su" "$US" "$_sf" "$US" "$_sw" >>"$W/ask"
+        j ses "$([ -n "$TEAM" ] && echo k || echo l)" "$_n" "$_a" "$_v" "$_u" "$_p" "$_id" "$_su" "$_sf" "$_sw" >>"$W/ask"
     fi
     printf '%-14s %-10s %-12s %-16s %-18s %s\n' "$_n" "$_v" "$_id" "$_su" "$_sf" "$_verd" >>"$CC_RUN_DIR/sessions.txt"
 done <"$W/allses"
@@ -395,7 +410,7 @@ while IFS="$US" read -r _k _d _n _a _v _u _p _x1 _x2 _x3 _x4; do
             cc_choose "$_what: what now?" "$_d" "d=disable it ($(how_off "$_v" "$_n" "$_x1"))" "k=keep it" "a=all the rest: take their defaults"
             case "$CC_CHOICE" in a) _all=1 ;; *) _d=$CC_CHOICE ;; esac
         fi
-        [ "$_d" = d ] && printf 'off%s%s%s%s%s%s%s%s%s%s%s%s\n' "$US" "$_n" "$US" "$_a" "$US" "$_v" "$US" "$_u" "$US" "$_p" "$US" "$_x1" >>"$W/plan"
+        [ "$_d" = d ] && j off "$_n" "$_a" "$_v" "$_u" "$_p" "$_x1" >>"$W/plan"
     else
         _what="$_n: $_x2 logged in from $_x3 ($_x4, $_x1)"
         if [ "$_v" = fortigate ]; then
@@ -408,7 +423,7 @@ while IFS="$US" read -r _k _d _n _a _v _u _p _x1 _x2 _x3 _x4; do
             cc_choose "$_what: what now?" "$_d" "k=kick it (ends the session; change the passwords with NW-10 next)" "l=leave it" "a=all the rest: take their defaults"
             case "$CC_CHOICE" in a) _all=1 ;; *) _d=$CC_CHOICE ;; esac
         fi
-        [ "$_d" = k ] && printf 'kick%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' "$US" "$_n" "$US" "$_a" "$US" "$_v" "$US" "$_u" "$US" "$_p" "$US" "$_x1" "$US" "$_x2" "$US" "$_x3" >>"$W/plan"
+        [ "$_d" = k ] && j kick "$_n" "$_a" "$_v" "$_u" "$_p" "$_x1" "$_x2" "$_x3" >>"$W/plan"
     fi
 done <"$W/ask"
 NCH=$(grep -c . "$W/plan")
@@ -483,7 +498,7 @@ elif cc_ask "Do these $NCH change(s) now?" Y "yes, kick and disable them" "no, c
     # One session per device: accounts first, kicks last (a kick can end our own line).
     cut -d"$US" -f2 "$W/plan" | awk '!s[$0]++' >"$W/plandevs"
     while IFS= read -r _dev; do
-        grep "^[a-z]*$US$_dev$US" "$W/plan" >"$W/pd"
+        awk -F"$US" -v d="$_dev" '$2 == d' "$W/plan" >"$W/pd"
         IFS="$US" read -r _k _n _a _v _u _p _rest <"$W/pd"
         : >"$W/in"; [ "$(mode "$_v")" = stdin ] && en "$_v" >>"$W/in"
         # disables
@@ -498,7 +513,7 @@ elif cc_ask "Do these $NCH change(s) now?" Y "yes, kick and disable them" "no, c
                 *) off_cmds "$_v" "$_t" >>"$W/in"
                    has_saved "$_v" "$_n" "$_t" && { _uf=$(write_undo "$_v" "$_n" "$_a" "$_u" "$_p" "$_t"); cc_undo_add "put the account $_t back on $_n" "sh $(cc_shquote "$_uf")"; } ;;
             esac
-            printf 'off %s\n' "$_t" >>"$W/done.$_n"
+            j off "$_t" >>"$W/done.$_n"
         done <"$W/pd"
         # kicks
         while IFS="$US" read -r _k _n2 _a2 _v2 _u2 _p2 _t _x _f; do
@@ -507,7 +522,7 @@ elif cc_ask "Do these $NCH change(s) now?" Y "yes, kick and disable them" "no, c
                 exec) [ -s "$W/in" ] || printf ':' >>"$W/in"; kick_cmds "$_v" "$_t" "$_x" "$_f" >>"$W/in" ;;
                 *) kick_cmds "$_v" "$_t" "$_x" "$_f" >>"$W/in" ;;
             esac
-            printf 'kick %s %s %s\n' "$_t" "$_x" "$_f" >>"$W/done.$_n"
+            j kick "$_t" "$_x" "$_f" >>"$W/done.$_n"
         done <"$W/pd"
         [ "$(mode "$_v")" = stdin ] && printf 'exit\n' >>"$W/in"
         [ -s "$W/done.$_n" ] || continue
@@ -516,7 +531,7 @@ elif cc_ask "Do these $NCH change(s) now?" Y "yes, kick and disable them" "no, c
         read_cmds "$_v" >"$W/in2"
         if session "$_v" "$_u" "$_a" "$_p" "$W/in2" "$W/after.$_n"; then
             : >"$W/acc"; : >"$W/ses"; parse "$_v" "$W/after.$_n"
-            while IFS=' ' read -r _w _t _x _f; do
+            while IFS="$US" read -r _w _t _x _f; do
                 if [ "$_w" = off ]; then
                     if awk -F"$US" -v n="$_t" '$1 == n && $3 != "disabled" { f = 1 } END { exit !f }' "$W/acc"; then NBAD=$((NBAD + 1)); cc_show "$C_RED" "  [x] $_n: account $_t is still there"
                     else NOK=$((NOK + 1)); cc_show "$C_GRN" "  [+] $_n: account $_t disabled"; fi
@@ -529,14 +544,15 @@ elif cc_ask "Do these $NCH change(s) now?" Y "yes, kick and disable them" "no, c
             _c=$(grep -c . "$W/done.$_n"); NBAD=$((NBAD + _c)); cc_show "$C_RED" "  [x] $_n: could not log in again to check $([ "$_ok" = 1 ] && echo '(the changes were sent)' || echo '(the change session failed too)'): look by hand"
         fi
     done <"$W/plandevs"
-    # Accounts kept on purpose join the baseline; disabled ones stay out of it.
-    if [ "$FIRST" = 0 ]; then
-        awk -F"$US" '{ print $1 " " $6 }' "$W/allacc" | while IFS= read -r _l; do
-            grep -qxF "$_l" "$BASE" && continue
-            awk -F"$US" -v l="$_l" '$1 == "off" && ($2 " " $7) == l { f = 1 } END { exit !f }' "$W/plan" || printf '%s\n' "$_l" >>"$BASE"
-        done
-    fi
 else cc_show "$C_GRY" "  Nothing done."; fi
+# Accounts kept on purpose (with --apply) join the baseline; disabled ones stay out.
+if [ "$CC_APPLY" = 1 ] && [ "$FIRST" = 0 ] && { [ "$APPLIED" = 1 ] || [ "$NCH" -eq 0 ]; }; then
+    awk -F"$US" '{ print $1 " " $6 }' "$W/allacc" >"$W/now"
+    while IFS= read -r _l; do
+        grep -qxF "$_l" "$BASE" && continue
+        awk -F"$US" -v l="$_l" '$1 == "off" && ($2 " " $7) == l { f = 1 } END { exit !f }' "$W/plan" || printf '%s\n' "$_l" >>"$BASE"
+    done <"$W/now"
+fi
 # shellcheck disable=SC2034  # read by cc_finish
 CC_N_DONE=$NOK
 # shellcheck disable=SC2034  # read by cc_finish
@@ -553,7 +569,7 @@ CC_N_FAIL=$((NBAD + NFAIL))
     printf 'Tables: accounts.txt, sessions.txt\n'
     [ -d "$CC_RUN_DIR/undo" ] && printf 'Undo a disabled account: BT_NET_PASS=... sh %s/undo/DEVICE-ACCOUNT.sh\n' "$CC_RUN_DIR"
 } >"$CC_RUN_DIR/summary.txt"
-header "summary"
+cc_show "" ""
 while IFS= read -r _l; do case "$_l" in ==*|NW-12*) cc_show "$C_CYN" "$_l" ;; *'Failed: '[1-9]*|*'log in: '[1-9]*) cc_show "$C_RED" "$_l" ;; *) cc_show "" "$_l" ;; esac; done <"$CC_RUN_DIR/summary.txt"
 rm -rf "$W"
 cc_finish

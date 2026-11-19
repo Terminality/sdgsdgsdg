@@ -2,6 +2,15 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-19: Device accounts and sessions (NW-12, new)
+
+- **NW-12** reads every local admin account and every logged-in session on each firewall, router and switch (Cisco IOS and ASA, Palo Alto, FortiGate, VyOS, MikroTik, Linux; pfSense/OPNsense pointed at the web GUI). The first run saves the account names as a baseline; an account added later is `[!]`.
+- Asked per session: `[k]ick` / `[l]eave` (default kick when it is not from `--team`); per account: `[d]isable` / `[k]eep` (default disable when new since the first run). Its own login and the login account are never touched. Each change is checked by reading the device again.
+- Disable is the brand's most reversible way: MikroTik and Linux disable/lock (undo turns it back on); Cisco, VyOS, FortiGate remove it and the undo puts back the account's lines from NW-01's saved copy, read at undo time so no password hash is copied; Palo Alto has no undo (the question says so). FortiGate sessions get the command to end them by hand.
+- Account and session names come from the device (red team picks them): a name with a quote, `;` or other odd character is flagged and never put into a command.
+- Found while testing: busybox awk may be built without `^` (powers), so the address-range check multiplies instead; `who` is empty on a box without `/var/run/utmp`.
+- Tested: 64 checks with a stand-in device for every brand under seven shells and three awks; live against OpenSSH with throwaway accounts (a rogue session kicked, its account locked, the undo unlocked it, no password written anywhere).
+
 ## 2026-11-19: TLS certificate check (SV-32, new)
 
 - **SV-32** reads every certificate and key named in the Apache, nginx, Dovecot, Postfix, vsftpd and MariaDB configs: expired or ending soon, not matching its key, self-signed, weak key, SHA-1/MD5 signature, a key others can read. Then connects to each TLS port (443, 993, 995, 465, STARTTLS on 25, 587, 143, 110, 21, 3306): the certificate it really serves, TLS 1.0/1.1, weak ciphers. A fingerprint baseline flags a certificate swapped since the first run (fingerprints only, never a key).
