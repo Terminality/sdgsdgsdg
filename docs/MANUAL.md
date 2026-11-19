@@ -50,6 +50,7 @@ Contents:
 40. Web shell hunter, `roles/applications/SV-16-webshell-hunter.sh` (SV-16)
 41. Account lockdown, `roles/linux/LX-21-account-lockdown.sh` (LX-21)
 42. Mail tamper check, `roles/applications/SV-31-mail-tamper.sh` (SV-31)
+43. Webmail (Roundcube) hardening, `roles/applications/SV-41-roundcube-hardening.sh` (SV-41)
 
 ---
 
@@ -2909,3 +2910,63 @@ In `mail-tamper-N/`: `output.txt`, `findings.txt`, `plan.txt`, `summary.txt`, `r
 - **A real filter (amavis, rspamd)** shows as MED. Keep it if it's yours.
 - **Exim and Sendmail** aren't read. **SQL/LDAP maps** are named, not opened.
 - Banner, VRFY, HELO: **SV-30**. Mail passwords: **SV-40**.
+
+## 43. Webmail (Roundcube) hardening, `roles/applications/SV-41-roundcube-hardening.sh` (SV-41)
+
+`webmail-interactive` is scored: someone logs in to Roundcube and reads mail. Roundcube is also an easy way in. This finds each Roundcube (packaged in `/usr/share/roundcube`, or a tarball under `/var/www`, `/srv`, `/opt`), shows what's wrong and offers the fixes.
+
+### How to run it
+
+```sh
+sudo sh SV-41-roundcube-hardening.sh                                  # look + dry run
+sudo sh SV-41-roundcube-hardening.sh --protected p.csv --apply        # asks about each fix
+sudo sh SV-41-roundcube-hardening.sh --protected p.csv --apply --batch --url http://127.0.0.1/roundcube/
+```
+
+### What it checks
+
+| Check | Found |
+| --- | --- |
+| Version | **CVE-2025-49113** (any logged-in user runs commands; fixed 1.6.11 / 1.5.10), **CVE-2024-42009** (an email that steals mail; 1.6.8 / 1.5.8), 1.4 and older (no fixes). For a distribution package it reads the changelog: a backported fix shows as `[ok]`. If there's no changelog, it tells you to check `apt changelog roundcube-core`. |
+| Where logins go | `imap_host` / `default_host` / `smtp_host` that aren't this box: every webmail password goes there (HIGH) |
+| Installer | `enable_installer = true` (HIGH); the `installer/` folder |
+| Debug | `sql_debug`, `imap_debug`, `smtp_debug` write passwords and mail to the logs (HIGH); `debug_level` that shows errors to users |
+| des_key | The published default, or shorter than 24 characters (HIGH) |
+| log_logins | Off: you can't see who logged in |
+| Plugins | Every enabled plugin, and plugin files newer than Roundcube itself (added later?) |
+| Files | Config readable by everyone; logs, temp, config downloadable (HIGH); SQL, bin, composer.json downloadable (MED) |
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Each fix | `[y]` / `[n]` | `--only` / `--skip` |
+| Apply? | `[y]` / `[n]` | `--apply` |
+
+### The fixes
+
+| Fix | What it does |
+| --- | --- |
+| `installer` | Quarantines `installer/` and sets `enable_installer = false` |
+| `debug-off` | Debug options off, `debug_level = 1` |
+| `des-key` | A new random 24-character key (everyone logs in again) |
+| `log-logins` | `log_logins = true` |
+| `config-perms` | Config files `root:www-data 640` |
+| `block-dirs` | Apache drop-in `zz-ccdc-roundcube.conf` denying installer, logs, temp, config, SQL, bin (and where Debian's links point). nginx: lines written to `nginx-ccdc.conf`. |
+
+Settings are written as `$config['key'] = value; // CCDC SV-41`. **Logins sent elsewhere are only reported**: only you know which mail server is right.
+
+### Safety
+
+- Dry run unless `--apply`. Revert timer (120 s).
+- After the changes: Apache config test and reload, then **the login page must still load**, or everything is put back.
+
+### What it produces
+
+In `roundcube-N/`: `output.txt`, `findings.txt`, `plan.txt`, `summary.txt`, `revert.sh` (and `nginx-ccdc.conf` with nginx).
+
+### What to watch for
+
+- **Upgrading isn't done here.** Use `apt-get install --only-upgrade roundcube-core`, or a new release for a tarball.
+- **Web shells inside Roundcube:** `SV-16 --webroot /usr/share/roundcube`. Mail passwords: **SV-40**. Its database password: **SV-42**. Mail backdoors: **SV-31**.

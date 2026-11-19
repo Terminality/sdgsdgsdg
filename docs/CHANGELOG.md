@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: Webmail (Roundcube) hardening (SV-41, new)
+
+- **SV-41** finds each Roundcube and checks: its version against CVE-2025-49113 (logged-in users run code; fixed 1.6.11 / 1.5.10) and CVE-2024-42009 (1.6.8 / 1.5.8), reading the distribution changelog for backported fixes; logins sent to a server that isn't this box; the installer; debug options that write passwords to logs; the default `des_key`; `log_logins`; plugin files newer than Roundcube itself; readable configs; logs, config, SQL and bin downloadable from the web.
+- Fixes asked: installer quarantined and turned off, debug off, a new 24-character `des_key`, `log_logins` on, config 640, an Apache drop-in denying installer/logs/temp/config/SQL/bin. The login page must still load after, or everything is put back.
+- Found while testing: a tarball install must read its own `config/` before `/etc/roundcube`; the package changelog only counts for the packaged copy; packaged plugin folders get new dates but their files keep old ones.
+- Tested: 35 checks under seven shells and three awks; live with roundcube-core 1.6.6 behind Apache.
+
 ## 2026-11-18: Mail tamper check (SV-31, new)
 
 - **SV-31** finds mail backdoors and offers to undo each one: `always_bcc` / bcc maps (a copy of all mail), `mailbox_command` / `mailbox_transport` (a program on every delivery), unknown `content_filter`, `master.cf` pipe services that run a program Postfix doesn't ship, an open `mynetworks`, relay rules without `reject_unauth_destination`, aliases / `.forward` / `.procmailrc` that run a program or forward outside, sieve scripts that execute or redirect out, `header_checks` redirects, Dovecot post-login scripts, a big queue.

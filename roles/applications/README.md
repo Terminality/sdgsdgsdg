@@ -1,6 +1,6 @@
 # Applications — web + databases
 
-Scripts owned by this role. 12 of 12 are built.
+Scripts owned by this role. 13 of 13 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -12,6 +12,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | SV-16 | Web shell hunter | wave2 | medium | built | [`roles/applications/SV-16-webshell-hunter.sh`](../../roles/applications/SV-16-webshell-hunter.sh) |
 | SV-20 | Database hardening | wave2 | medium | built | [`roles/applications/SV-20-db-hardening.sh`](../../roles/applications/SV-20-db-hardening.sh) |
 | SV-21 | PHP and web app hardening | wave2 | medium | built | [`roles/applications/SV-21-web-hardening.sh`](../../roles/applications/SV-21-web-hardening.sh) |
+| SV-41 | Webmail (Roundcube) hardening | wave2 | medium | built | [`roles/applications/SV-41-roundcube-hardening.sh`](../../roles/applications/SV-41-roundcube-hardening.sh) |
 | SV-42 | Database password rotation | wave2 | medium | built | [`roles/applications/SV-42-db-passwords.sh`](../../roles/applications/SV-42-db-passwords.sh) |
 | SV-40 | Mail password rotation | wave2 | medium | built | [`roles/applications/SV-40-mail-passwords.sh`](../../roles/applications/SV-40-mail-passwords.sh) |
 | SV-50 | Service recovery | any | medium | built | [`roles/applications/SV-50-service-recovery.sh`](../../roles/applications/SV-50-service-recovery.sh) |
