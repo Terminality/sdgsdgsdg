@@ -1,8 +1,110 @@
 # CCDC-AI-SLOP
 
-Blue-team scripts for the Collegiate Cyber Defense Competition, written with Claude.
+Blue-team discovery, backup, hardening, monitoring and recovery scripts for the
+Collegiate Cyber Defense Competition. The kit currently covers Linux,
+Windows/Active Directory, applications and network devices.
 
-**Start here:** [`docs/PLAN.md`](docs/PLAN.md) (the plan), [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) (what is scored), [`AGENTS.md`](AGENTS.md) (rules for changing the repo). Core scripts are for Linux, Windows / AD and Network only; other roles write their own.
+## What is happening in a CCDC event?
+
+Your team inherits a company network that may be misconfigured or already
+compromised. You must simultaneously:
+
+1. Keep the scored business services available.
+2. Remove or contain Red Team access.
+3. Complete timed business injects with evidence.
+4. Preserve access for simulated users (Orange Team).
+5. Record incidents accurately enough to recover eligible points.
+
+A security change that breaks DNS, mail, authentication, a website or scoring
+can cost more than the attack it was intended to stop. This kit therefore uses
+**inventory first, backup second, controlled changes third, validation after
+every change**.
+
+## Start here
+
+| If you need... | Read... |
+| --- | --- |
+| The WRCCDC competition-day order, roles and commands | [`docs/WRCCDC-INVITATIONAL.md`](docs/WRCCDC-INVITATIONAL.md) |
+| What to do after a finding and how to roll it back | [`docs/RESPONSE-MATRIX.md`](docs/RESPONSE-MATRIX.md) |
+| Detailed options, output and troubleshooting for each script | [`docs/MANUAL.md`](docs/MANUAL.md) |
+| Known scored services and ports | [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) |
+| Script status and what is still planned | [`docs/STATUS.md`](docs/STATUS.md) |
+| Safety tiers and lockout rules | [`docs/PLAN.md`](docs/PLAN.md) |
+| Rules for contributing code | [`AGENTS.md`](AGENTS.md) and [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) |
+
+If you only read two documents, read this README and the WRCCDC runbook.
+
+## Current WRCCDC service picture
+
+The current preparation material identifies these logical scored checks. The
+live Quotient page and current packet always override this table.
+
+| System | Preserve and validate |
+| --- | --- |
+| Active Directory | DNS, ICMP/ping, WinRM and the AD services those checks depend on |
+| E-commerce | HTTP/HTTPS behavior and ICMP/ping |
+| MSSQL | SQL login/query, ICMP/ping, RDP and SMB |
+| Splunk | Chrony/NTP, management, searchable data/query, SSH and ICMP/ping |
+| Webmail | IMAP, interactive webmail login, SMTP, SSH and ICMP/ping |
+
+An open port is not proof that a service works. For example, Splunk query needs
+searchable data, webmail-interactive needs a valid login and MSSQL needs an
+actual database response.
+
+## Safety model
+
+- **Read-only first:** enumeration and backup scripts run before hardening.
+- **Dry run by default:** mutation scripts require `--apply` or `-Apply`.
+- **Protected list required:** scored ports, services, hosts, accounts and paths
+  are excluded from changes.
+- **Unique passwords:** rotation scripts generate independent passwords and do
+  not use one predictable pattern.
+- **Undo and quarantine:** files are backed up or moved, not blindly deleted.
+- **Access rollback:** firewall/access changes undo themselves unless confirmed
+  from a new SSH/RDP/WinRM session.
+- **External validation:** test from the jump box and scoring path, not only
+  from localhost.
+- **One risky host at a time:** stop fan-out after the first failed validation.
+
+Never run a mutation script without a current protected list built from the
+packet and Quotient. Never commit real passwords, host credentials or findings.
+
+## Who runs what?
+
+| Role | Responsibility |
+| --- | --- |
+| Captain | Approves priorities and risky changes; coordinates support and announcements |
+| Automation engineer | Distributes the verified kit, runs discovery/backups, maintains host and protected lists, records changes and stops failed fan-out |
+| Network owner | Router, NAT, firewall, external reachability and network-device backups |
+| Windows/AD owner | Domain, DNS, Windows services, users, GPOs, IIS/MSSQL dependencies and Windows alerts |
+| Linux/application owner | Linux access, services, web/mail/database dependencies, backups and host monitoring |
+| Detection/IR | Preserves evidence, builds timelines, investigates alerts and writes incident reports |
+| Inject lead | Tracks deadlines, requirements, screenshots, citations and final PDF submission |
+
+The automation engineer executes safely; the relevant host owner validates the
+business service and confirms access-risk changes from a fresh connection.
+
+## Shortest competition-day workflow
+
+1. Copy the standalone scripts from `dist/` and verify
+   `dist/MANIFEST.sha256`.
+2. Copy the WRCCDC host/protected examples into private working files and fill
+   them from the current packet and Quotient.
+3. Run SH-03 with `--profile wrccdc` from the jump box.
+4. Run SH-05/SH-06 and WN-04 read-only enumeration.
+5. Run LX-31, WN-35, SV-14 and NW-01 backups; copy backups off-host.
+6. Start LX-40/LX-41 and WN-44 monitoring.
+7. Rotate administrator/root/default credentials, then carefully handle other
+   accounts after documenting service dependencies.
+8. Apply safe fixes in dry-run mode first, then one host at a time.
+9. Apply LX-25/WN-25 firewalling last, with a second session open and rollback
+   timers enabled.
+10. After every change, validate locally, from the jump box and in Quotient for
+    at least two scoring cycles.
+
+When a script reports a finding, do not improvise. Use the response matrix to
+verify it, select the least disruptive action, validate the service and retain
+the rollback path.
 
 ## Getting a script onto a box
 
@@ -50,7 +152,10 @@ Nothing here has been run on real competition systems yet. Read "What has and ha
 For the packet-specific WRCCDC workflow, roles and safe port-closing procedure, read [`docs/WRCCDC-INVITATIONAL.md`](docs/WRCCDC-INVITATIONAL.md).
 After a finding, use [`docs/RESPONSE-MATRIX.md`](docs/RESPONSE-MATRIX.md) to choose the controlled response, validation and rollback.
 
-Each box needs the whole kit folder (scripts plus `lib/`); the single-file build is not written yet. Every script that changes things is a dry run until you add `--apply`, so run it once without, read the summary, then run it again with.
+Use the standalone files in `dist/`, or copy the source script together with
+`lib/`. Every script that changes things is a dry run until you add `--apply`
+or `-Apply`: run it once without, read the plan, then apply only after the host
+owner agrees.
 
 ### Linux box (run as root on each box)
 

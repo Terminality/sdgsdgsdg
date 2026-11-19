@@ -9,6 +9,9 @@ What changed, newest first. Each entry names the scripts touched and how they we
 - Added the SH-03 `wrccdc` validation profile for common competition services.
 - Added Invitational #5 host/protected examples and an operator runbook.
 - Documented the automation-engineer lane and safe Windows/Linux port closure.
+- Reworked the main README as the project front door: CCDC purpose, scored
+  service picture, safety model, team roles, document map and complete opening
+  workflow.
 - Tests: WN-04, WN-44, SH-03 profile tests, POSIX lint, PowerShell 2 lint and standalone build verification.
 
 ## 2026-11-18: Linux review pass
