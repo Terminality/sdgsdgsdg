@@ -8,7 +8,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/LX-39-safe-fixes.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 O="$T_TMP/out"; R="$T_TMP/root"; B="$T_TMP/bin"
@@ -34,9 +34,9 @@ PATH="$B:$PATH"; export PATH
 SYSCTL_STATE="$T_TMP/sysctl.state"; export SYSCTL_STATE
 # Full path: busybox sh would otherwise run its own built-in sysctl, which
 # changes the REAL kernel.  The script and this test both use the stand-in.
-CCDC_SYSCTL="$B/sysctl"; export CCDC_SYSCTL
+BT_SYSCTL="$B/sysctl"; export BT_SYSCTL
 # The revert timer as a background job, never a real systemd unit.
-CCDC_TIMER_METHOD=background; export CCDC_TIMER_METHOD
+BT_TIMER_METHOD=background; export BT_TIMER_METHOD
 sysctl() { "$B/sysctl" "$@"; }
 
 # mode PATH -> octal mode (portable, like the script itself).
@@ -111,13 +111,13 @@ t_fail "ld.so.preload quarantined" test -e "$R/etc/ld.so.preload"
 t_has "$(cat "$R/etc/environment")" "# disabled by LX-39: LD_PRELOAD=" "LD_PRELOAD line commented out"
 t_fail ".rhosts quarantined" test -e "$R/home/bob/.rhosts"
 t_fail "hosts.equiv quarantined" test -e "$R/etc/hosts.equiv"
-t_file "$R/etc/security/limits.d/99-ccdc-safe.conf" "core limit file written"
-t_has "$(cat "$R/etc/sysctl.d/99-zz-ccdc-safe.conf")" "net.ipv6.conf.all.disable_ipv6 = 1" "boot file has the IPv6 setting"
+t_file "$R/etc/security/limits.d/99-bt-safe.conf" "core limit file written"
+t_has "$(cat "$R/etc/sysctl.d/99-zz-bt-safe.conf")" "net.ipv6.conf.all.disable_ipv6 = 1" "boot file has the IPv6 setting"
 t_eq "$(sysctl -n net.ipv4.tcp_syncookies)" 1 "SYN cookies on"
 t_eq "$(sysctl -n kernel.randomize_va_space)" 2 "ASLR full"
 t_eq "$(sysctl -n net.ipv6.conf.all.disable_ipv6)" 1 "IPv6 off"
 t_eq "$(sysctl -n net.ipv6.conf.lo.disable_ipv6)" 0 "but still on for loopback (::1 stays)"
-t_eq "$(tail -n 1 "$R/etc/sysctl.d/99-zz-ccdc-safe.conf")" "net.ipv6.conf.lo.disable_ipv6 = 0" "boot file switches loopback back on, after the all setting"
+t_eq "$(tail -n 1 "$R/etc/sysctl.d/99-zz-bt-safe.conf")" "net.ipv6.conf.lo.disable_ipv6 = 0" "boot file switches loopback back on, after the all setting"
 t_eq "$(sysctl -n fs.suid_dumpable)" 0 "setuid core dumps off"
 t_eq "$(sysctl -n net.ipv4.ip_forward)" 1 "forwarding left on without --no-forwarding"
 t_has "$(cat "$R/etc/hosts")" "10.6.6.6" "/etc/hosts never changed"
@@ -147,7 +147,7 @@ t_eq "$(sysctl -n net.ipv4.tcp_syncookies)" 0 "kernel setting restored"
 t_has "$(grep '^toor:' "$R/etc/shadow")" 'toor:$6$xyz$hash:19000:0:99999:7:::' "UID 0 account unlocked, expiry put back exactly"
 t_has "$(grep '^guest:' "$R/etc/shadow")" 'guest::19000' "empty-password account put back"
 t_eq "$(mode "$R/usr/bin/find")" 4755 "SUID put back"
-t_fail "boot file removed" test -e "$R/etc/sysctl.d/99-zz-ccdc-safe.conf"
+t_fail "boot file removed" test -e "$R/etc/sysctl.d/99-zz-bt-safe.conf"
 rm -f "$U"
 
 t_start "protected list and options"
@@ -241,7 +241,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     # preload n; trust n; uid0 y; uid0 leave alone "evil"; emptypw n;
     # suid n; hosts n; apply y; keep y.
     printf 'splunk\nn\nn\nn\ny\nn\ny\n\nn\nn\nn\nn\ny\nevil\nn\nn\nn\ny\ny\n' >"$T_TMP/answers"
-    CCDC_NO_TTY=0 script -qc "$SH $C --out $T_TMP/o7 --root $R --no-protected --no-color --timer 60" /dev/null <"$T_TMP/answers" >"$T_TMP/tty.out" 2>&1
+    BT_NO_TTY=0 script -qc "$SH $C --out $T_TMP/o7 --root $R --no-protected --no-color --timer 60" /dev/null <"$T_TMP/answers" >"$T_TMP/tty.out" 2>&1
     out=$(cat "$T_TMP/o7/safe-fixes-1/output.txt" 2>/dev/null)
     t_has "$out" "Scored here: chrony" "the box answer shows that box's scored services"
     t_eq "$(mode "$R/etc/shadow")" 0640 "perms (answered y) applied"

@@ -88,8 +88,8 @@
 #     settings           your answers, used as the next defaults
 #
 # WHAT IT CHANGES  (only with --apply)
-#   nftables: table "inet ccdc_ban" (two address sets with timeouts and one
-#   drop rule).  ipset: set "ccdc_ban" plus one iptables rule.  iptables
+#   nftables: table "inet bt_ban" (two address sets with timeouts and one
+#   drop rule).  ipset: set "bt_ban" plus one iptables rule.  iptables
 #   alone: one DROP rule per banned address, removed by a later check when
 #   the ban ends.  --unban-all (or the undo log) removes it all.  No other
 #   rule is touched.  There is no revert timer: every ban already ends by
@@ -97,7 +97,7 @@
 #
 # DEPENDS ON
 #   awk, tail, wc; nft or ipset+iptables or iptables; journalctl when the
-#   SSH log is only in the journal.  CCDC_NFT, CCDC_IPSET and CCDC_IPTABLES
+#   SSH log is only in the journal.  BT_NFT, BT_IPSET and BT_IPTABLES
 #   may name stand-ins (the tests use them).
 #
 # TESTED ON
@@ -115,10 +115,10 @@
 #
 # DEBUGGING
 #   --debug shows each log read and the counts per address.  events.log has
-#   one line per check.  "nft list table inet ccdc_ban" shows the bans.
+#   one line per check.  "nft list table inet bt_ban" shows the bans.
 # =============================================================================
 
-# >>> CCDC-LIB  (lib/lib.sh 0.2.1 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.2.1 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
@@ -143,9 +143,9 @@
 #   development a script sources this file through the marker block below.  tools/build.sh replaces that block with the contents of this file
 #   so every built script in dist/ is one standalone file.
 #
-#       # >>> CCDC-LIB
+#       # >>> BT-LIB
 #       ...the loader lines from templates/script-template.sh...
-#       # <<< CCDC-LIB
+#       # <<< BT-LIB
 #
 #       while [ $# -gt 0 ]; do
 #           if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
@@ -203,8 +203,8 @@ CC_LIB_VERSION="0.2.1"
 : "${CC_QUIET:=0}"          # 1 = print only WARN and ERROR on screen
 : "${CC_FORCE_SCORED:=0}"   # 1 = allowed to touch a protected *account*
 : "${CC_NO_PROTECTED:=0}"   # 1 = operator accepted running with no list
-: "${CC_OUT:=${CCDC_OUT:-}}"              # output folder (operator-chosen)
-: "${CC_PROTECTED:=${CCDC_PROTECTED:-}}"  # protected-list CSV
+: "${CC_OUT:=${BT_OUT:-}}"              # output folder (operator-chosen)
+: "${CC_PROTECTED:=${BT_PROTECTED:-}}"  # protected-list CSV
 CC_ID="${CC_ID:-CC-00}"
 CC_LOG=""                   # set by cc_init; empty means "log file not open"
 CC_N_DONE=0                 # changes made
@@ -350,11 +350,11 @@ cc_require_root() {
 
 # cc_confirm QUESTION -> ask the operator; returns 0 for yes.
 #   Reads from the terminal, not stdin, so it still works when the script was
-#   piped in.  CCDC_ASSUME_YES=1 answers yes without asking (for fan-out).
+#   piped in.  BT_ASSUME_YES=1 answers yes without asking (for fan-out).
 cc_confirm() {
-    [ "${CCDC_ASSUME_YES:-0}" = 1 ] && return 0
+    [ "${BT_ASSUME_YES:-0}" = 1 ] && return 0
     if [ ! -r /dev/tty ]; then
-        cc_warn "no terminal to ask '$1' - treating as NO (set CCDC_ASSUME_YES=1 to skip questions)"
+        cc_warn "no terminal to ask '$1' - treating as NO (set BT_ASSUME_YES=1 to skip questions)"
         return 1
     fi
     printf '%s [y/N] ' "$1" >/dev/tty
@@ -373,8 +373,8 @@ Common options (every script in the kit):
   --apply            make changes (default is a dry run that changes nothing)
   --dry-run          show what would change (the default)
   --out DIR          folder for logs, CSV files, backups and the undo log
-                     (default: $CCDC_OUT, else ~/ccdc-out)
-  --protected FILE   protected-list CSV (default: $CCDC_PROTECTED, else
+                     (default: $BT_OUT, else ~/bt-out)
+  --protected FILE   protected-list CSV (default: $BT_PROTECTED, else
                      DIR/protected.csv)
   --no-protected     allow --apply without a protected list (dangerous)
   --force-scored     allow changes to accounts on the protected list
@@ -406,7 +406,7 @@ cc_common_flag() {
         --batch)        CC_BATCH=1 ;;
         --quiet)        CC_QUIET=1 ;;
         --debug)        CC_DEBUG=1 ;;
-        --version)      printf 'ccdc kit library %s\n' "$CC_LIB_VERSION"; exit 0 ;;
+        --version)      printf 'kit library %s\n' "$CC_LIB_VERSION"; exit 0 ;;
         *)              return 1 ;;
     esac
     return 0
@@ -445,7 +445,7 @@ cc_init() {
 
     # Output folder: operator-chosen, never inside the kit (rule 11: the kit
     # may be on read-only media and must stay unchanged so its hash matches).
-    [ -n "$CC_OUT" ] || CC_OUT="${HOME:-/root}/ccdc-out"
+    [ -n "$CC_OUT" ] || CC_OUT="${HOME:-/root}/bt-out"
     (umask 077; mkdir -p "$CC_OUT") 2>/dev/null \
         || cc_die 3 "cannot create output folder: $CC_OUT (pass --out DIR)"
     CC_OUT=$(cc_abspath "$CC_OUT")
@@ -715,9 +715,9 @@ cc_choose() {
 }
 
 # _cc_can_ask -> true when there is someone to ask.
-#   CCDC_NO_TTY=1 says there is nobody (the test suite sets it, so tests
+#   BT_NO_TTY=1 says there is nobody (the test suite sets it, so tests
 #   never wait for an answer when run from a terminal).
-_cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${CCDC_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
+_cc_can_ask() { [ "$CC_BATCH" != 1 ] && [ "${BT_NO_TTY:-0}" != 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null; }
 
 # cc_ask QUESTION DEFAULT [YES-MEANS] [NO-MEANS] -> 0 for yes, 1 for no.
 #   DEFAULT is Y or N.  Shown like cc_choose, with what each answer does:
@@ -811,8 +811,8 @@ REVERT
     CC_TIMER_DEADLINE=$(( $(cc_now) + _cc_ts_s ))
     CC_TIMER_HOW=""
     # 1. A systemd transient timer: survives logout and a killed session.
-    if [ "${CCDC_TIMER_METHOD:-}" != background ] && cc_is_root && [ -d /run/systemd/system ] && cc_have systemd-run; then
-        CC_TIMER_ID="ccdc-revert-$$-$(cc_now)"
+    if [ "${BT_TIMER_METHOD:-}" != background ] && cc_is_root && [ -d /run/systemd/system ] && cc_have systemd-run; then
+        CC_TIMER_ID="bt-revert-$$-$(cc_now)"
         if systemd-run --quiet --unit "$CC_TIMER_ID" --on-active="${_cc_ts_s}s" --timer-property=AccuracySec=1s /bin/sh "$_cc_ts_r" >>"$CC_LOG" 2>&1; then
             CC_TIMER_HOW=systemd
         fi
@@ -1354,14 +1354,14 @@ cc_flag_report() {
 # cc_verify_self
 #   Rule 15: the kit's hash is checked before each run.  If a MANIFEST.sha256
 #   (written by tools/build.sh) sits in the script's folder or one of the two
-#   folders above it, or CCDC_MANIFEST points to one, the running script's
+#   folders above it, or BT_MANIFEST points to one, the running script's
 #   hash must match its line there.  A mismatch stops the script: the file on
 #   this host is not the one you built, and a red team may have edited it.
-#   CCDC_SKIP_VERIFY=1 turns the check off (for development).
+#   BT_SKIP_VERIFY=1 turns the check off (for development).
 cc_verify_self() {
-    [ "${CCDC_SKIP_VERIFY:-0}" = 1 ] && { cc_debug "verify: skipped (CCDC_SKIP_VERIFY=1)"; return 0; }
+    [ "${BT_SKIP_VERIFY:-0}" = 1 ] && { cc_debug "verify: skipped (BT_SKIP_VERIFY=1)"; return 0; }
     [ -f "$0" ] || { cc_debug "verify: script was not started from a file, nothing to hash"; return 0; }
-    _cc_vs_man=${CCDC_MANIFEST:-}
+    _cc_vs_man=${BT_MANIFEST:-}
     if [ -z "$_cc_vs_man" ]; then
         for _cc_vs_d in "$CC_KIT" "$CC_KIT/.." "$CC_KIT/../.."; do
             if [ -r "$_cc_vs_d/MANIFEST.sha256" ]; then _cc_vs_man="$_cc_vs_d/MANIFEST.sha256"; break; fi
@@ -1395,7 +1395,7 @@ cc_finish() {
     [ -n "$CC_LOG" ] && cc_info "log: $CC_LOG"
     exit "$_cc_fin_rc"
 }
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -1503,9 +1503,9 @@ setting() { [ -f "$STATE/settings" ] && sed -n "s/^$1=//p" "$STATE/settings" | t
 now() { _t=$(date +%s 2>/dev/null); case "$_t" in ''|*[!0-9]*) awk 'BEGIN { srand(); print srand() }' ;; *) printf '%s\n' "$_t" ;; esac; }
 
 # ---- Firewall backend --------------------------------------------------------
-NFT=${CCDC_NFT:-$(cc_which nft)} || NFT=""
-IPSET=${CCDC_IPSET:-$(cc_which ipset)} || IPSET=""
-IPT=${CCDC_IPTABLES:-$(cc_which iptables)} || IPT=""
+NFT=${BT_NFT:-$(cc_which nft)} || NFT=""
+IPSET=${BT_IPSET:-$(cc_which ipset)} || IPSET=""
+IPT=${BT_IPTABLES:-$(cc_which iptables)} || IPT=""
 if [ -z "$BACKEND" ]; then
     if [ -n "$NFT" ] && "$NFT" list tables >/dev/null 2>&1; then BACKEND=nft
     elif [ -n "$IPSET" ] && [ -n "$IPT" ]; then BACKEND=ipset
@@ -1520,9 +1520,9 @@ fw_setup() {
     [ "$_fw_ready" = 1 ] && return 0
     case "$BACKEND" in
         nft)
-            if ! "$NFT" list table inet ccdc_ban >/dev/null 2>&1; then
+            if ! "$NFT" list table inet bt_ban >/dev/null 2>&1; then
                 cat >"$W/ban.nft" <<'EOF'
-table inet ccdc_ban {
+table inet bt_ban {
     set ban4 { type ipv4_addr; flags timeout; }
     set ban6 { type ipv6_addr; flags timeout; }
     chain input {
@@ -1532,16 +1532,16 @@ table inet ccdc_ban {
     }
 }
 EOF
-                cc_run "create the ban table (nft table inet ccdc_ban)" "$NFT" -f "$W/ban.nft" || return 1
-                cc_undo_add "remove all SV-26 bans" "$NFT delete table inet ccdc_ban"
+                cc_run "create the ban table (nft table inet bt_ban)" "$NFT" -f "$W/ban.nft" || return 1
+                cc_undo_add "remove all SV-26 bans" "$NFT delete table inet bt_ban"
             fi ;;
         ipset)
-            if ! "$IPSET" list ccdc_ban >/dev/null 2>&1; then
-                cc_run "create the ban set (ipset ccdc_ban)" "$IPSET" create ccdc_ban hash:ip timeout 0 -exist || return 1
-                cc_undo_add "remove all SV-26 bans" "$IPT -D INPUT -m set --match-set ccdc_ban src -j DROP; $IPSET destroy ccdc_ban"
+            if ! "$IPSET" list bt_ban >/dev/null 2>&1; then
+                cc_run "create the ban set (ipset bt_ban)" "$IPSET" create bt_ban hash:ip timeout 0 -exist || return 1
+                cc_undo_add "remove all SV-26 bans" "$IPT -D INPUT -m set --match-set bt_ban src -j DROP; $IPSET destroy bt_ban"
             fi
-            "$IPT" -C INPUT -m set --match-set ccdc_ban src -j DROP 2>/dev/null ||
-                cc_run "drop traffic from banned addresses" "$IPT" -I INPUT 1 -m set --match-set ccdc_ban src -j DROP || return 1 ;;
+            "$IPT" -C INPUT -m set --match-set bt_ban src -j DROP 2>/dev/null ||
+                cc_run "drop traffic from banned addresses" "$IPT" -I INPUT 1 -m set --match-set bt_ban src -j DROP || return 1 ;;
         iptables) : ;;
     esac
     _fw_ready=1
@@ -1550,26 +1550,26 @@ EOF
 fw_ban() {
     case "$BACKEND" in
         nft) case "$1" in *:*) _set=ban6 ;; *) _set=ban4 ;; esac
-             cc_run "ban $1 for $(($2 / 60)) min" "$NFT" add element inet ccdc_ban "$_set" "{ $1 timeout ${2}s }" ;;
-        ipset) cc_run "ban $1 for $(($2 / 60)) min" "$IPSET" add ccdc_ban "$1" timeout "$2" -exist ;;
-        iptables) cc_run "ban $1 for $(($2 / 60)) min" "$IPT" -I INPUT 1 -s "$1" -j DROP -m comment --comment ccdc_ban
-                  _rc=$?; [ "$_rc" -eq 0 ] && cc_undo_add "unban $1" "$IPT -D INPUT -s $1 -j DROP -m comment --comment ccdc_ban"; return "$_rc" ;;
+             cc_run "ban $1 for $(($2 / 60)) min" "$NFT" add element inet bt_ban "$_set" "{ $1 timeout ${2}s }" ;;
+        ipset) cc_run "ban $1 for $(($2 / 60)) min" "$IPSET" add bt_ban "$1" timeout "$2" -exist ;;
+        iptables) cc_run "ban $1 for $(($2 / 60)) min" "$IPT" -I INPUT 1 -s "$1" -j DROP -m comment --comment bt_ban
+                  _rc=$?; [ "$_rc" -eq 0 ] && cc_undo_add "unban $1" "$IPT -D INPUT -s $1 -j DROP -m comment --comment bt_ban"; return "$_rc" ;;
     esac
 }
 fw_unban() {
     case "$BACKEND" in
         nft) case "$1" in *:*) _set=ban6 ;; *) _set=ban4 ;; esac
-             cc_run "unban $1" "$NFT" delete element inet ccdc_ban "$_set" "{ $1 }" ;;
-        ipset) cc_run "unban $1" "$IPSET" del ccdc_ban "$1" ;;
-        iptables) cc_run "unban $1" "$IPT" -D INPUT -s "$1" -j DROP -m comment --comment ccdc_ban ;;
+             cc_run "unban $1" "$NFT" delete element inet bt_ban "$_set" "{ $1 }" ;;
+        ipset) cc_run "unban $1" "$IPSET" del bt_ban "$1" ;;
+        iptables) cc_run "unban $1" "$IPT" -D INPUT -s "$1" -j DROP -m comment --comment bt_ban ;;
     esac
 }
 # fw_list -> currently banned addresses, one per line.
 fw_list() {
     case "$BACKEND" in
-        nft) "$NFT" list table inet ccdc_ban 2>/dev/null | awk '/elements = \{/ { s = 1 } s { gsub(/elements = \{|[{},]/, " "); for (i = 1; i <= NF; i++) if ($i ~ /^[0-9a-fA-F.:]+$/ && $i ~ /[.:]/ && $(i - 1) != "timeout" && $(i - 1) != "expires") print $i } /\}/ { s = 0 }' ;;
-        ipset) "$IPSET" list ccdc_ban 2>/dev/null | awk '/^Members:/ { s = 1; next } s && NF { print $1 }' ;;
-        iptables) "$IPT" -S INPUT 2>/dev/null | awk '/ccdc_ban/ && /-s / { for (i = 1; i <= NF; i++) if ($i == "-s") { a = $(i + 1); sub(/\/32$/, "", a); print a } }' ;;
+        nft) "$NFT" list table inet bt_ban 2>/dev/null | awk '/elements = \{/ { s = 1 } s { gsub(/elements = \{|[{},]/, " "); for (i = 1; i <= NF; i++) if ($i ~ /^[0-9a-fA-F.:]+$/ && $i ~ /[.:]/ && $(i - 1) != "timeout" && $(i - 1) != "expires") print $i } /\}/ { s = 0 }' ;;
+        ipset) "$IPSET" list bt_ban 2>/dev/null | awk '/^Members:/ { s = 1; next } s && NF { print $1 }' ;;
+        iptables) "$IPT" -S INPUT 2>/dev/null | awk '/bt_ban/ && /-s / { for (i = 1; i <= NF; i++) if ($i == "-s") { a = $(i + 1); sub(/\/32$/, "", a); print a } }' ;;
     esac
 }
 
@@ -1597,10 +1597,10 @@ if [ "$MODE" != run ]; then
             fw_list >"$W/now"
             cc_show "" "Lifting $(grep -c . "$W/now") ban(s):"
             case "$BACKEND" in
-                nft) "$NFT" list table inet ccdc_ban >/dev/null 2>&1 && cc_run "remove the ban table (nft table inet ccdc_ban)" "$NFT" delete table inet ccdc_ban ;;
-                ipset) "$IPT" -C INPUT -m set --match-set ccdc_ban src -j DROP 2>/dev/null &&
-                           cc_run "remove the ban rule" "$IPT" -D INPUT -m set --match-set ccdc_ban src -j DROP
-                       "$IPSET" list ccdc_ban >/dev/null 2>&1 && cc_run "remove the ban set" "$IPSET" destroy ccdc_ban ;;
+                nft) "$NFT" list table inet bt_ban >/dev/null 2>&1 && cc_run "remove the ban table (nft table inet bt_ban)" "$NFT" delete table inet bt_ban ;;
+                ipset) "$IPT" -C INPUT -m set --match-set bt_ban src -j DROP 2>/dev/null &&
+                           cc_run "remove the ban rule" "$IPT" -D INPUT -m set --match-set bt_ban src -j DROP
+                       "$IPSET" list bt_ban >/dev/null 2>&1 && cc_run "remove the ban set" "$IPSET" destroy bt_ban ;;
                 iptables) while IFS= read -r _a; do fw_unban "$_a"; done <"$W/now"
                           [ "$CC_APPLY" = 1 ] && rm -f "$STATE/iptables-expiry" ;;
             esac
@@ -1727,7 +1727,7 @@ cc_show "" "  Logs read:"
 while IFS= read -r _f; do cc_show "" "    $_f  ($(what_log "$_f"))"; done <"$W/logs"
 [ "$USEJOURNAL" = 1 ] && cc_show "" "    the systemd journal  (SSH, FTP and mail: no auth.log on this box)"
 [ -s "$W/logs" ] || [ "$USEJOURNAL" = 1 ] || cc_show "$C_YEL" "    [!] no login logs found - nothing can be counted (use --log FILE)"
-cc_show "" "  Firewall:     $BACKEND$([ "$BACKEND" = nft ] && echo ' (table inet ccdc_ban, entries time out by themselves)')"
+cc_show "" "  Firewall:     $BACKEND$([ "$BACKEND" = nft ] && echo ' (table inet bt_ban, entries time out by themselves)')"
 cc_show "" "  Never banned:"
 while read -r _a _why; do
     case "$_why" in

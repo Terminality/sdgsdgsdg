@@ -1,6 +1,6 @@
 # Build status
 
-40 of 44 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+43 of 47 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -8,12 +8,12 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | --- | --- | --- |
 | Enum (look only) | 6 | 7 |
 | Backup and prep | 5 | 5 |
-| wave2 | 10 | 10 |
+| wave2 | 12 | 12 |
 | any | 1 | 1 |
+| wave1 | 3 | 3 |
 | Hardening: easy | 3 | 3 |
 | Hardening: medium | 2 | 2 |
 | Hardening: hard | 2 | 4 |
-| wave1 | 2 | 2 |
 | Management | 3 | 3 |
 | Alerts | 3 | 4 |
 | Kit | 3 | 3 |
@@ -54,12 +54,22 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | SV-31 | Mail tamper check | medium | built | `roles/applications/SV-31-mail-tamper.sh` |
 | LX-43 | Log shipping to Splunk | medium | built | `roles/linux/LX-43-log-shipping.sh` |
 | LX-45 | Rootkit and malware scan | medium | built | `roles/linux/LX-45-rootkit-scan.sh` |
+| LX-44 | AppArmor confinement | medium | built | `roles/linux/LX-44-apparmor.sh` |
+| LX-46 | Safe security updates | medium | built | `roles/linux/LX-46-safe-updates.sh` |
 
 ## any
 
 | ID | Script | Risk | Status | File |
 | --- | --- | --- | --- | --- |
 | SV-50 | Service recovery | medium | built | `roles/applications/SV-50-service-recovery.sh` |
+
+## wave1
+
+| ID | Script | Risk | Status | File |
+| --- | --- | --- | --- | --- |
+| SV-32 | TLS certificate check | medium | built | `roles/applications/SV-32-tls-check.sh` |
+| LX-26 | Remote access lockdown (everything but SSH) | medium | built | `roles/linux/LX-26-remote-access.sh` |
+| LX-21 | Account lockdown (Linux) | medium | built | `roles/linux/LX-21-account-lockdown.sh` |
 
 ## Hardening: easy
 
@@ -84,13 +94,6 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LX-25 | Linux firewall | access | built | `roles/linux/LX-25-firewall.sh` |
 | WN-27 | Windows remote access lockdown | access | planned |  |
 | WN-23 | Account lockdown (Windows / AD) | access | planned |  |
-
-## wave1
-
-| ID | Script | Risk | Status | File |
-| --- | --- | --- | --- | --- |
-| LX-26 | Remote access lockdown (everything but SSH) | medium | built | `roles/linux/LX-26-remote-access.sh` |
-| LX-21 | Account lockdown (Linux) | medium | built | `roles/linux/LX-21-account-lockdown.sh` |
 
 ## Management
 

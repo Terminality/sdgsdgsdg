@@ -2,7 +2,7 @@
 # Tests for WN-20 Windows password rotation.
 #   pwsh -NoProfile -File tests/wn20.Tests.ps1
 #
-# Every account read and password change goes through $env:CCDC_WN20_FAKE:
+# Every account read and password change goes through $env:BT_WN20_FAKE:
 # a folder with accounts.csv (the accounts), service-users.csv (accounts that
 # run services or tasks), fail.csv (accounts whose change fails, with the
 # reason) and set.log (every password "set", which the test reads back).  No
@@ -16,7 +16,7 @@ $psExe = (Get-Process -Id $PID).Path
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('cctest_wn20_' + $PID)
 $out = Join-Path $tmp 'out'; $fake = Join-Path $tmp 'fake'
 New-Item -ItemType Directory -Path $fake -Force | Out-Null
-$env:CCDC_SKIP_VERIFY = '1'; $env:CCDC_WN20_FAKE = $fake
+$env:BT_SKIP_VERIFY = '1'; $env:BT_WN20_FAKE = $fake
 $script:pass = 0; $script:fail = 0
 function T-Start($t) { Write-Host "  -- $t" }
 function T-Eq($got, $want, $label) { if ("$got" -ceq "$want") { $script:pass++ } else { $script:fail++; Write-Host "     FAIL: $label"; Write-Host "           got [$got], wanted [$want]" } }
@@ -135,12 +135,12 @@ T-Start 'stopped in the middle: the new password is not lost'
 Reset
 [IO.File]::WriteAllLines((Join-Path $fake 'fail.csv'), [string[]]@('name,reason'))
 # A change that hangs: the stand-in waits when the account is "slow".
-$env:CCDC_WN20_SLOW = 'alice'
+$env:BT_WN20_SLOW = 'alice'
 $all = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $wn20, '-Out', $out, '-Apply', '-Protected', $prot, '-Users', 'alice')
 $p = Start-Process -FilePath $psExe -ArgumentList $all -PassThru -RedirectStandardOutput (Join-Path $tmp "slow.out") -RedirectStandardError (Join-Path $tmp "slow.err")
 Start-Sleep -Seconds 6
 Stop-Process -Id $p.Id -Force
-Remove-Item Env:\CCDC_WN20_SLOW
+Remove-Item Env:\BT_WN20_SLOW
 $pend = @(Get-ChildItem -LiteralPath $out -Recurse -Filter 'pending-password.csv' | Sort-Object LastWriteTime)
 T-True ($pend.Count -ge 1) 'pending-password.csv is left behind when the script is killed mid-change'
 if ($pend.Count -ge 1) { T-Has ([IO.File]::ReadAllText($pend[-1].FullName)) ',alice,' 'and it names the account' }

@@ -1,7 +1,7 @@
 # dist/ (built single-file scripts) IS committed: people download from it.
 # Script output must never live in the repo (logs can hold host details).
 out/
-ccdc-out/
+bt-out/
 *.log
 # Real competition data: host lists, protected lists, credential sheets.
 config/*.csv

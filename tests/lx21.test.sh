@@ -11,7 +11,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/LX-21-account-lockdown.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 O="$T_TMP/out"; F="$T_TMP/root"; PR="$T_TMP/protected.csv"
 printf 'kind,name,why\naccount,teamadmin,our admin\n' >"$PR"
 
@@ -111,7 +111,7 @@ if command -v script >/dev/null 2>&1; then
     order=$(printf '%s\n' "$out" | sed -n 's/^\[?\] \([a-z-]*\) (uid.*/\1/p' | tr '\n' ' ')
     t_eq "$order" "www-data toor eve nopw inpw " "the flagged accounts are asked in order"
     printf 'y\nn\nl\nb\nk\nk\ny\nn\n\n' >"$T_TMP/ans"
-    tt=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --root '$F' --out '$O' --no-color --box ecomm --protected '$PR' --apply --no-timer" /dev/null <"$T_TMP/ans" 2>&1)
+    tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --root '$F' --out '$O' --no-color --box ecomm --protected '$PR' --apply --no-timer" /dev/null <"$T_TMP/ans" 2>&1)
     t_has "$tt" "[d] take its admin rights away (groups: sudo docker" "an admin is offered: take admin away"
     t_has "$tt" "[r] remove its SSH keys (1, moved to quarantine)" "and: remove its keys"
     t_has "$tt" "[n] no-login shell" "a service account is offered a no-login shell"

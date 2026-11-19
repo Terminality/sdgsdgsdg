@@ -50,7 +50,7 @@ param(
     [string]$Example = 'default'
 )
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.ps1 by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -58,7 +58,7 @@ $ccDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 while ($ccDir -and -not (Test-Path -LiteralPath (Join-Path (Join-Path $ccDir 'lib') 'lib.ps1'))) { $ccDir = Split-Path -Parent $ccDir }
 if (-not $ccDir) { Write-Host 'cannot find lib/lib.ps1 above this script'; exit 3 }
 . (Join-Path (Join-Path $ccDir 'lib') 'lib.ps1')
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 # ---- 1. Start: open the log, find the protected list, check the kit --------
 Initialize-Cc -Id 'XX-00' -Name 'Script template' -Kind readonly -Bound $PSBoundParameters

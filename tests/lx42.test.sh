@@ -8,7 +8,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/LX-42-persistence-sweep.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 O="$T_TMP/out"; mkdir -p "$O"
@@ -123,7 +123,7 @@ t_has "$r" "[ok] nothing unusual" "areas say ok"
 
 t_start "a box with planted persistence: full scan"
 build_root "$T_TMP/bad"; plant
-r=$(CCDC_PROC=$PR; export CCDC_PROC; run --root "$R" --out "$O" --batch --no-color --max 200 2>&1); t_eq "$?" 0 "exit 0"
+r=$(BT_PROC=$PR; export BT_PROC; run --root "$R" --out "$O" --batch --no-color --max 200 2>&1); t_eq "$?" 0 "exit 0"
 D=$(printf '%s\n' "$r" | sed -n 's/^All results: //p' | tail -n 1)
 F="$D/csv/findings.csv"
 for f in output.txt summary.txt findings.txt csv/findings.csv csv/flags.csv run.txt; do t_file "$D/$f" "$f written"; done
@@ -223,14 +223,14 @@ t_eq "$(stat -c '%a' "$R/usr/bin/find")" 755 "SUID taken off find"
 t_ok "MED findings were left alone (default no)" grep -q 'rootkeyrootkey' "$R/root/.ssh/authorized_keys"
 t_ok "the stock crontab lines survive" grep -q 'run-parts' "$R/etc/crontab"
 t_has "$r" "Removed:" "summary counts what was removed"
-t_ok "undo lines were written" sh -c "grep -q 'ld.so.preload' '$O'/ccdc-undo-*.log 2>/dev/null || grep -rq 'ld.so.preload' '$O'/*undo* 2>/dev/null"
+t_ok "undo lines were written" sh -c "grep -q 'ld.so.preload' '$O'/bt-undo-*.log 2>/dev/null || grep -rq 'ld.so.preload' '$O'/*undo* 2>/dev/null"
 
 if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&1; then
     t_start "questions in a terminal"
     build_root "$T_TMP/bad2"; plant
     # full scan? n; areas: cron ssh; days: Enter; leave out: Enter.  (No folder question: files/web not chosen.)
     printf 'n\ncron ssh\n\n\n' >"$T_TMP/ans"
-    CCDC_NO_TTY=0 script -qc "$SH $C --root $R --out $O --no-color" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
+    BT_NO_TTY=0 script -qc "$SH $C --root $R --out $O --no-color" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
     tt=$(cat "$T_TMP/tty.out")
     t_has "$tt" "Do a full scan" "asks whether to do a full scan"
     t_has "$tt" "Which areas?" "then which areas"

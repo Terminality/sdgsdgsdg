@@ -19,7 +19,7 @@ $psExe = (Get-Process -Id $PID).Path
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('cctest_sh06_' + $PID)
 $out = Join-Path $tmp 'out'
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
-$env:CCDC_SKIP_VERIFY = '1'
+$env:BT_SKIP_VERIFY = '1'
 $script:pass = 0; $script:fail = 0
 
 function T-Start($t) { Write-Host "  -- $t" }

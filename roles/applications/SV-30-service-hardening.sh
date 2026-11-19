@@ -7,7 +7,7 @@
 # VERSION:  1.2.0
 #
 # PURPOSE
-#   Hardens the insecure services that show up on CCDC Linux boxes - FTP
+#   Hardens the insecure services that show up on competition Linux boxes - FTP
 #   first, then telnet, rsh/rlogin/rexec, TFTP, SNMP and the old inetd
 #   services.  Every action is graded by how risky it is, and the script
 #   only goes as far as the level you pick:
@@ -110,12 +110,12 @@
 #   output.txt       the full screen log
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 ALL_ACTIONS="web-version web-trace web-indexes web-exposed web-exposed-remove mail-banner mail-vrfy mail-relay mail-authdelay mail-helo mail-plaintext ntp-chrony splunk-report ftp-anon ftp-accounts ftp-perms ftp-logging ftp-chroot ftp-tls ftp-disable telnet-disable rsh-disable tftp-disable snmp-default snmp-disable legacy-disable"
 
@@ -301,8 +301,8 @@ if [ -d "$(P /etc/apache2)" ]; then APACHE_DIR=/etc/apache2; APACHE_SVC=apache2
 elif [ -d "$(P /etc/httpd)" ]; then APACHE_DIR=/etc/httpd; APACHE_SVC=httpd; fi
 # The drop-in loads last (zz-) so it wins over security.conf and friends.
 APACHE_DROP=""
-[ "$APACHE_DIR" = /etc/apache2 ] && [ -d "$(P /etc/apache2/conf-enabled)" ] && APACHE_DROP=/etc/apache2/conf-enabled/zz-ccdc-hardening.conf
-[ "$APACHE_DIR" = /etc/httpd ] && [ -d "$(P /etc/httpd/conf.d)" ] && APACHE_DROP=/etc/httpd/conf.d/zz-ccdc-hardening.conf
+[ "$APACHE_DIR" = /etc/apache2 ] && [ -d "$(P /etc/apache2/conf-enabled)" ] && APACHE_DROP=/etc/apache2/conf-enabled/zz-bt-hardening.conf
+[ "$APACHE_DIR" = /etc/httpd ] && [ -d "$(P /etc/httpd/conf.d)" ] && APACHE_DROP=/etc/httpd/conf.d/zz-bt-hardening.conf
 NGINX_DIR=""; [ -f "$(P /etc/nginx/nginx.conf)" ] && NGINX_DIR=/etc/nginx
 PHP_INIS=$( { ls -d "$(P /etc/php)"/*/apache2/php.ini "$(P /etc/php)"/*/fpm/php.ini "$(P /etc/php.ini)" 2>/dev/null; } | sed "s|^$R||")
 POSTFIX_CF=""; [ -f "$(P /etc/postfix/main.cf)" ] && POSTFIX_CF=/etc/postfix/main.cf
@@ -749,7 +749,7 @@ ini_kv() {
 }
 # _drop_add FILE LINE -> add LINE to a drop-in file we own (made if missing).
 _drop_add() {
-    [ -f "$1" ] || printf '# Added by CCDC SV-30 (service hardening). Delete this file to undo.\n' >"$1" || return 1
+    [ -f "$1" ] || printf '# Added by SV-30 (service hardening). Delete this file to undo.\n' >"$1" || return 1
     printf '%s\n' "$2" >>"$1"
 }
 # drop_line ACTION SERVICE DROPIN LINE DESC -> one line in our drop-in file.
@@ -790,7 +790,7 @@ web_version() {
                 row web-version nginx server_tokens "-> off ($_nfr)" "$(result "$_kr")"
             fi
         elif grep -Eq 'include[[:space:]]+[^;]*conf\.d/\*\.conf' "$(P "$NGINX_DIR/nginx.conf")" 2>/dev/null; then
-            drop_line web-version nginx "$NGINX_DIR/conf.d/zz-ccdc-hardening.conf" "server_tokens off;" "Server header: 'nginx' only, no version"
+            drop_line web-version nginx "$NGINX_DIR/conf.d/zz-bt-hardening.conf" "server_tokens off;" "Server header: 'nginx' only, no version"
         else
             row web-version nginx server_tokens "add 'server_tokens off;' inside the http { } block" "check by hand"
         fi
@@ -857,7 +857,7 @@ chrony_check() {
     if grep -Eq '^[[:space:]]*cmdallow' "$_cf" 2>/dev/null; then
         undo_restart "$CHRONY_SVC"
         ensure_backup "$CHRONY_CF" || { row ntp-chrony chrony cmdallow "backup failed" failed; return 0; }
-        cc_run "chrony: comment out cmdallow (remote control)" _sed_inplace "$_cf" 's/^\([[:space:]]*cmdallow\)/#ccdc \1/'; _kr=$?
+        cc_run "chrony: comment out cmdallow (remote control)" _sed_inplace "$_cf" 's/^\([[:space:]]*cmdallow\)/#bt \1/'; _kr=$?
         [ "$_kr" -eq 0 ] && touch_svc "$CHRONY_SVC" "$CHRONY_CF"
         row ntp-chrony chrony cmdallow "remote control of chrony -> off (localhost only)" "$(result "$_kr")"
     else

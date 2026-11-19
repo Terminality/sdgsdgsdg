@@ -14,9 +14,9 @@
 #   protected list), and chosen accounts can get chosen passwords (-Passwords).
 #
 # USAGE
-#   powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-password-rotation.ps1 -Out C:\ccdc-out              dry run
-#   powershell ... WN-20-password-rotation.ps1 -Out C:\ccdc-out -Apply -Exclude mark.jacobs,admin
-#   powershell ... WN-20-password-rotation.ps1 -Out C:\ccdc-out -Apply -Passwords C:\team\sheet.csv
+#   powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-password-rotation.ps1 -Out C:\bt-out              dry run
+#   powershell ... WN-20-password-rotation.ps1 -Out C:\bt-out -Apply -Exclude mark.jacobs,admin
+#   powershell ... WN-20-password-rotation.ps1 -Out C:\bt-out -Apply -Passwords C:\team\sheet.csv
 #   Run in an elevated window; on a domain controller as a domain admin.
 #
 # OPTIONS
@@ -66,7 +66,7 @@
 # DEPENDS ON
 #   WMI (local accounts, services), ADSI (WinNT and LDAP providers), schtasks.
 #   All present on Windows 7 / Server 2008 R2 and later.  No AD module needed.
-#   $env:CCDC_WN20_FAKE names a folder of stand-in accounts for the tests, so
+#   $env:BT_WN20_FAKE names a folder of stand-in accounts for the tests, so
 #   they never touch a real account.
 #
 # TESTED ON
@@ -117,7 +117,7 @@ if ($Help) {
     exit 0
 }
 
-# >>> CCDC-LIB  (lib/lib.ps1 0.2.1 pasted in by tools/build.sh - edit lib/lib.ps1, not this copy)
+# >>> BT-LIB  (lib/lib.ps1 0.2.1 pasted in by tools/build.sh - edit lib/lib.ps1, not this copy)
 # =============================================================================
 # ID:       LB-02
 # NAME:     PowerShell library (lib.ps1)
@@ -151,9 +151,9 @@ if ($Help) {
 #           [switch]$ForceScored, [switch]$Quiet, [switch]$DebugLog,
 #           [string]$MyOwnOption
 #       )
-#       # >>> CCDC-LIB
+#       # >>> BT-LIB
 #       ...the loader lines from templates/script-template.ps1...
-#       # <<< CCDC-LIB
+#       # <<< BT-LIB
 #       Initialize-Cc -Id 'WN-99' -Name 'Example script' -Kind changes -Bound $PSBoundParameters
 #       Invoke-CcChange -Description 'stop Telnet' -Action { Stop-Service TlntSvr } `
 #                       -Undo 'Start-Service TlntSvr' | Out-Null
@@ -290,10 +290,10 @@ function Assert-CcAdmin {
 }
 
 # Confirm-Cc 'question'   -> ask the operator; $true for yes.
-#   $env:CCDC_ASSUME_YES = '1' answers yes without asking (for fan-out).
+#   $env:BT_ASSUME_YES = '1' answers yes without asking (for fan-out).
 function Confirm-Cc {
     param([string]$Question)
-    if ($env:CCDC_ASSUME_YES -eq '1') { return $true }
+    if ($env:BT_ASSUME_YES -eq '1') { return $true }
     $a = Read-Host ($Question + ' [y/N]')
     return ($a -eq 'y' -or $a -eq 'yes')
 }
@@ -364,8 +364,8 @@ function Initialize-Cc {
     # Output folder: operator-chosen, never inside the kit (rule 11).
     $out = $null
     if ($Bound.ContainsKey('Out') -and $Bound['Out']) { $out = [string]$Bound['Out'] }
-    elseif ($env:CCDC_OUT) { $out = $env:CCDC_OUT }
-    else { $out = Join-Path $HOME 'ccdc-out' }
+    elseif ($env:BT_OUT) { $out = $env:BT_OUT }
+    else { $out = Join-Path $HOME 'bt-out' }
     $out = Resolve-CcPath $out
     if ($c.Kit) {
         $kitFull = (Resolve-CcPath $c.Kit).TrimEnd('\','/')
@@ -390,7 +390,7 @@ function Initialize-Cc {
     # Protected list.
     $prot = $null
     if ($Bound.ContainsKey('Protected') -and $Bound['Protected']) { $prot = [string]$Bound['Protected'] }
-    elseif ($env:CCDC_PROTECTED) { $prot = $env:CCDC_PROTECTED }
+    elseif ($env:BT_PROTECTED) { $prot = $env:BT_PROTECTED }
     else { $prot = Join-Path $out 'protected.csv' }
     $c.ProtectedRows = $null
     if (Test-Path -LiteralPath $prot) {
@@ -926,15 +926,15 @@ function Show-CcFlagReport {
 # Test-CcSelf
 #   Rule 15: the kit's hash is checked before each run.  If a MANIFEST.sha256
 #   (written by tools/build.sh) sits in the script's folder or one of the two
-#   folders above it, or $env:CCDC_MANIFEST points to one, the running script's
+#   folders above it, or $env:BT_MANIFEST points to one, the running script's
 #   hash must match its line there.  A mismatch stops the script with exit 3:
 #   the file on this host is not the one you built.
-#   $env:CCDC_SKIP_VERIFY = '1' turns the check off (for development).
+#   $env:BT_SKIP_VERIFY = '1' turns the check off (for development).
 function Test-CcSelf {
     $c = $script:Cc
-    if ($env:CCDC_SKIP_VERIFY -eq '1') { Write-CcLog -Level DEBUG -Message 'verify: skipped (CCDC_SKIP_VERIFY=1)'; return }
+    if ($env:BT_SKIP_VERIFY -eq '1') { Write-CcLog -Level DEBUG -Message 'verify: skipped (BT_SKIP_VERIFY=1)'; return }
     if (-not $c.ScriptPath) { Write-CcLog -Level DEBUG -Message 'verify: script was not started from a file, nothing to hash'; return }
-    $man = $env:CCDC_MANIFEST
+    $man = $env:BT_MANIFEST
     if (-not $man) {
         $d = $c.Kit
         for ($i = 0; $i -lt 3 -and $d; $i++) {
@@ -976,7 +976,7 @@ function Complete-Cc {
     if ($c.Log) { Write-CcLog -Level INFO -Message ('log: {0}' -f $c.Log) }
     exit $ExitCode
 }
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 # ---- Options ----------------------------------------------------------------
 # Windows PowerShell 5.1 turns an empty list returned from a function into
@@ -989,7 +989,7 @@ if ($Passwords -and -not (Test-Path -LiteralPath $Passwords)) { Write-Host "-Pas
 
 # ---- Start ------------------------------------------------------------------
 Initialize-Cc -Id 'WN-20' -Name 'Windows password rotation' -Kind changes -Bound $PSBoundParameters
-$Fake = $env:CCDC_WN20_FAKE
+$Fake = $env:BT_WN20_FAKE
 if ($Fake) { Write-CcLog -Level WARN -Message "TEST MODE: stand-in accounts from $Fake; no real account is read or changed" }
 elseif ($Cc.Apply) { Assert-CcAdmin }
 Use-CcRunDir
@@ -1002,7 +1002,7 @@ $Me = Lc2 $me0
 
 # ---- Account sources ----------------------------------------------------------
 # Every read and write of an account goes through these few functions, so the
-# tests can swap in stand-ins ($env:CCDC_WN20_FAKE) without touching Windows.
+# tests can swap in stand-ins ($env:BT_WN20_FAKE) without touching Windows.
 #   account object: Name, Scope (local|domain), Sid, Disabled, Spn, Path
 
 function Read-FakeCsv([string]$name) {
@@ -1078,7 +1078,7 @@ function Get-ServiceUsers {
 function Set-Pw($a, [string]$pw) {
     if ($Fake) {
         foreach ($r in @(Read-FakeCsv 'fail.csv')) { if ($r.name -eq $a.Name) { throw $r.reason } }
-        if ($env:CCDC_WN20_SLOW -eq $a.Name) { Start-Sleep -Seconds 60 }
+        if ($env:BT_WN20_SLOW -eq $a.Name) { Start-Sleep -Seconds 60 }
         [IO.File]::AppendAllText((Join-Path $Fake 'set.log'), ($a.Name + "`t" + $pw + "`n"))
         return
     }

@@ -10,7 +10,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/network/NW-01-config-backup.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 O="$T_TMP/out"; B="$T_TMP/bin"; D="$T_TMP/dev"; mkdir -p "$O" "$B" "$D"
@@ -34,7 +34,7 @@ cat "$STUB_DIR/$host.out"
 STUB
 printf '#!/bin/sh\n[ "$1" = -e ] || exit 9\nshift\necho "SSHPASS_SET=${SSHPASS:+yes}" >>"$STUB_DIR/sshpass.log"\nexec "$@"\n' >"$B/sshpass"
 chmod +x "$B/ssh" "$B/sshpass"
-CCDC_SSH="$B/ssh"; export CCDC_SSH
+BT_SSH="$B/ssh"; export BT_SSH
 PATH="$B:$PATH"; export PATH
 
 # cisco_cfg STAMP EXTRA -> a Cisco IOS session (prompts, echoed commands, timestamps)
@@ -153,7 +153,7 @@ t_eq "$rc" 0 "old-algorithm device works on the retry"
 t_has "$out" "old SSH algorithms" "summary says old algorithms were used"
 
 t_start "password logins"
-CCDC_NET_PASS='TopSecret-99'; export CCDC_NET_PASS
+BT_NET_PASS='TopSecret-99'; export BT_NET_PASS
 out=$(run --out "$O" --device vyos1,10.0.0.5,vyos --password-env 2>&1); rc=$?
 t_eq "$rc" 0 "exit 0"
 t_has "$(cat "$D/sshpass.log")" "SSHPASS_SET=yes" "password handed over in the environment"

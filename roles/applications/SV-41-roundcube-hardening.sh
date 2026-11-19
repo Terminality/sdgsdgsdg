@@ -72,12 +72,12 @@
 # KNOWN LIMITS / WHAT TO WATCH FOR
 #   - Updating Roundcube is not done here (apt-get install --only-upgrade
 #     roundcube-core, or a new tarball): the dry run says when it is needed.
-#   - nginx is not edited: the lines are written to nginx-ccdc.conf.
+#   - nginx is not edited: the lines are written to nginx-bt.conf.
 #   - Web shells inside Roundcube: SV-16 --webroot /usr/share/roundcube.
 #   - Mail passwords: SV-40.  Roundcube's database password: SV-42.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -85,7 +85,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 ALL_FIX="installer debug-off des-key log-logins config-perms block-dirs"
 usage() {
@@ -318,13 +318,13 @@ rc_set() {
     backed "$1" || return 1
     awk -v k="$2" -v v="$3" -v q="'" '
         { l = $0; sub(/^[ \t]+/, "", l) }
-        (index(l, "$config[" q k q "]") == 1 || index(l, "$config[\"" k "\"]") == 1) && l !~ /^(\/\/|#)/ { if (!done) { print "$config[" q k q "] = " v "; // CCDC SV-41"; done = 1 }; next }
+        (index(l, "$config[" q k q "]") == 1 || index(l, "$config[\"" k "\"]") == 1) && l !~ /^(\/\/|#)/ { if (!done) { print "$config[" q k q "] = " v "; // BT SV-41"; done = 1 }; next }
         { print }
-        END { if (!done) print "$config[" q k q "] = " v "; // CCDC SV-41" }' "$1" >"$1.n" && cat "$1.n" >"$1"; _r=$?; rm -f "$1.n"; touch "$1"; return "$_r"
+        END { if (!done) print "$config[" q k q "] = " v "; // BT SV-41" }' "$1" >"$1.n" && cat "$1.n" >"$1"; _r=$?; rm -f "$1.n"; touch "$1"; return "$_r"
 }
 WEBG=""; for _g in www-data apache nginx http; do grep -q "^$_g:" "$(P /etc/group)" 2>/dev/null && { WEBG=$_g; break; }; done
-DROP=""; [ -d "$(P /etc/apache2/conf-enabled)" ] && DROP=/etc/apache2/conf-enabled/zz-ccdc-roundcube.conf
-[ -z "$DROP" ] && [ -d "$(P /etc/httpd/conf.d)" ] && DROP=/etc/httpd/conf.d/zz-ccdc-roundcube.conf
+DROP=""; [ -d "$(P /etc/apache2/conf-enabled)" ] && DROP=/etc/apache2/conf-enabled/zz-bt-roundcube.conf
+[ -z "$DROP" ] && [ -d "$(P /etc/httpd/conf.d)" ] && DROP=/etc/httpd/conf.d/zz-bt-roundcube.conf
 APSVC=apache2; [ -d "$(P /etc/httpd)" ] && [ ! -d "$(P /etc/apache2)" ] && APSVC=httpd
 do_fix() {   # do_fix FIX ROOT ARG
     _cf=$(conf_files "$2")
@@ -338,8 +338,8 @@ do_fix() {   # do_fix FIX ROOT ARG
             cc_undo_add "owner and mode of $3 back" "chown $_om $(cc_shquote "$3"); chmod $_mm $(cc_shquote "$3")"
             chown "0:${WEBG:-0}" "$3" 2>/dev/null; chmod 640 "$3" ;;
         block-dirs)
-            [ -n "$DROP" ] || { printf '%s\n' "location ~ ^${3#http*://*/}(installer|logs|temp|config|SQL|bin)/ { deny all; }" >>"$CC_RUN_DIR/nginx-ccdc.conf"; return 0; }
-            _df=$(P "$DROP"); [ -f "$_df" ] || { cc_undo_add "remove $DROP (made by SV-41)" "rm -f $(cc_shquote "$_df")"; printf '# Added by CCDC SV-41 (Roundcube). Delete this file to undo.\n' >"$_df"; }
+            [ -n "$DROP" ] || { printf '%s\n' "location ~ ^${3#http*://*/}(installer|logs|temp|config|SQL|bin)/ { deny all; }" >>"$CC_RUN_DIR/nginx-bt.conf"; return 0; }
+            _df=$(P "$DROP"); [ -f "$_df" ] || { cc_undo_add "remove $DROP (made by SV-41)" "rm -f $(cc_shquote "$_df")"; printf '# Added by SV-41 (Roundcube). Delete this file to undo.\n' >"$_df"; }
             _rr=${2#"$R"}
             for _p in "$_rr" "$(cd "$2" 2>/dev/null && pwd -P | sed "s|^$R||")"; do
                 [ -n "$_p" ] || continue
@@ -407,7 +407,7 @@ CC_N_FAIL=$NBAD
 
 # ---- Summary ----------------------------------------------------------------------------
 awk -F'\t' -v r="$R" '{ t = $2; if (r != "" && index(t, r) == 1) t = substr(t, length(r) + 1); printf "%-4s %s  %s\n", $1, t, $3 }' "$W/find" >"$CC_RUN_DIR/findings.txt"
-[ -s "$CC_RUN_DIR/nginx-ccdc.conf" ] || rm -f "$CC_RUN_DIR/nginx-ccdc.conf"
+[ -s "$CC_RUN_DIR/nginx-bt.conf" ] || rm -f "$CC_RUN_DIR/nginx-bt.conf"
 {
     printf '==========[ summary ]==========\n'
     printf 'SV-41 Roundcube hardening | host %s | %s\n' "$CC_HOST" "$([ "$APPLIED" = 1 ] && { [ "$BROKE" = 1 ] && echo 'APPLIED, then PUT BACK (the login page broke)' || echo APPLIED; } || echo 'DRY RUN - nothing changed')"
@@ -415,7 +415,7 @@ awk -F'\t' -v r="$R" '{ t = $2; if (r != "" && index(t, r) == 1) t = substr(t, l
     awk -F'\t' '$1 != "OK" { printf "  %-4s %s\n", $1, substr($3, 1, 150) }' "$W/find"
     [ -s "$CC_RUN_DIR/plan.txt" ] && { printf '\nChanges%s:\n' "$([ "$APPLIED" = 1 ] || echo ' planned')"; sed 's/^/  /' "$CC_RUN_DIR/plan.txt"; }
     [ "$APPLIED" = 1 ] && printf 'Done: %d   Failed: %d\n' "$NOK" "$NBAD"
-    [ -f "$CC_RUN_DIR/nginx-ccdc.conf" ] && printf 'nginx: include %s/nginx-ccdc.conf in the server block, then nginx -t and reload.\n' "$CC_RUN_DIR"
+    [ -f "$CC_RUN_DIR/nginx-bt.conf" ] && printf 'nginx: include %s/nginx-bt.conf in the server block, then nginx -t and reload.\n' "$CC_RUN_DIR"
     [ "$APPLIED" = 1 ] && [ -f "$CC_RUN_DIR/revert.sh" ] && printf 'Undo this run: sh %s/revert.sh --force\n' "$CC_RUN_DIR"
     printf '\nAlso: web shells SV-16 --webroot <roundcube>; mail passwords SV-40; its database password SV-42; mail backdoors SV-31.\n'
 } >"$CC_RUN_DIR/summary.txt"

@@ -67,7 +67,7 @@
 #
 # DEPENDS ON
 #   curl (REST on 8089); Splunk's own bin/splunk to restart.
-#   CCDC_SPLUNK_CURL may name a stand-in curl: the tests use one.
+#   BT_SPLUNK_CURL may name a stand-in curl: the tests use one.
 #
 # TESTED ON
 #   A stand-in Splunk (the real file layout - etc/passwd, etc/apps,
@@ -85,7 +85,7 @@
 #   - LDAP / SAML users are listed only.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -93,7 +93,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 ALL_FIX="passwords scripts-off app-quarantine deploy-off secrets-perms"
 usage() {
@@ -161,7 +161,7 @@ header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
 inlist() { case ",$2," in *",$1,"*) return 0 ;; esac; return 1; }
 ok_pw() { case "$1" in ''|*[!A-Za-z0-9_@%+=.,!?^*~-]*) return 1 ;; esac; [ "${#1}" -ge 8 ]; }
 want() { inlist "$1" "$SKIP" && return 1; [ -z "$ONLY" ] || inlist "$1" "$ONLY"; }
-CURL=${CCDC_SPLUNK_CURL:-curl}
+CURL=${BT_SPLUNK_CURL:-curl}
 
 cc_show "$C_CYN" "SV-44 Splunk hardening and passwords | host $CC_HOST | results in $CC_RUN_DIR"
 cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it   ${C_GRN}[ok]${C_OFF} fine   ${C_YEL}[~] would change${C_OFF}   ${C_GRN}[+] changed${C_OFF}   ${C_RED}[x] failed${C_OFF}"

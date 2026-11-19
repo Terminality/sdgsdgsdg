@@ -76,7 +76,7 @@
 #
 # DEPENDS ON
 #   ss, systemctl or service; curl or wget; nc or openssl (banners);
-#   iptables (firewall check).  CCDC_SVC_DIRS (tests) adds folders of
+#   iptables (firewall check).  BT_SVC_DIRS (tests) adds folders of
 #   stand-in init scripts.
 #
 # TESTED ON
@@ -96,7 +96,7 @@
 #   --debug shows each command.  status.txt holds every check's result.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -104,7 +104,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -193,7 +193,7 @@ unit_exists() {
         systemctl list-unit-files "$1.service" 2>/dev/null | grep -q "^$1\.service" && return 0
     fi
     [ -x "/etc/init.d/$1" ] && return 0
-    for _d in ${CCDC_SVC_DIRS:-}; do [ -x "$_d/$1" ] && return 0; done
+    for _d in ${BT_SVC_DIRS:-}; do [ -x "$_d/$1" ] && return 0; done
     return 1
 }
 # The rows to check: kind|unit|procs|ports|probe
@@ -233,7 +233,7 @@ fi
 # ---- Checks --------------------------------------------------------------------------
 svc_cmd() {   # svc_cmd UNIT start|stop|restart|status
     case "$1" in Splunkd|splunk) /opt/splunk/bin/splunk "$2" --accept-license --answer-yes --no-prompt; return ;; esac
-    for _d in ${CCDC_SVC_DIRS:-}; do [ -x "$_d/$1" ] && { "$_d/$1" "$2"; return; }; done
+    for _d in ${BT_SVC_DIRS:-}; do [ -x "$_d/$1" ] && { "$_d/$1" "$2"; return; }; done
     if [ "$CC_INIT" = systemd ]; then systemctl "$2" "$1"
     elif cc_have rc-service; then rc-service "$1" "$2"
     elif cc_have service; then service "$1" "$2"
@@ -410,7 +410,7 @@ BOXP=0
 df -P / /var /tmp 2>/dev/null | awk 'NR > 1 { u = $5; sub(/%/, "", u); if (u + 0 >= 95) print $6 " " u "%" }' | sort -u >"$W/full"
 while read -r _m _p; do cc_show "$C_RED" "  [!] $_m is $_p full: services cannot write logs, PID files or sessions. Look: du -xh $_m | sort -h | tail"; BOXP=1; done <"$W/full"
 df -Pi / /var /tmp 2>/dev/null | awk 'NR > 1 { u = $5; sub(/%/, "", u); if (u + 0 >= 95) print $6 " " u "%" }' | sort -u | while read -r _m _p; do cc_show "$C_RED" "  [!] $_m has no inodes left ($_p): someone may have filled it with tiny files"; done
-_tt="/tmp/.ccdc-sv50-$$"; if : >"$_tt" 2>/dev/null; then rm -f "$_tt"; else cc_show "$C_RED" "  [!] /tmp is not writable: PHP sessions and many services fail. Check: ls -ld /tmp (should be drwxrwxrwt)"; BOXP=1; fi
+_tt="/tmp/.bt-sv50-$$"; if : >"$_tt" 2>/dev/null; then rm -f "$_tt"; else cc_show "$C_RED" "  [!] /tmp is not writable: PHP sessions and many services fail. Check: ls -ld /tmp (should be drwxrwxrwt)"; BOXP=1; fi
 [ "$(stat -c %a /tmp 2>/dev/null)" = 1777 ] || { [ -d /tmp ] && cc_show "$C_YEL" "  [*] /tmp mode is $(stat -c %a /tmp 2>/dev/null), not 1777 (fix: chmod 1777 /tmp)"; }
 _oom=$( { dmesg 2>/dev/null; journalctl -k -n 500 --no-pager 2>/dev/null; } | grep -i 'out of memory\|killed process' | tail -n 3)
 [ -n "$_oom" ] && { cc_show "$C_YEL" "  [*] programs were killed for lack of memory:"; printf '%s\n' "$_oom" | while IFS= read -r _l; do cc_show "$C_GRY" "      $_l"; done; }

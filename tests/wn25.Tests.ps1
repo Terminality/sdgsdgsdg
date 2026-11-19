@@ -2,7 +2,7 @@
 # Tests for WN-25 Windows firewall.
 #   pwsh -NoProfile -File tests/wn25.Tests.ps1
 #
-# Everything the script reads or changes goes through $env:CCDC_WN25_FAKE: a
+# Everything the script reads or changes goes through $env:BT_WN25_FAKE: a
 # folder of stand-in state (profiles.csv, rules.csv, netstat.txt,
 # processes.csv, logging.txt, task.txt for the rollback task).  The tests
 # check the plan, apply it, fire the rollback, keep a change, -Undo, -Remove
@@ -16,7 +16,7 @@ $wn25 = Join-Path (Join-Path (Join-Path $root 'roles') 'windows-ad') 'WN-25-fire
 $psExe = (Get-Process -Id $PID).Path
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('cctest_wn25_' + $PID)
 $out = Join-Path $tmp 'out'; $fake = Join-Path $tmp 'fake'
-$env:CCDC_SKIP_VERIFY = '1'; $env:CCDC_WN25_FAKE = $fake
+$env:BT_SKIP_VERIFY = '1'; $env:BT_WN25_FAKE = $fake
 $script:pass = 0; $script:fail = 0
 function T-Start($t) { Write-Host "  -- $t" }
 function T-Eq($got, $want, $label) { if ("$got" -ceq "$want") { $script:pass++ } else { $script:fail++; Write-Host "     FAIL: $label"; Write-Host "           got [$got], wanted [$want]" } }
@@ -98,16 +98,16 @@ $r = Run @('-Out', $out, '-Protected', $prot, '-Allow', '8443/tcp', '-Exclude', 
 T-Eq $r.Code 0 'exits 0'
 T-Eq (Snap) $start 'nothing changed'
 $plan = [IO.File]::ReadAllText((Join-Path $r.Dir 'plan.csv'))
-T-Has $plan '"CCDC allow 25/tcp","TCP","25","","protected list (scored)"' 'a protected port is opened even though nothing listens now'
-T-Has $plan '"CCDC allow 80/tcp"' 'listening web port opened'
-T-Has $plan '"CCDC allow 3389/tcp"' 'RDP opened (listening)'
-T-Has $plan '"CCDC allow 53/udp"' 'listening UDP port opened'
-T-Has $plan '"CCDC allow 8443/tcp","TCP","8443","","-Allow"' '-Allow opened'
-T-Has $plan '"CCDC allow 5985/tcp","TCP","5985","","protected list (scored)' 'protected wins over -Exclude'
+T-Has $plan '"BT allow 25/tcp","TCP","25","","protected list (scored)"' 'a protected port is opened even though nothing listens now'
+T-Has $plan '"BT allow 80/tcp"' 'listening web port opened'
+T-Has $plan '"BT allow 3389/tcp"' 'RDP opened (listening)'
+T-Has $plan '"BT allow 53/udp"' 'listening UDP port opened'
+T-Has $plan '"BT allow 8443/tcp","TCP","8443","","-Allow"' '-Allow opened'
+T-Has $plan '"BT allow 5985/tcp","TCP","5985","","protected list (scored)' 'protected wins over -Exclude'
 T-Has $r.Text 'both protected and in -Exclude' 'and that is warned about'
-T-Has $plan '"CCDC allow admin and scoring hosts","ANY","","10.0.0.5,10.0.0.0/24"' 'protected hosts and -AdminFrom get everything'
+T-Has $plan '"BT allow admin and scoring hosts","ANY","","10.0.0.5,10.0.0.0/24"' 'protected hosts and -AdminFrom get everything'
 T-HasNot $plan 'scorebox' 'a host NAME is not used as an address'
-T-Has $plan '"CCDC allow ping","ICMP"' 'ping allowed'
+T-Has $plan '"BT allow ping","ICMP"' 'ping allowed'
 T-HasNot $plan '4444' 'nc listener not opened'
 T-HasNot $plan '8080' 'listener in AppData not opened'
 T-HasNot $plan '9090' 'PowerShell listener not opened'
@@ -135,9 +135,9 @@ $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-AdminFrom', '10.0.0.6'
 $run1 = $r.Dir
 T-Eq $r.Code 0 'exits 0'
 T-Eq (@(Import-Csv -LiteralPath (Join-Path $fake 'profiles.csv') | Where-Object { $_.on -eq 'True' -and $_.blockin -eq 'True' }).Count) 3 'all three profiles on and blocking inbound'
-T-Eq (Enabled 'CCDC allow 25/tcp') 'True' 'scored port rule added'
-T-Eq (Rule 'CCDC allow 25/tcp')[0].group 'CCDC' 'in group CCDC'
-T-Eq (Rule 'CCDC allow admin and scoring hosts')[0].raddr '10.0.0.5,10.0.0.6' 'admin hosts rule'
+T-Eq (Enabled 'BT allow 25/tcp') 'True' 'scored port rule added'
+T-Eq (Rule 'BT allow 25/tcp')[0].group 'BT' 'in group BT'
+T-Eq (Rule 'BT allow admin and scoring hosts')[0].raddr '10.0.0.5,10.0.0.6' 'admin hosts rule'
 T-Eq (Enabled 'Allow All') 'False' 'allow-all rule turned off'
 T-Eq (Enabled 'backdoor') 'False' 'nc rule turned off'
 T-Eq (Enabled 'odd port') 'False' 'backdoor-port rule turned off'
@@ -175,20 +175,20 @@ $o = RunFile (Join-Path $run2 'rollback.ps1')
 T-Eq (Snap) $afterKeep 'a rollback after keep does nothing'
 
 T-Start 'a second run after keeping: no duplicate rules'
-$before = @(Rules | Where-Object { $_.group -eq 'CCDC' }).Count
+$before = @(Rules | Where-Object { $_.group -eq 'BT' }).Count
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot)
 T-Eq $r.Code 0 'exits 0'
-T-Eq (@(Rules | Where-Object { $_.group -eq 'CCDC' }).Count) $before 'the same rules are not added again'
+T-Eq (@(Rules | Where-Object { $_.group -eq 'BT' }).Count) $before 'the same rules are not added again'
 $o = RunFile (Join-Path $r.Dir 'keep-firewall.ps1')
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-AdminFrom', '10.0.0.9')
-T-Eq (Rule 'CCDC allow admin and scoring hosts')[0].raddr '10.0.0.5,10.0.0.9' 'a rule with new addresses is replaced, not duplicated'
-T-Eq (@(Rule 'CCDC allow admin and scoring hosts').Count) 1 'still one admin rule'
+T-Eq (Rule 'BT allow admin and scoring hosts')[0].raddr '10.0.0.5,10.0.0.9' 'a rule with new addresses is replaced, not duplicated'
+T-Eq (@(Rule 'BT allow admin and scoring hosts').Count) 1 'still one admin rule'
 $o = RunFile (Join-Path $r.Dir 'keep-firewall.ps1')
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-Exclude', '80/tcp')
 T-Eq $r.Code 0 'a rerun with -Exclude exits 0'
-T-Eq (Enabled 'CCDC allow 80/tcp') '(none)' 'a rerun with -Exclude removes the rule an earlier run added'
+T-Eq (Enabled 'BT allow 80/tcp') '(none)' 'a rerun with -Exclude removes the rule an earlier run added'
 T-Has $r.Text 'no longer wanted, removed' 'and the summary says so'
-T-Eq (Enabled 'CCDC allow 3389/tcp') 'True' 'the other rules stay'
+T-Eq (Enabled 'BT allow 3389/tcp') 'True' 'the other rules stay'
 $o = RunFile (Join-Path $r.Dir 'keep-firewall.ps1')
 
 T-Start 'a leftover task from a kept run does not block the next run'
@@ -207,13 +207,13 @@ T-True (-not (Test-Path -LiteralPath (Join-Path $fake 'task.txt'))) 'a rollback 
 T-Start '-Undo and -Remove'
 $r = Run @('-Out', $out, '-Remove', '-Apply', '-Protected', $prot)
 T-Eq $r.Code 0 '-Remove exits 0'
-T-Eq (@(Rules | Where-Object { $_.group -eq 'CCDC' }).Count) 0 'our rules are removed'
+T-Eq (@(Rules | Where-Object { $_.group -eq 'BT' }).Count) 0 'our rules are removed'
 T-Eq (Enabled 'Allow All') 'False' '-Remove leaves the rest as it is'
 Plant; $start = Snap
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-NoTimer', '-NoLog', '-NoPing')
 T-True (-not (Test-Path -LiteralPath (Join-Path $fake 'task.txt'))) '-NoTimer: no task'
 T-True (-not (Test-Path -LiteralPath (Join-Path $fake 'logging.txt'))) '-NoLog: logging not changed'
-T-Eq (Enabled 'CCDC allow ping') '(none)' '-NoPing: no ping rule'
+T-Eq (Enabled 'BT allow ping') '(none)' '-NoPing: no ping rule'
 $r = Run @('-Out', $out, '-Undo', 'latest')
 T-Has $r.Text 'nothing was put back' '-Undo without -Apply is a dry run'
 $r = Run @('-Out', $out, '-Undo', 'latest', '-Apply', '-Protected', $prot)
@@ -225,19 +225,19 @@ Plant; [IO.File]::WriteAllText((Join-Path $fake 'is-dc'), '')
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-Strict', '-NoTimer')
 T-Eq (Enabled 'SQL Server') 'False' '-Strict turns off rules that are not ours'
 T-Eq (Enabled 'Remote Desktop - User Mode (TCP-In)') 'False' 'including Windows rules (RDP is open through our rule)'
-T-Eq (Enabled 'CCDC allow 3389/tcp') 'True' '... which exists'
+T-Eq (Enabled 'BT allow 3389/tcp') 'True' '... which exists'
 T-Eq (Enabled 'Active Directory Domain Services (LDAP-In)') 'True' 'Active Directory rules are kept on a DC'
 T-Eq (Enabled 'Core Networking - Dynamic Host Configuration Protocol (DHCP-In)') 'True' '-Strict keeps Windows core networking (DHCP)'
-T-Eq (Enabled 'CCDC allow 88/tcp') 'True' 'Kerberos opened on a DC'
-T-Eq (Enabled 'CCDC allow 3268-3269/tcp') 'True' 'global catalog opened on a DC'
-T-Eq (Rule 'CCDC allow RPC (DC)')[0].lports 'RPC' 'dynamic RPC opened on a DC'
+T-Eq (Enabled 'BT allow 88/tcp') 'True' 'Kerberos opened on a DC'
+T-Eq (Enabled 'BT allow 3268-3269/tcp') 'True' 'global catalog opened on a DC'
+T-Eq (Rule 'BT allow RPC (DC)')[0].lports 'RPC' 'dynamic RPC opened on a DC'
 T-Has $r.Text 'domain controller: Active Directory ports kept open' 'summary says it is a DC'
 
 T-Start 'nothing changes when the export fails'
 Plant; $start = Snap
-$env:CCDC_WN25_FAIL = 'export'
+$env:BT_WN25_FAIL = 'export'
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot)
-Remove-Item Env:\CCDC_WN25_FAIL
+Remove-Item Env:\BT_WN25_FAIL
 T-Eq $r.Code 4 'exits 4'
 T-Has $r.Text 'could not export the firewall first, so nothing was changed' 'and says why'
 T-Eq (Snap) $start 'nothing changed'

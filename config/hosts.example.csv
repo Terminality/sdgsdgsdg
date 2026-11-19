@@ -16,7 +16,7 @@ host,ip,os,role,connect,port,user,scored_services,notes
 # user             account fan-out logs in as (never put a password here)
 # scored_services  semicolon-separated type:port, e.g. http:80;dns:53
 # notes            anything the team should know
-web01,10.0.2.5,windows,IIS employee portal,winrm,5985,ccdc-automation,http:80,
-dc1,10.0.2.2,windows,domain controller,winrm,5985,ccdc-automation,dns:53;ldap:389,
-mail01,10.0.2.20,linux,mail and webmail,ssh,22,ccdc-automation,smtp:25;imap:143;http:80,
+web01,10.0.2.5,windows,IIS employee portal,winrm,5985,bt-automation,http:80,
+dc1,10.0.2.2,windows,domain controller,winrm,5985,bt-automation,dns:53;ldap:389,
+mail01,10.0.2.20,linux,mail and webmail,ssh,22,bt-automation,smtp:25;imap:143;http:80,
 fw01,10.0.2.1,network,perimeter firewall,ssh,22,admin,,Palo Alto

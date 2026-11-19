@@ -6,7 +6,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/network/SH-04-scan-diff.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 R="$T_TMP/runs"; O="$T_TMP/out"; mkdir -p "$R" "$O"

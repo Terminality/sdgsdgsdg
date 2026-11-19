@@ -30,11 +30,11 @@
 #   out.  -Undo puts the old firewall back at any time.
 #
 # USAGE
-#   powershell -NoProfile -ExecutionPolicy Bypass -File WN-25-firewall.ps1 -Out C:\ccdc-out                    dry run: shows the plan
-#   powershell ... WN-25-firewall.ps1 -Out C:\ccdc-out -Apply -AdminFrom 10.0.0.5
+#   powershell -NoProfile -ExecutionPolicy Bypass -File WN-25-firewall.ps1 -Out C:\bt-out                    dry run: shows the plan
+#   powershell ... WN-25-firewall.ps1 -Out C:\bt-out -Apply -AdminFrom 10.0.0.5
 #     then, from a NEW RDP/remote session within 5 minutes:
 #   powershell ... <run folder>\keep-firewall.ps1
-#   powershell ... WN-25-firewall.ps1 -Out C:\ccdc-out -Undo latest -Apply     put the old firewall back
+#   powershell ... WN-25-firewall.ps1 -Out C:\bt-out -Undo latest -Apply     put the old firewall back
 #   Run in an elevated Windows PowerShell (powershell.exe) window.
 #
 # OPTIONS
@@ -51,7 +51,7 @@
 #   -NoTimer           no rollback timer (only when you are at the console)
 #   -Undo RUN          put back the firewall from before a run: "latest" or
 #                      a run folder.  Dry run unless -Apply
-#   -Remove            remove only the rules this script added (group "CCDC")
+#   -Remove            remove only the rules this script added (group "BT")
 #   Common options (-Apply, -Out, -Protected, -NoProtected, -Quiet,
 #   -DebugLog) come from the library.
 #
@@ -67,14 +67,14 @@
 #
 # WHAT IT CHANGES  (only with -Apply)
 #   Firewall profiles (on, block inbound, allow outbound, logging), adds
-#   rules in the group "CCDC", turns off the existing rules listed in
-#   disabled.csv, and creates the scheduled task "CCDC-WN25-rollback" until
+#   rules in the group "BT", turns off the existing rules listed in
+#   disabled.csv, and creates the scheduled task "BT-WN25-rollback" until
 #   the change is kept or rolled back.  Outbound traffic is not limited.
 #
 # DEPENDS ON
 #   The firewall COM object (HNetCfg.FwPolicy2), netsh advfirewall, netstat,
 #   WMI (Win32_Process), schtasks - Windows 7 / Server 2008 R2 and later.
-#   $env:CCDC_WN25_FAKE names a folder of stand-in state for the tests: then
+#   $env:BT_WN25_FAKE names a folder of stand-in state for the tests: then
 #   nothing on the machine is read or changed.
 #
 # TESTED ON
@@ -96,7 +96,7 @@
 # DEBUGGING
 #   -DebugLog          every listener and rule and the decision about it
 #   plan.csv / disabled.csv / not-allowed.csv   the reasons, one per line
-#   schtasks /query /tn CCDC-WN25-rollback      is a rollback still waiting?
+#   schtasks /query /tn BT-WN25-rollback      is a rollback still waiting?
 # =============================================================================
 param(
     [switch]$Apply, [string]$Out, [string]$Protected, [switch]$NoProtected,
@@ -123,7 +123,7 @@ if ($Help) {
     exit 0
 }
 
-# >>> CCDC-LIB  (lib/lib.ps1 0.2.1 pasted in by tools/build.sh - edit lib/lib.ps1, not this copy)
+# >>> BT-LIB  (lib/lib.ps1 0.2.1 pasted in by tools/build.sh - edit lib/lib.ps1, not this copy)
 # =============================================================================
 # ID:       LB-02
 # NAME:     PowerShell library (lib.ps1)
@@ -157,9 +157,9 @@ if ($Help) {
 #           [switch]$ForceScored, [switch]$Quiet, [switch]$DebugLog,
 #           [string]$MyOwnOption
 #       )
-#       # >>> CCDC-LIB
+#       # >>> BT-LIB
 #       ...the loader lines from templates/script-template.ps1...
-#       # <<< CCDC-LIB
+#       # <<< BT-LIB
 #       Initialize-Cc -Id 'WN-99' -Name 'Example script' -Kind changes -Bound $PSBoundParameters
 #       Invoke-CcChange -Description 'stop Telnet' -Action { Stop-Service TlntSvr } `
 #                       -Undo 'Start-Service TlntSvr' | Out-Null
@@ -296,10 +296,10 @@ function Assert-CcAdmin {
 }
 
 # Confirm-Cc 'question'   -> ask the operator; $true for yes.
-#   $env:CCDC_ASSUME_YES = '1' answers yes without asking (for fan-out).
+#   $env:BT_ASSUME_YES = '1' answers yes without asking (for fan-out).
 function Confirm-Cc {
     param([string]$Question)
-    if ($env:CCDC_ASSUME_YES -eq '1') { return $true }
+    if ($env:BT_ASSUME_YES -eq '1') { return $true }
     $a = Read-Host ($Question + ' [y/N]')
     return ($a -eq 'y' -or $a -eq 'yes')
 }
@@ -370,8 +370,8 @@ function Initialize-Cc {
     # Output folder: operator-chosen, never inside the kit (rule 11).
     $out = $null
     if ($Bound.ContainsKey('Out') -and $Bound['Out']) { $out = [string]$Bound['Out'] }
-    elseif ($env:CCDC_OUT) { $out = $env:CCDC_OUT }
-    else { $out = Join-Path $HOME 'ccdc-out' }
+    elseif ($env:BT_OUT) { $out = $env:BT_OUT }
+    else { $out = Join-Path $HOME 'bt-out' }
     $out = Resolve-CcPath $out
     if ($c.Kit) {
         $kitFull = (Resolve-CcPath $c.Kit).TrimEnd('\','/')
@@ -396,7 +396,7 @@ function Initialize-Cc {
     # Protected list.
     $prot = $null
     if ($Bound.ContainsKey('Protected') -and $Bound['Protected']) { $prot = [string]$Bound['Protected'] }
-    elseif ($env:CCDC_PROTECTED) { $prot = $env:CCDC_PROTECTED }
+    elseif ($env:BT_PROTECTED) { $prot = $env:BT_PROTECTED }
     else { $prot = Join-Path $out 'protected.csv' }
     $c.ProtectedRows = $null
     if (Test-Path -LiteralPath $prot) {
@@ -932,15 +932,15 @@ function Show-CcFlagReport {
 # Test-CcSelf
 #   Rule 15: the kit's hash is checked before each run.  If a MANIFEST.sha256
 #   (written by tools/build.sh) sits in the script's folder or one of the two
-#   folders above it, or $env:CCDC_MANIFEST points to one, the running script's
+#   folders above it, or $env:BT_MANIFEST points to one, the running script's
 #   hash must match its line there.  A mismatch stops the script with exit 3:
 #   the file on this host is not the one you built.
-#   $env:CCDC_SKIP_VERIFY = '1' turns the check off (for development).
+#   $env:BT_SKIP_VERIFY = '1' turns the check off (for development).
 function Test-CcSelf {
     $c = $script:Cc
-    if ($env:CCDC_SKIP_VERIFY -eq '1') { Write-CcLog -Level DEBUG -Message 'verify: skipped (CCDC_SKIP_VERIFY=1)'; return }
+    if ($env:BT_SKIP_VERIFY -eq '1') { Write-CcLog -Level DEBUG -Message 'verify: skipped (BT_SKIP_VERIFY=1)'; return }
     if (-not $c.ScriptPath) { Write-CcLog -Level DEBUG -Message 'verify: script was not started from a file, nothing to hash'; return }
-    $man = $env:CCDC_MANIFEST
+    $man = $env:BT_MANIFEST
     if (-not $man) {
         $d = $c.Kit
         for ($i = 0; $i -lt 3 -and $d; $i++) {
@@ -982,7 +982,7 @@ function Complete-Cc {
     if ($c.Log) { Write-CcLog -Level INFO -Message ('log: {0}' -f $c.Log) }
     exit $ExitCode
 }
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 function Lc($s) { if ($null -eq $s) { return '' }; return ([string]$s).ToLower() }
 function Nz($s) { if ($null -eq $s) { return '' }; return [string]$s }
@@ -1021,18 +1021,18 @@ if ($Undo -and $Remove) { Write-Host 'use -Undo or -Remove, not both'; exit 2 }
 
 # ---- Start ------------------------------------------------------------------
 Initialize-Cc -Id 'WN-25' -Name 'Windows firewall' -Kind changes -Bound $PSBoundParameters
-$Fake = $env:CCDC_WN25_FAKE
+$Fake = $env:BT_WN25_FAKE
 if ($Fake) { Write-CcLog -Level WARN -Message "TEST MODE: stand-in state from $Fake; nothing on this machine is read or changed" }
 else {
     if (-not (Test-CcCommand 'Get-WmiObject')) { Stop-Cc -Code 3 -Message 'run this with Windows PowerShell (powershell.exe), not PowerShell 7 (pwsh)' }
     if ($Cc.Apply) { Assert-CcAdmin }
 }
-$TaskName = 'CCDC-WN25-rollback'
-$Group = 'CCDC'
+$TaskName = 'BT-WN25-rollback'
+$Group = 'BT'
 
 # =============================================================================
 # State providers: every read and write of the firewall goes through these,
-# so the tests can use stand-in state ($env:CCDC_WN25_FAKE).
+# so the tests can use stand-in state ($env:BT_WN25_FAKE).
 # =============================================================================
 function FP([string]$n) { return [IO.Path]::Combine($Fake, $n) }
 function F-Read([string]$n) { $p = FP $n; if (-not (Test-Path -LiteralPath $p)) { return @() }; return @([IO.File]::ReadAllLines($p) | ConvertFrom-Csv) }
@@ -1129,7 +1129,7 @@ function Add-Rule([string]$name, [string]$proto, [string]$ports, [string]$raddr)
     }
     $r = New-Object -ComObject HNetCfg.FWRule
     $r.Name = $name
-    $r.Description = 'Added by WN-25 (CCDC kit). Remove with WN-25 -Remove.'
+    $r.Description = 'Added by WN-25 (the kit). Remove with WN-25 -Remove.'
     $r.Grouping = $Group
     $r.Direction = 1; $r.Action = 1; $r.Profiles = 2147483647
     switch ($proto) {
@@ -1151,7 +1151,7 @@ function Remove-Ours {
 }
 function Export-Fw([string]$file) {
     if ($Fake) {
-        if ($env:CCDC_WN25_FAIL -eq 'export') { throw 'access denied (test)' }
+        if ($env:BT_WN25_FAIL -eq 'export') { throw 'access denied (test)' }
         $d = $file + '.d'; New-Item -ItemType Directory -Path $d -Force | Out-Null
         foreach ($n in @('profiles.csv', 'rules.csv', 'logging.txt')) { if (Test-Path -LiteralPath (FP $n)) { Copy-Item -LiteralPath (FP $n) -Destination (Join-Path $d $n) -Force } }
         [IO.File]::WriteAllText($file, 'fake export'); return
@@ -1228,7 +1228,7 @@ function Task-Create([DateTime]$when, [string]$script) {
     $xml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>CCDC WN-25: put the old firewall back unless the change was kept</Description></RegistrationInfo>
+  <RegistrationInfo><Description>BT WN-25: put the old firewall back unless the change was kept</Description></RegistrationInfo>
   <Triggers><TimeTrigger><StartBoundary>$($when.ToString('s'))</StartBoundary><Enabled>true</Enabled></TimeTrigger></Triggers>
   <Principals><Principal id="Author"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
   <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><ExecutionTimeLimit>PT10M</ExecutionTimeLimit><Enabled>true</Enabled></Settings>
@@ -1364,12 +1364,12 @@ $planCsv = New-CcCsv -Name plan -Header @('rule', 'protocol', 'ports', 'from', '
 $adds = @()
 foreach ($k in $order) {
     $pp = Parse-Port $k
-    $adds += New-Object PSObject -Property @{ Name = ('CCDC allow ' + $k); Proto = $pp.Proto; Ports = $pp.Ports; From = ''; Why = $want[$k] }
+    $adds += New-Object PSObject -Property @{ Name = ('BT allow ' + $k); Proto = $pp.Proto; Ports = $pp.Ports; From = ''; Why = $want[$k] }
 }
-if ($IsDC) { $adds += New-Object PSObject -Property @{ Name = 'CCDC allow RPC (DC)'; Proto = 'TCP'; Ports = 'RPC'; From = ''; Why = 'domain controller: RPC dynamic ports' }
-             $adds += New-Object PSObject -Property @{ Name = 'CCDC allow RPC endpoint mapper (DC)'; Proto = 'TCP'; Ports = 'RPC-EPMap'; From = ''; Why = 'domain controller' } }
-if ($admins.Count -gt 0) { $adds += New-Object PSObject -Property @{ Name = 'CCDC allow admin and scoring hosts'; Proto = 'ANY'; Ports = ''; From = ($admins -join ','); Why = 'protected hosts and -AdminFrom: everything' } }
-if (-not $NoPing) { $adds += New-Object PSObject -Property @{ Name = 'CCDC allow ping'; Proto = 'ICMP'; Ports = ''; From = ''; Why = 'ICMP echo (scoring often pings)' } }
+if ($IsDC) { $adds += New-Object PSObject -Property @{ Name = 'BT allow RPC (DC)'; Proto = 'TCP'; Ports = 'RPC'; From = ''; Why = 'domain controller: RPC dynamic ports' }
+             $adds += New-Object PSObject -Property @{ Name = 'BT allow RPC endpoint mapper (DC)'; Proto = 'TCP'; Ports = 'RPC-EPMap'; From = ''; Why = 'domain controller' } }
+if ($admins.Count -gt 0) { $adds += New-Object PSObject -Property @{ Name = 'BT allow admin and scoring hosts'; Proto = 'ANY'; Ports = ''; From = ($admins -join ','); Why = 'protected hosts and -AdminFrom: everything' } }
+if (-not $NoPing) { $adds += New-Object PSObject -Property @{ Name = 'BT allow ping'; Proto = 'ICMP'; Ports = ''; From = ''; Why = 'ICMP echo (scoring often pings)' } }
 foreach ($a in $adds) { Add-CcCsvRow -File $planCsv -Values @($a.Name, $a.Proto, $a.Ports, $a.From, $a.Why) }
 # Rules of ours from an earlier run that this plan no longer has (a port now
 # in -Exclude, a listener that is gone): removed, so a rerun really closes it.
@@ -1417,7 +1417,7 @@ if (-not $Cc.Apply) {
     $marker = Join-Path $Dir 'ROLLED_BACK'
     $kept = Join-Path $Dir 'KEPT'
     $fakeLine = ''
-    if ($Fake) { $fakeLine = "`$env:CCDC_WN25_FAKE = $(Q $Fake)`r`n" }
+    if ($Fake) { $fakeLine = "`$env:BT_WN25_FAKE = $(Q $Fake)`r`n" }
     $rb = Join-Path $Dir 'rollback.ps1'
     [IO.File]::WriteAllText($rb, @"
 # WN-25 rollback: puts back the whole firewall from before $Dir
@@ -1425,11 +1425,11 @@ if (-not $Cc.Apply) {
 $fakeLine`$exp = $(Q $exp)
 if (Test-Path -LiteralPath $(Q $kept)) {
     # Kept: nothing to put back.  Remove the task in case keep could not.
-    if (`$env:CCDC_WN25_FAKE) { Remove-Item -LiteralPath (Join-Path `$env:CCDC_WN25_FAKE 'task.txt') -Force -ErrorAction SilentlyContinue } else { schtasks /delete /tn $TaskName /f | Out-Null }
+    if (`$env:BT_WN25_FAKE) { Remove-Item -LiteralPath (Join-Path `$env:BT_WN25_FAKE 'task.txt') -Force -ErrorAction SilentlyContinue } else { schtasks /delete /tn $TaskName /f | Out-Null }
     exit 0
 }
-if (`$env:CCDC_WN25_FAKE) {
-    `$d = `$exp + '.d'; `$f = `$env:CCDC_WN25_FAKE
+if (`$env:BT_WN25_FAKE) {
+    `$d = `$exp + '.d'; `$f = `$env:BT_WN25_FAKE
     if (-not (Test-Path -LiteralPath (Join-Path `$d 'logging.txt'))) { Remove-Item -LiteralPath (Join-Path `$f 'logging.txt') -Force -ErrorAction SilentlyContinue }
     Get-ChildItem -LiteralPath `$d | ForEach-Object { Copy-Item -LiteralPath `$_.FullName -Destination (Join-Path `$f `$_.Name) -Force }
     Remove-Item -LiteralPath (Join-Path `$f 'task.txt') -Force -ErrorAction SilentlyContinue
@@ -1447,7 +1447,7 @@ $fakeLine if (Test-Path -LiteralPath $(Q $marker)) { Write-Host 'Too late: the o
 # KEPT first: even if the task cannot be deleted here (not elevated), the
 # rollback sees KEPT when it fires and does nothing.
 [IO.File]::WriteAllText($(Q $kept), [DateTime]::UtcNow.ToString('o'))
-if (`$env:CCDC_WN25_FAKE) { Remove-Item -LiteralPath (Join-Path `$env:CCDC_WN25_FAKE 'task.txt') -Force -ErrorAction SilentlyContinue }
+if (`$env:BT_WN25_FAKE) { Remove-Item -LiteralPath (Join-Path `$env:BT_WN25_FAKE 'task.txt') -Force -ErrorAction SilentlyContinue }
 else { schtasks /delete /tn $TaskName /f 2>&1 | Out-Null; if (`$LASTEXITCODE -ne 0) { Write-Host 'Note: the rollback task could not be deleted from this window (not elevated); it will fire, see the change was kept, and do nothing.' } }
 Write-Host 'Kept: the rollback is cancelled. The new firewall stays.'
 "@)

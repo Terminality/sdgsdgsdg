@@ -10,7 +10,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/LX-45-rootkit-scan.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 O="$T_TMP/out"; F="$T_TMP/root"; B="$T_TMP/bin"
 SLEEP=""; for _d in /usr/bin /bin; do [ -x "$_d/sleep" ] && { SLEEP=$_d/sleep; break; }; done
 mkdir -p "$B"; cp "$SLEEP" "$B/xmrig"
@@ -69,7 +69,7 @@ if [ "$(id -u)" = 0 ]; then
         _i=0; while ! ps -eo comm= | grep -qx xmrig && [ "$_i" -lt 20 ]; do sleep 1; _i=$((_i + 1)); done
         # in order: /reptile q, /dev/shm/.k l, the miner l; apply Enter
         printf 'q\nl\nl\n\n' >"$T_TMP/ans"
-        tt=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --no-install --no-clamav --root '$F' --no-protected --apply" /dev/null <"$T_TMP/ans" 2>&1)
+        tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --no-install --no-clamav --root '$F' --no-protected --apply" /dev/null <"$T_TMP/ans" 2>&1)
         t_has "$tt" "[q] quarantine it" "a file lists its answers"
         t_has "$tt" "[k] kill it" "a process lists its answers"
         t_fail "q: /reptile is quarantined" test -f "$F/reptile"
