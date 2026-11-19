@@ -25,22 +25,22 @@
 #   safe CLI for it) - change those in the web GUI; they are listed.
 #
 # USAGE
-#   CCDC_NET_PASS='current' sh NW-10-device-passwords.sh --hosts hosts.csv          dry run
-#   CCDC_NET_PASS='current' sh NW-10-device-passwords.sh --hosts hosts.csv --apply
+#   BT_NET_PASS='current' sh NW-10-device-passwords.sh --hosts hosts.csv          dry run
+#   BT_NET_PASS='current' sh NW-10-device-passwords.sh --hosts hosts.csv --apply
 #   sh NW-10-device-passwords.sh --device r1,10.0.0.1,cisco-ios,admin --ask-password --apply
 #
 # OPTIONS
 #   --hosts FILE / --device SPEC   the devices, as for NW-01
 #   --user NAME          default login account (admin)
-#   --ask-password       ask for the CURRENT password (else $CCDC_NET_PASS)
-#   --new-password-env   use $CCDC_NET_NEWPASS as the new password for every
+#   --ask-password       ask for the CURRENT password (else $BT_NET_PASS)
+#   --new-password-env   use $BT_NET_NEWPASS as the new password for every
 #                        device (default: a new random one per device)
 #   --passwords FILE     chosen new passwords: "device,password" lines (the
 #                        device's name or address).  Devices not in the file
-#                        get a random one (or $CCDC_NET_NEWPASS).  Same
+#                        get a random one (or $BT_NET_NEWPASS).  Same
 #                        characters as below, 8 or more.  Names in the file
 #                        that are not devices in this run are listed
-#   --enable-env         Cisco: log in through enable with $CCDC_NET_ENABLE
+#   --enable-env         Cisco: log in through enable with $BT_NET_ENABLE
 #   --enable-too         Cisco: also set a new enable secret (verified too)
 #   --length N           random password length (default 16, minimum 12)
 #   --wait N             seconds to let a change apply before testing it
@@ -67,8 +67,8 @@
 #   address; protected account = the login account, unless --force-scored).
 #
 # DEPENDS ON
-#   ssh, sshpass, mkfifo; openssl for Palo Alto (password hash).  CCDC_SSH and
-#   CCDC_SSHPASS may name stand-ins (the tests use them).
+#   ssh, sshpass, mkfifo; openssl for Palo Alto (password hash).  BT_SSH and
+#   BT_SSHPASS may name stand-ins (the tests use them).
 #
 # TESTED ON
 #   Live against a real OpenSSH server (vendor linux): the password changed,
@@ -91,7 +91,7 @@
 #   NOT logged: it can echo the new password.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -99,21 +99,21 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 VENDORS="cisco-ios cisco-asa paloalto fortigate vyos mikrotik linux pfsense opnsense"
 
 usage() {
     cat <<'USAGE'
 NW-10 Network device password rotation - change, prove the new login, then save (or revert)
-  CCDC_NET_PASS=current sh NW-10-device-passwords.sh --hosts FILE | --device SPEC [--apply] [options]
+  BT_NET_PASS=current sh NW-10-device-passwords.sh --hosts FILE | --device SPEC [--apply] [options]
 
   --hosts FILE / --device NAME,ADDRESS,VENDOR[,USER[,PORT]]
   --user NAME          default login account (admin)
   --ask-password       ask for the current password
-  --new-password-env   new password from $CCDC_NET_NEWPASS (default: random per device)
+  --new-password-env   new password from $BT_NET_NEWPASS (default: random per device)
   --passwords FILE     "device,password" lines: chosen new passwords
-  --enable-env         Cisco: enable password from $CCDC_NET_ENABLE
+  --enable-env         Cisco: enable password from $BT_NET_ENABLE
   --enable-too         Cisco: also set a new enable secret
   --length N           random password length (default 16)
   --wait N             seconds before testing a change (default 5)
@@ -161,24 +161,24 @@ W="$CC_RUN_DIR/.work"
 (umask 077; mkdir -p "$CONFIGS") || cc_die 3 "cannot create $CONFIGS"
 ENTEST=""
 DCSV=$(cc_csv_new devices "device,address,vendor,account,status")
-SSH=${CCDC_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
-SSHPASS_BIN=${CCDC_SSHPASS:-$(cc_which sshpass)} || cc_die 3 "sshpass not found (apt install sshpass): password changes need password logins"
+SSH=${BT_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
+SSHPASS_BIN=${BT_SSHPASS:-$(cc_which sshpass)} || cc_die 3 "sshpass not found (apt install sshpass): password changes need password logins"
 cc_have mkfifo || cc_die 3 "mkfifo not found"
 
 # ---- Passwords --------------------------------------------------------------
 if [ "$ASK" = 1 ]; then
-    [ -r /dev/tty ] || cc_die 3 "--ask-password needs a terminal; set CCDC_NET_PASS"
+    [ -r /dev/tty ] || cc_die 3 "--ask-password needs a terminal; set BT_NET_PASS"
     printf 'CURRENT device password: ' >/dev/tty; stty -echo </dev/tty 2>/dev/null
-    read -r CCDC_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
+    read -r BT_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
 fi
-OLDPW=${CCDC_NET_PASS:-}
-[ -n "$OLDPW" ] || cc_die 3 "the current password is needed: set CCDC_NET_PASS or use --ask-password"
+OLDPW=${BT_NET_PASS:-}
+[ -n "$OLDPW" ] || cc_die 3 "the current password is needed: set BT_NET_PASS or use --ask-password"
 if [ "$NEWENV" = 1 ]; then
-    [ -n "${CCDC_NET_NEWPASS:-}" ] || cc_die 3 "--new-password-env: set CCDC_NET_NEWPASS"
+    [ -n "${BT_NET_NEWPASS:-}" ] || cc_die 3 "--new-password-env: set BT_NET_NEWPASS"
     # Only characters every device CLI takes literally ("?" is Cisco help,
     # quotes and spaces end a word, "#" and "!" start comments).
-    case "$CCDC_NET_NEWPASS" in *[!A-Za-z0-9_.,@%+=-]*) cc_die 2 "CCDC_NET_NEWPASS may only use letters, digits and _ . , @ % + = -" ;; esac
-    [ "${#CCDC_NET_NEWPASS}" -ge 12 ] || cc_die 2 "CCDC_NET_NEWPASS must be at least 12 characters"
+    case "$BT_NET_NEWPASS" in *[!A-Za-z0-9_.,@%+=-]*) cc_die 2 "BT_NET_NEWPASS may only use letters, digits and _ . , @ % + = -" ;; esac
+    [ "${#BT_NET_NEWPASS}" -ge 12 ] || cc_die 2 "BT_NET_NEWPASS must be at least 12 characters"
 fi
 # Chosen passwords per device: "device,password" lines -> $W/given.
 : >"$W/given"
@@ -192,7 +192,7 @@ fi
 # given_pw NAME ADDRESS -> the chosen password for that device, if any.
 given_pw() { awk -F'\t' -v n="$1" -v a="$2" '$1 == n || $1 == a { print $2; exit }' "$W/given"; }
 case "$OLDPW" in *[\ \"\'?#]*) cc_warn "the current password has a space, quote, ? or #: an automatic revert may not be able to type it" ;; esac
-[ "$ENABLE" = 1 ] && [ -z "${CCDC_NET_ENABLE:-}" ] && cc_die 3 "--enable-env: set CCDC_NET_ENABLE"
+[ "$ENABLE" = 1 ] && [ -z "${BT_NET_ENABLE:-}" ] && cc_die 3 "--enable-env: set BT_NET_ENABLE"
 
 # ---- Devices (same rules as NW-01) ---------------------------------------------
 vendor_of() {
@@ -239,7 +239,7 @@ priv() {
 # preamble VENDOR -> lines that start a session (enable for Cisco)
 preamble() {
     case "$1" in
-        cisco-ios|cisco-asa) [ "$ENABLE" = 1 ] && printf 'enable\n%s\n' "$CCDC_NET_ENABLE"
+        cisco-ios|cisco-asa) [ "$ENABLE" = 1 ] && printf 'enable\n%s\n' "$BT_NET_ENABLE"
                              [ "$1" = cisco-ios ] && printf 'terminal length 0\n' || printf 'terminal pager 0\n' ;;
         paloalto) printf 'set cli pager off\n' ;;
     esac
@@ -338,7 +338,7 @@ while IFS='|' read -r _n _a _v _u _p; do
     esac
     _new=$(given_pw "$_n" "$_a"); _src=""
     if [ -n "$_new" ]; then _src=" (from --passwords)"
-    elif [ "$NEWENV" = 1 ]; then _new=$CCDC_NET_NEWPASS; else _new=$(cc_genpass "$LEN") || { row "$_n" "$_a" "$_v" "$_u" "failed: no random password"; continue; }; fi
+    elif [ "$NEWENV" = 1 ]; then _new=$BT_NET_NEWPASS; else _new=$(cc_genpass "$LEN") || { row "$_n" "$_a" "$_v" "$_u" "failed: no random password"; continue; }; fi
     _newen=""
     [ "$ENTOO" = 1 ] && case "$_v" in cisco-*) _newen=$(cc_genpass "$LEN") ;; esac
     if [ "$CC_APPLY" != 1 ]; then

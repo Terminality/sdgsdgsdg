@@ -10,7 +10,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/LX-22-ssh-hardening.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" "$@"; }
 O="$T_TMP/out"; R="$T_TMP/root"; B="$T_TMP/bin"; K="$T_TMP/keys"
@@ -23,7 +23,7 @@ cat >"$B/sshd" <<'STUB'
 exit 0
 STUB
 chmod +x "$B/sshd"
-CCDC_SSHD="$B/sshd"; export CCDC_SSHD
+BT_SSHD="$B/sshd"; export BT_SSHD
 
 if ! command -v ssh-keygen >/dev/null 2>&1; then
     t_start "ssh-keygen missing: LX-22 key tests skipped"
@@ -46,8 +46,8 @@ plant() {
 }
 printf 'type,value,note\naccount,bob,scoring logs in with a key\n' >"$T_TMP/protected.csv"
 
-# blk -> only the CCDC block at the top of sshd_config.
-blk() { awk '{ print } /^# <<< CCDC LX-22/ { exit }' "$R/etc/ssh/sshd_config"; }   # awk regex: posix-ok
+# blk -> only the BT block at the top of sshd_config.
+blk() { awk '{ print } /^# <<< BT LX-22/ { exit }' "$R/etc/ssh/sshd_config"; }   # awk regex: posix-ok
 rundir() { printf '%s\n' "$1" | sed -n 's/^All results: //p' | tail -n 1; }
 
 t_start "options"
@@ -90,7 +90,7 @@ t_start "--apply --batch: recommended answers"
 out=$(run --out "$O" --root "$R" --protected "$T_TMP/protected.csv" --apply --batch --no-color 2>&1); rc=$?
 t_eq "$rc" 0 "exit 0"
 cfg=$(cat "$R/etc/ssh/sshd_config")
-t_eq "$(head -n 1 "$R/etc/ssh/sshd_config")" "# >>> CCDC LX-22 (sshd uses the first value it reads, so this block wins)" "block is at the top"
+t_eq "$(head -n 1 "$R/etc/ssh/sshd_config")" "# >>> BT LX-22 (sshd uses the first value it reads, so this block wins)" "block is at the top"
 for k in "PermitEmptyPasswords no" "X11Forwarding no" "AllowAgentForwarding no" "MaxAuthTries 4" "LoginGraceTime 30" "ClientAliveInterval 300" "LogLevel VERBOSE" "PermitRootLogin prohibit-password"; do
     t_has "$cfg" "$k" "$k"
 done
@@ -109,7 +109,7 @@ t_has "$out" "not reloaded (--no-reload or --root)" "no reload with --root"
 t_start "a second run changes nothing"
 out=$(run --out "$O" --root "$R" --protected "$T_TMP/protected.csv" --apply --batch --no-color 2>&1)
 t_has "$out" "Nothing to change" "nothing to change"
-t_eq "$(grep -c 'CCDC LX-22' "$R/etc/ssh/sshd_config")" 2 "only one block"
+t_eq "$(grep -c 'BT LX-22' "$R/etc/ssh/sshd_config")" 2 "only one block"
 
 t_start "--allow-keys keeps only the team's keys; a protected account keeps its own"
 plant
@@ -174,7 +174,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     # x11: n; agent, maxauth, grace, alive, maxstartups, loglevel: Enter; passwords: Enter; forwarding: y;
     # crypto: Enter; allowusers: Enter; apply: Enter.  (emptypw, rhosts, userenv are already right.)
     printf '\n\nn\n\n\n\nno\nn\n\n\n\n\n\n\n\ny\n\n\n\n' >"$T_TMP/ans"
-    CCDC_NO_TTY=0 script -qc "$SH $C --out $O --root $R --no-color --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
+    BT_NO_TTY=0 script -qc "$SH $C --out $O --root $R --no-color --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
     tt=$(cat "$T_TMP/tty.out")
     t_has "$tt" "Apply these" "asks before applying"
     t_has "$tt" "[y] yes, with a password or a key" "root question lists y"
@@ -192,7 +192,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     # A wrong answer is asked again; a letter works.  Root question: zz, then k.
     plant
     printf '\n\n\n\n\n\nzz\nk\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n' >"$T_TMP/ans2"
-    CCDC_NO_TTY=0 script -qc "$SH $C --out $O --root $R --no-color --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans2" >"$T_TMP/tty2.out" 2>&1
+    BT_NO_TTY=0 script -qc "$SH $C --out $O --root $R --no-color --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans2" >"$T_TMP/tty2.out" 2>&1
     t_has "$(cat "$T_TMP/tty2.out")" '"zz" is not an answer here: type one of [y/n/K/l]' "a wrong answer is refused and asked again"
     cp "$T_TMP/tty2.out" /tmp/claude-0/-home-claude/3ffb2eda-5138-5d3e-9f99-6d28bba8f70e/scratchpad/tty2.out
     t_has "$(blk)" "PermitRootLogin prohibit-password" "'k' means key-only"

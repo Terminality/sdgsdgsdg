@@ -150,7 +150,7 @@ if ($Help) {
 }
 if ($List) { foreach ($l in $SectionHelp) { Write-Host $l }; exit 0 }
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.ps1 by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -158,7 +158,7 @@ $ccDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 while ($ccDir -and -not (Test-Path -LiteralPath (Join-Path (Join-Path $ccDir 'lib') 'lib.ps1'))) { $ccDir = Split-Path -Parent $ccDir }
 if (-not $ccDir) { Write-Host 'cannot find lib/lib.ps1 above this script'; exit 3 }
 . (Join-Path (Join-Path $ccDir 'lib') 'lib.ps1')
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 # ---- Options ----------------------------------------------------------------
 switch ($Level) {

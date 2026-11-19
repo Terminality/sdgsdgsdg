@@ -12,8 +12,8 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/applications/SV-16-webshell-hunter.sh"
-export CCDC_SKIP_VERIFY=1
-CCDC_TIMER_METHOD=background; export CCDC_TIMER_METHOD
+export BT_SKIP_VERIFY=1
+BT_TIMER_METHOD=background; export BT_TIMER_METHOD
 O="$T_TMP/out"; S="$T_TMP/site"; J="$T_TMP/wp.json"
 
 mksite() {
@@ -90,7 +90,7 @@ if command -v script >/dev/null 2>&1; then
     mksite
     # first file: keep; second: quarantine; the rest: all defaults; apply: Enter
     printf 'k\nq\na\n\n' >"$T_TMP/ans"
-    tt=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --webroot '$S' --wp-checksums '$J' --no-online --url http://127.0.0.1:9/ --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans" 2>&1)
+    tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --webroot '$S' --wp-checksums '$J' --no-online --url http://127.0.0.1:9/ --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans" 2>&1)
     t_has "$tt" "[q] quarantine it" "each file lists its answers"
     t_has "$tt" "[a] all the rest" "including all the rest"
     _left=0; for f in wp-content/uploads/x.php wp-content/plugins/good/cache.php wp-content/themes/t/footer2.php wp-content/uploads/cat.jpg wp-content/uploads/.htaccess wp-includes/sys.php wp-includes/load.php; do [ -f "$S/$f" ] && _left=$((_left + 1)); done

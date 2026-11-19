@@ -109,7 +109,7 @@
 #   raw/*.txt        what the servers themselves reported
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -117,7 +117,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 ALL_SECTIONS="servers sites paths runtimes webroots php apps mysql postgres datastores"
 
@@ -709,7 +709,7 @@ s_runtimes() {
         u = $1; c = $0; sub(/^[^ \t]+[ \t]+/, "", c); l = tolower(c); k = ""; lang = ""; dev = 0
         if (l ~ /(^|\/)(gunicorn|uwsgi|uvicorn|daphne|hypercorn|waitress-serve)([ \t]|$)/) { lang = "Python"; k = "app server" }
         else if (l ~ /manage\.py[ \t]+runserver/ || l ~ /flask[ \t]+run/ || l ~ /werkzeug/) { lang = "Python"; k = "DEV server"; dev = 1 }
-        else if (l ~ /(^|\/)python[0-9.]*[ \t].*\.py/ && l !~ /(unattended|networkd|apt|landscape|fail2ban|cloud-init|supervisord|ccdc)/) { lang = "Python"; k = "python program" }
+        else if (l ~ /(^|\/)python[0-9.]*[ \t].*\.py/ && l !~ /(unattended|networkd|apt|landscape|fail2ban|cloud-init|supervisord|bt)/) { lang = "Python"; k = "python program" }
         else if (l ~ /(^|\/)(node|nodejs)[ \t]/ || l ~ /(^|\/)pm2/) { lang = "Node.js"; k = (l ~ /--inspect/ ? "DEBUG port open" : (l ~ /(npm|yarn)[ \t]+(run[ \t]+)?(dev|start:dev)|nodemon|next[ \t]+dev/ ? "DEV server" : "app")); dev = (k != "app") }
         else if (l ~ /(npm|yarn)[ \t]+(run[ \t]+)?dev/) { lang = "Node.js"; k = "DEV server"; dev = 1 }
         else if (l ~ /(^|\/)java[ \t]/ && l !~ /catalina/) { lang = "Java"; k = (l ~ /-jar/ ? "jar app" : "java program"); if (l ~ /-agentlib:jdwp|-xdebug/) { k = "DEBUG port open"; dev = 1 } }

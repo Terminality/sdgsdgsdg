@@ -12,7 +12,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/applications/SV-41-roundcube-hardening.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 O="$T_TMP/out"; F="$T_TMP/root"; RC="$F/var/www/html/webmail"
 
 mkroot() {
@@ -82,9 +82,9 @@ _u0=$(cat "$O"/undo-*.log 2>/dev/null | grep -c .)
 out=$(run --batch --no-protected --apply --no-timer --skip block-dirs 2>&1)
 cf="$RC/config/config.inc.php"
 t_fail "the installer is quarantined" test -d "$RC/installer"
-t_has "$(cat "$cf")" "\$config['enable_installer'] = false; // CCDC SV-41" "enable_installer = false"
-t_has "$(cat "$cf")" "\$config['imap_debug'] = false; // CCDC SV-41" "imap_debug = false"
-t_has "$(cat "$cf")" "\$config['log_logins'] = true; // CCDC SV-41" "log_logins = true"
+t_has "$(cat "$cf")" "\$config['enable_installer'] = false; // BT SV-41" "enable_installer = false"
+t_has "$(cat "$cf")" "\$config['imap_debug'] = false; // BT SV-41" "imap_debug = false"
+t_has "$(cat "$cf")" "\$config['log_logins'] = true; // BT SV-41" "log_logins = true"
 t_hasnt "$(cat "$cf")" "rcmail-!24ByteDESkey*Str" "the default des_key is gone"
 _k=$(sed -n "s/^\$config\['des_key'\] = '\(.*\)'; .*/\1/p" "$cf")
 t_eq "${#_k}" 24 "the new des_key is 24 characters"
@@ -101,7 +101,7 @@ if command -v script >/dev/null 2>&1; then
     # the packaged one first: block-dirs n; then the tarball: installer y, debug-off n,
     # des-key y, log-logins n, config-perms y, block-dirs n; apply Enter
     printf 'n\ny\nn\ny\nn\ny\nn\n\n' >"$T_TMP/ans"
-    tt=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --root '$F' --out '$O' --no-color --box webmail --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans" 2>&1)
+    tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --root '$F' --out '$O' --no-color --box webmail --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans" 2>&1)
     t_has "$tt" "[y] yes, do it" "each fix lists its answers"
     t_fail "y: the installer is quarantined" test -d "$RC/installer"
     t_has "$(cat "$RC/config/config.inc.php")" "\$config['imap_debug'] = true;" "n: imap_debug stays"

@@ -21,7 +21,7 @@
 #   from the config text.
 #
 # USAGE
-#   sh NW-07-config-audit.sh --out ~/ccdc-out                 latest config of every device NW-01 saved
+#   sh NW-07-config-audit.sh --out ~/bt-out                 latest config of every device NW-01 saved
 #   sh NW-07-config-audit.sh --file r1.cfg --file fw1.cfg     files copied by hand (vendor recognised)
 #   sh NW-07-config-audit.sh --file fw1.txt,paloalto          ... or named
 #
@@ -62,7 +62,7 @@
 #   --debug shows the vendor chosen for each file and the number of findings.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -70,7 +70,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 VENDORS="cisco-ios cisco-asa paloalto fortigate vyos pfsense opnsense mikrotik"
 
@@ -177,7 +177,7 @@ function f(sev, what, line) { print sev "|" what "|" mask(line) }  # awk, not sh
 function trim(s) { gsub(/^[ \t]+|[ \t;]+$/, "", s); return s }'  # awk, not shell: posix-ok
 
 # Default and guessable SNMP communities.
-WEAKSNMP='^(public|private|cisco|community|admin|default|secret|password|snmp|monitor|manager|read|write|test|ccdc)$'
+WEAKSNMP='^(public|private|cisco|community|admin|default|secret|password|snmp|monitor|manager|read|write|test|bt)$'
 
 RULES_CISCO_IOS='
 /^line (vty|con|aux)/ { endline(); inline = 1; lname = $0; tin = ""; acl = 0; nologin = 0; next }

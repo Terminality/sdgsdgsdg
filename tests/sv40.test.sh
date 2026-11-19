@@ -1,18 +1,18 @@
 #!/bin/sh
 # Tests for roles/applications/SV-40-mail-passwords.sh.
 # A fake root (--root) with stand-in chpasswd/usermod that edit its
-# /etc/shadow, and a stand-in "doveconf -n" (CCDC_DOVECONF) with a pam
+# /etc/shadow, and a stand-in "doveconf -n" (BT_DOVECONF) with a pam
 # passdb, a passwd-file, a master passdb and a static one: users with a
 # mailbox are found (others left out), master and static are flagged; the
 # dry run changes nothing; --apply changes the shadow hash and the
 # passwd-file line, keeps passwords out of every output; a typed answer
-# locks; the undo puts every hash back.  With CCDC_TEST_MAIL=1, as root,
-# with Dovecot answering on 993 or 143: a throwaway account ccdcsv40 is made,
+# locks; the undo puts every hash back.  With BT_TEST_MAIL=1, as root,
+# with Dovecot answering on 993 or 143: a throwaway account btsv40 is made,
 # rotated, logged in with over IMAP, put back, and removed.
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/applications/SV-40-mail-passwords.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 O="$T_TMP/out"; F="$T_TMP/root"; B="$T_TMP/bin"
 mkdir -p "$B"
 cat >"$B/chpasswd" <<'STUB'
@@ -31,8 +31,8 @@ cat >"$B/usermod" <<'STUB'
 awk -F: -v OFS=: -v u="$2" '$1 == u { $2 = "!" $2 } { print }' "$SV40_ROOT/etc/shadow" >"$SV40_ROOT/etc/shadow.n" && mv "$SV40_ROOT/etc/shadow.n" "$SV40_ROOT/etc/shadow"
 STUB
 chmod +x "$B/chpasswd" "$B/usermod"
-SV40_ROOT=$F; CCDC_CHPASSWD="$B/chpasswd"; CCDC_USERMOD="$B/usermod"; CCDC_DOVECONF="$T_TMP/doveconf"
-export SV40_ROOT CCDC_CHPASSWD CCDC_USERMOD CCDC_DOVECONF
+SV40_ROOT=$F; BT_CHPASSWD="$B/chpasswd"; BT_USERMOD="$B/usermod"; BT_DOVECONF="$T_TMP/doveconf"
+export SV40_ROOT BT_CHPASSWD BT_USERMOD BT_DOVECONF
 unset SUDO_USER
 
 mkroot() {
@@ -42,7 +42,7 @@ mkroot() {
     : >"$F/var/mail/alice"; : >"$F/var/mail/locked"
     printf 'vuser:{PLAIN}OldVirt40x::::::\nother:{SHA512-CRYPT}$6$o$other::::::\n' >"$F/etc/dovecot/users"
     printf 'boss:{PLAIN}Master40x\n' >"$F/etc/dovecot/master-users"
-    cat >"$CCDC_DOVECONF" <<'EOF'
+    cat >"$BT_DOVECONF" <<'EOF'
 passdb {
   driver = pam
 }
@@ -91,7 +91,7 @@ _u0=$(cat "$O"/undo-*.log 2>/dev/null | grep -c .)
 if command -v script >/dev/null 2>&1; then
     # one by one: alice r, bob l, vuser r, other r; then Enter to apply
     printf 'y\nr\nl\nr\nr\n\n' >"$T_TMP/ans"
-    out=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --root '$F' --out '$O' --no-color --box webmail --no-protected --apply" /dev/null <"$T_TMP/ans" 2>&1)
+    out=$(BT_NO_TTY=0 script -qc "$SH '$C' --root '$F' --out '$O' --no-color --box webmail --no-protected --apply" /dev/null <"$T_TMP/ans" 2>&1)
     t_has "$out" "[s] set one" "each user lists its answers"
     t_has "$out" "bob (system): locked" "the typed answer l locks"
     t_eq "$(awk -F: '$1 == "bob" { print substr($2, 1, 1) }' "$F/etc/shadow")" "!" "bob is locked in shadow"
@@ -117,22 +117,22 @@ sh "$T_TMP/undo.sh" >/dev/null 2>&1
 t_eq "$(snap)" "$before" "undo puts every hash and line back"
 t_has "$(ls "$d")" "passwords-UNDONE-not-valid.txt" "the passwords file is marked not valid"
 
-if [ "${CCDC_TEST_MAIL:-0}" = 1 ] && [ "$(id -u)" = 0 ] && command -v doveconf >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
-    t_start "a real Dovecot (CCDC_TEST_MAIL=1)"
-    unset CCDC_CHPASSWD CCDC_USERMOD CCDC_DOVECONF
+if [ "${BT_TEST_MAIL:-0}" = 1 ] && [ "$(id -u)" = 0 ] && command -v doveconf >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
+    t_start "a real Dovecot (BT_TEST_MAIL=1)"
+    unset BT_CHPASSWD BT_USERMOD BT_DOVECONF
     imap() { (printf 'a LOGIN "%s" "%s"\n' "$1" "$2"; sleep 4; printf 'b LOGOUT\n'; sleep 1) | timeout 15 openssl s_client -connect 127.0.0.1:993 -quiet -crlf 2>/dev/null | grep -c '^a OK'; }
-    userdel -r ccdcsv40 >/dev/null 2>&1
-    useradd -m -s /bin/sh ccdcsv40 && printf 'ccdcsv40:Old40Mail!x\n' | chpasswd && : >/var/mail/ccdcsv40
-    t_eq "$(imap ccdcsv40 'Old40Mail!x')" 1 "the old password logs in before"
+    userdel -r btsv40 >/dev/null 2>&1
+    useradd -m -s /bin/sh btsv40 && printf 'btsv40:Old40Mail!x\n' | chpasswd && : >/var/mail/btsv40
+    t_eq "$(imap btsv40 'Old40Mail!x')" 1 "the old password logs in before"
     _u0=$(cat "$O"/undo-*.log 2>/dev/null | grep -c .)
-    $SH "$C" --out "$O" --no-color --box webmail --batch --users ccdcsv40 --no-protected --apply --no-timer >"$T_TMP/live" 2>&1
-    t_has "$(cat "$T_TMP/live")" "ccdcsv40 (system): changed, IMAP login tested" "rotated and tested over IMAP"
+    $SH "$C" --out "$O" --no-color --box webmail --batch --users btsv40 --no-protected --apply --no-timer >"$T_TMP/live" 2>&1
+    t_has "$(cat "$T_TMP/live")" "btsv40 (system): changed, IMAP login tested" "rotated and tested over IMAP"
     d=$(ls -d "$O"/mail-passwords-* | sort -t- -k3 -n | tail -n 1)
-    _np=$(awk '$2 == "ccdcsv40" { print $3 }' "$d/passwords.txt")
-    t_eq "$(imap ccdcsv40 "$_np")" 1 "the new password logs in"
-    t_eq "$(imap ccdcsv40 'Old40Mail!x')" 0 "the old one does not"
+    _np=$(awk '$2 == "btsv40" { print $3 }' "$d/passwords.txt")
+    t_eq "$(imap btsv40 "$_np")" 1 "the new password logs in"
+    t_eq "$(imap btsv40 'Old40Mail!x')" 0 "the old one does not"
     cat "$O"/undo-*.log | awk -F'\t' -v n="$_u0" 'NR > n { l[NR] = $4 } END { for (i = NR; i > n; i--) print l[i] }' | sh >/dev/null 2>&1
-    t_eq "$(imap ccdcsv40 'Old40Mail!x')" 1 "undo: the old password logs in again"
-    userdel -r ccdcsv40 >/dev/null 2>&1; rm -f /var/mail/ccdcsv40
+    t_eq "$(imap btsv40 'Old40Mail!x')" 1 "undo: the old password logs in again"
+    userdel -r btsv40 >/dev/null 2>&1; rm -f /var/mail/btsv40
 fi
 t_done

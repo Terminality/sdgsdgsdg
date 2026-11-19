@@ -102,7 +102,7 @@
 #   Each section is independent: if one misbehaves, rerun with --only NAME.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -110,7 +110,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 ALL_SECTIONS="system users ports services autostart ssh sudo privesc processes connections sessions packages files firewall pam mac trust creds containers modules logs"
 PROFILE_CARD="system users ports services autostart ssh sudo privesc"
@@ -998,8 +998,8 @@ built_before() {
 }
 
 s_privesc() {
-    # PR: a fake system root for the tests (CCDC_TEST_ROOT); empty for real runs.
-    PR=${CCDC_TEST_ROOT:-}
+    # PR: a fake system root for the tests (BT_TEST_ROOT); empty for real runs.
+    PR=${BT_TEST_ROOT:-}
     sec_csv privesc "check,path,detail"
     : >"$W/pe_seen"
 

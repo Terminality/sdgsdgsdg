@@ -88,7 +88,7 @@
 # DEPENDS ON
 #   awk, find, ls, cksum; sha256sum (or shasum / sha256 / openssl); ss or
 #   netstat; systemctl for timers and running services (optional).
-#   Stand-ins for tests: CCDC_SS (ss), CCDC_SYSTEMCTL, CCDC_PROC (/proc).
+#   Stand-ins for tests: BT_SS (ss), BT_SYSTEMCTL, BT_PROC (/proc).
 #
 # TESTED ON
 #   Ubuntu 24.04 under dash, bash, busybox sh, ksh93, mksh and yash, with
@@ -113,7 +113,7 @@
 #   baseline/ and last/ are plain text: diff them by hand.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -121,7 +121,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -209,10 +209,10 @@ IS_ROOT=0; cc_is_root && IS_ROOT=1
 [ -n "$STATE" ] || STATE="$CC_OUT/watch-$CC_HOST"
 (umask 077; mkdir -p "$STATE") || cc_die 3 "cannot create $STATE"
 STATE=$(cc_abspath "$STATE")
-SS=${CCDC_SS:-$(cc_which ss)} || SS=""
-SYSCTL=${CCDC_SYSTEMCTL:-}
+SS=${BT_SS:-$(cc_which ss)} || SS=""
+SYSCTL=${BT_SYSTEMCTL:-}
 [ -z "$SYSCTL" ] && [ -z "$R" ] && [ "$CC_INIT" = systemd ] && SYSCTL=$(cc_which systemctl)
-PROCROOT=${CCDC_PROC:-}
+PROCROOT=${BT_PROC:-}
 [ -z "$PROCROOT" ] && [ -z "$R" ] && PROCROOT=/proc
 ALERTS="$STATE/alerts.log"
 W="$CC_RUN_DIR/.work"; mkdir -p "$W"

@@ -28,7 +28,7 @@
 # USAGE
 #   sh NW-01-config-backup.sh --hosts config/hosts.csv            all network devices
 #   sh NW-01-config-backup.sh --device fw01,10.0.2.1,paloalto
-#   CCDC_NET_PASS='...' sh NW-01-config-backup.sh --hosts hosts.csv --password-env
+#   BT_NET_PASS='...' sh NW-01-config-backup.sh --hosts hosts.csv --password-env
 #
 # OPTIONS
 #   --hosts FILE       host list (config/hosts.example.csv format).  Rows with
@@ -37,11 +37,11 @@
 #                      the notes ("Palo Alto", "Cisco ASA", "pfSense" ...)
 #   --device SPEC      NAME,ADDRESS,VENDOR[,USER[,PORT]] (repeat)
 #   --user NAME        login name when the list gives none (default admin)
-#   --password-env     log in with the password in $CCDC_NET_PASS (needs
+#   --password-env     log in with the password in $BT_NET_PASS (needs
 #                      sshpass); without it SSH keys are used
 #   --ask-password     ask for the password once (needs sshpass)
 #   --enable-env       Cisco: send "enable" with the password in
-#                      $CCDC_NET_ENABLE (when the login is not privilege 15)
+#                      $BT_NET_ENABLE (when the login is not privilege 15)
 #   --legacy-ssh       allow old SSH algorithms from the start (old Cisco gear;
 #                      tried automatically when a device refuses the modern ones)
 #   --max-flags N      HIGH/MED flags shown on screen (default 30)
@@ -63,7 +63,7 @@
 #   in everything printed on screen.
 #
 # DEPENDS ON
-#   ssh; sshpass for password logins; diff; awk.  CCDC_SSH may name a
+#   ssh; sshpass for password logins; diff; awk.  BT_SSH may name a
 #   stand-in ssh (the tests use one).
 #
 # TESTED ON
@@ -86,7 +86,7 @@
 #   The raw output of a failed device is in the log.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -94,7 +94,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 VENDORS="cisco-ios cisco-asa paloalto fortigate vyos pfsense opnsense mikrotik linux"
 
@@ -106,9 +106,9 @@ NW-01 Network device config backup and diff
   --hosts FILE       host list; rows with os "network" or a vendor name
   --device SPEC      NAME,ADDRESS,VENDOR[,USER[,PORT]] (repeatable)
   --user NAME        default login name (admin)
-  --password-env     password from $CCDC_NET_PASS (needs sshpass)
+  --password-env     password from $BT_NET_PASS (needs sshpass)
   --ask-password     ask for the password once (needs sshpass)
-  --enable-env       Cisco enable password from $CCDC_NET_ENABLE
+  --enable-env       Cisco enable password from $BT_NET_ENABLE
   --legacy-ssh       allow old SSH algorithms
   --max-flags N      HIGH/MED flags on screen (default 30)
   --help             show this text
@@ -145,7 +145,7 @@ W="$CC_RUN_DIR/.work"
 mkdir -p "$W" || cc_die 3 "cannot create $W"
 STORE="$CC_OUT/net-configs"
 (umask 077; mkdir -p "$STORE") || cc_die 3 "cannot create $STORE"
-SSH=${CCDC_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
+SSH=${BT_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
 DCSV=$(cc_csv_new devices "device,address,vendor,status,lines,added,removed,sha256")
 
 # ---- Password (never on a command line, never in the log) --------------------
@@ -154,14 +154,14 @@ if [ "$PWMODE" != key ]; then
     if [ "$PWMODE" = ask ]; then
         [ -r /dev/tty ] || cc_die 3 "--ask-password needs a terminal; use --password-env"
         printf 'Device password: ' >/dev/tty; stty -echo </dev/tty 2>/dev/null
-        read -r CCDC_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
+        read -r BT_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
     fi
-    [ -n "${CCDC_NET_PASS:-}" ] || cc_die 3 "no password: set CCDC_NET_PASS (or use --ask-password)"
+    [ -n "${BT_NET_PASS:-}" ] || cc_die 3 "no password: set BT_NET_PASS (or use --ask-password)"
     # sshpass -e reads SSHPASS from the environment, so the password never
     # appears in a process list.
-    SSHPASS=$CCDC_NET_PASS; export SSHPASS
+    SSHPASS=$BT_NET_PASS; export SSHPASS
 fi
-if [ "$ENABLE" = 1 ] && [ -z "${CCDC_NET_ENABLE:-}" ]; then cc_die 3 "--enable-env: set CCDC_NET_ENABLE"; fi
+if [ "$ENABLE" = 1 ] && [ -z "${BT_NET_ENABLE:-}" ]; then cc_die 3 "--enable-env: set BT_NET_ENABLE"; fi
 
 # ---- Device list ---------------------------------------------------------------
 # $W/devices: name|address|vendor|user|port
@@ -220,7 +220,7 @@ done
 cmd_mode() { case "$1" in cisco-ios|cisco-asa|paloalto|fortigate) echo stdin ;; *) echo exec ;; esac; }
 cmd_text() {
     _en=""
-    [ "$ENABLE" = 1 ] && _en="enable$NL$CCDC_NET_ENABLE$NL"
+    [ "$ENABLE" = 1 ] && _en="enable$NL$BT_NET_ENABLE$NL"
     case "$1" in
         cisco-ios) printf '%sterminal length 0\nshow running-config\nexit\n' "$_en" ;;
         cisco-asa) printf '%sterminal pager 0\nshow running-config\nexit\n' "$_en" ;;

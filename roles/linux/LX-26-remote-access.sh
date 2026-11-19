@@ -53,7 +53,7 @@
 #   output.txt, findings.txt, plan.txt, summary.txt, run.txt, revert.sh
 #
 # DEPENDS ON
-#   ps, ss; systemctl or service; CCDC_SERVICE may name a stand-in for
+#   ps, ss; systemctl or service; BT_SERVICE may name a stand-in for
 #   "service" (tests).
 #
 # TESTED ON
@@ -69,7 +69,7 @@
 #   - A remote desktop your team uses: put its port on the protected list.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -77,7 +77,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -241,11 +241,11 @@ header "3/4  plan"
 while IFS= read -r _l; do cc_show "$C_YEL" "  [~] $_l"; done <"$CC_RUN_DIR/plan.txt"
 [ "$NCH" -eq 0 ] && cc_show "$C_GRN" "  [ok] Nothing to stop."
 header "4/4  apply"
-SERVICE=${CCDC_SERVICE:-service}
+SERVICE=${BT_SERVICE:-service}
 # alive PID -> running (a zombie is dead, only waiting for its parent)
 alive() { kill -0 "$1" 2>/dev/null && ! ps -o stat= -p "$1" 2>/dev/null | grep -q '^Z'; }
 svc_off() {   # svc_off NAME -> stop and disable; undo enables and starts
-    if [ "$CC_INIT" = systemd ] && [ -z "${CCDC_SERVICE:-}" ]; then
+    if [ "$CC_INIT" = systemd ] && [ -z "${BT_SERVICE:-}" ]; then
         cc_undo_add "enable and start $1 again" "systemctl enable $1; systemctl start $1"
         systemctl stop "$1" && systemctl disable "$1"
     else

@@ -21,7 +21,7 @@
 #   because a red team with admin rights can delete a backup kept on the box.
 #
 # USAGE
-#   powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\ccdc-out [options]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\bt-out [options]
 #   Run in an elevated window.  Without elevation most items fail and are
 #   listed as failed.
 #
@@ -133,7 +133,7 @@ if ($Help) {
 }
 if ($List) { foreach ($l in $ItemHelp) { Write-Host $l }; exit 0 }
 
-# >>> CCDC-LIB  (lib/lib.ps1 0.2.1 pasted in by tools/build.sh - edit lib/lib.ps1, not this copy)
+# >>> BT-LIB  (lib/lib.ps1 0.2.1 pasted in by tools/build.sh - edit lib/lib.ps1, not this copy)
 # =============================================================================
 # ID:       LB-02
 # NAME:     PowerShell library (lib.ps1)
@@ -167,9 +167,9 @@ if ($List) { foreach ($l in $ItemHelp) { Write-Host $l }; exit 0 }
 #           [switch]$ForceScored, [switch]$Quiet, [switch]$DebugLog,
 #           [string]$MyOwnOption
 #       )
-#       # >>> CCDC-LIB
+#       # >>> BT-LIB
 #       ...the loader lines from templates/script-template.ps1...
-#       # <<< CCDC-LIB
+#       # <<< BT-LIB
 #       Initialize-Cc -Id 'WN-99' -Name 'Example script' -Kind changes -Bound $PSBoundParameters
 #       Invoke-CcChange -Description 'stop Telnet' -Action { Stop-Service TlntSvr } `
 #                       -Undo 'Start-Service TlntSvr' | Out-Null
@@ -306,10 +306,10 @@ function Assert-CcAdmin {
 }
 
 # Confirm-Cc 'question'   -> ask the operator; $true for yes.
-#   $env:CCDC_ASSUME_YES = '1' answers yes without asking (for fan-out).
+#   $env:BT_ASSUME_YES = '1' answers yes without asking (for fan-out).
 function Confirm-Cc {
     param([string]$Question)
-    if ($env:CCDC_ASSUME_YES -eq '1') { return $true }
+    if ($env:BT_ASSUME_YES -eq '1') { return $true }
     $a = Read-Host ($Question + ' [y/N]')
     return ($a -eq 'y' -or $a -eq 'yes')
 }
@@ -380,8 +380,8 @@ function Initialize-Cc {
     # Output folder: operator-chosen, never inside the kit (rule 11).
     $out = $null
     if ($Bound.ContainsKey('Out') -and $Bound['Out']) { $out = [string]$Bound['Out'] }
-    elseif ($env:CCDC_OUT) { $out = $env:CCDC_OUT }
-    else { $out = Join-Path $HOME 'ccdc-out' }
+    elseif ($env:BT_OUT) { $out = $env:BT_OUT }
+    else { $out = Join-Path $HOME 'bt-out' }
     $out = Resolve-CcPath $out
     if ($c.Kit) {
         $kitFull = (Resolve-CcPath $c.Kit).TrimEnd('\','/')
@@ -406,7 +406,7 @@ function Initialize-Cc {
     # Protected list.
     $prot = $null
     if ($Bound.ContainsKey('Protected') -and $Bound['Protected']) { $prot = [string]$Bound['Protected'] }
-    elseif ($env:CCDC_PROTECTED) { $prot = $env:CCDC_PROTECTED }
+    elseif ($env:BT_PROTECTED) { $prot = $env:BT_PROTECTED }
     else { $prot = Join-Path $out 'protected.csv' }
     $c.ProtectedRows = $null
     if (Test-Path -LiteralPath $prot) {
@@ -942,15 +942,15 @@ function Show-CcFlagReport {
 # Test-CcSelf
 #   Rule 15: the kit's hash is checked before each run.  If a MANIFEST.sha256
 #   (written by tools/build.sh) sits in the script's folder or one of the two
-#   folders above it, or $env:CCDC_MANIFEST points to one, the running script's
+#   folders above it, or $env:BT_MANIFEST points to one, the running script's
 #   hash must match its line there.  A mismatch stops the script with exit 3:
 #   the file on this host is not the one you built.
-#   $env:CCDC_SKIP_VERIFY = '1' turns the check off (for development).
+#   $env:BT_SKIP_VERIFY = '1' turns the check off (for development).
 function Test-CcSelf {
     $c = $script:Cc
-    if ($env:CCDC_SKIP_VERIFY -eq '1') { Write-CcLog -Level DEBUG -Message 'verify: skipped (CCDC_SKIP_VERIFY=1)'; return }
+    if ($env:BT_SKIP_VERIFY -eq '1') { Write-CcLog -Level DEBUG -Message 'verify: skipped (BT_SKIP_VERIFY=1)'; return }
     if (-not $c.ScriptPath) { Write-CcLog -Level DEBUG -Message 'verify: script was not started from a file, nothing to hash'; return }
-    $man = $env:CCDC_MANIFEST
+    $man = $env:BT_MANIFEST
     if (-not $man) {
         $d = $c.Kit
         for ($i = 0; $i -lt 3 -and $d; $i++) {
@@ -992,7 +992,7 @@ function Complete-Cc {
     if ($c.Log) { Write-CcLog -Level INFO -Message ('log: {0}' -f $c.Log) }
     exit $ExitCode
 }
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 # ---- Options ----------------------------------------------------------------
 $onlyList = @($Only -split '[,\s]+' | Where-Object { $_ -ne '' } | ForEach-Object { $_.ToLower() })
@@ -1270,7 +1270,7 @@ function I-dns {
     $saved = @(); $bad = @(); $restore = @('# Put back one zone: copy its file into the DNS folder, then load it.', '# (An AD-integrated zone: delete the broken one first, then add it back as primary from the file and convert it with dnscmd /zoneresettype ZONE /dsprimary.)')
     foreach ($z in $zones) {
         # dnscmd writes the export into %windir%\System32\dns; it is moved out at once.
-        $fn = 'ccdc-backup-' + $z + '.dns'
+        $fn = 'bt-backup-' + $z + '.dns'
         if (Run 'dnscmd.exe' @('/zoneexport', $z, $fn)) {
             $made = Jp $dnsDir $fn
             if (Test-Path -LiteralPath $made) {
@@ -1376,7 +1376,7 @@ function I-addb {
     $d = Jp $B 'ad-database'
     # ntdsutil reads each argument as one command line; a space in the path
     # would split it.
-    if ($d.Contains(' ')) { Done addb failed '' "the output path has a space in it ($d); use -Out C:\ccdc-out"; return }
+    if ($d.Contains(' ')) { Done addb failed '' "the output path has a space in it ($d); use -Out C:\bt-out"; return }
     if (-not (Run 'ntdsutil.exe' @('activate instance ntds', 'ifm', ('create sysvol full ' + $d), 'quit', 'quit'))) { Done addb failed $d (Short $script:LastOut); return }
     Add-CcFlag -Severity HIGH -Section addb -Item $d -Detail 'this folder holds the AD database with every password hash: copy it off the box with -CopyTo and delete it here'
     Done addb ok $d 'AD database and SYSVOL (install-from-media copy). HOLDS EVERY PASSWORD HASH' @('# Used for an authoritative restore or to build a new DC from media (dcpromo /ReplicaOrNewDomain ...).', '# Do not keep this folder on the DC: delete it after copying it off the box.')

@@ -10,7 +10,7 @@ SH=${TEST_SHELL:-sh}
 OUT="$T_TMP/out"
 S="$T_TMP/s"      # the throw-away scripts live here, apart from the output folder
 mkdir -p "$S"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 
 # mk NAME BODY -> write a script that sources the lib and runs BODY.
 mk() {
@@ -248,7 +248,7 @@ echo after >"$f"
 echo "dir=$CC_RUN_DIR"
 cc_timer_finish
 cc_finish'
-r=$(CCDC_TIMER_METHOD=background; export CCDC_TIMER_METHOD; run "$S/ask.sh" --out "$T_TMP/ask" --batch --apply --no-protected 2>/dev/null)
+r=$(BT_TIMER_METHOD=background; export BT_TIMER_METHOD; run "$S/ask.sh" --out "$T_TMP/ask" --batch --apply --no-protected 2>/dev/null)
 t_has "$r" "q1=yes" "--batch: a Y question takes yes"
 t_has "$r" "q2=no" "--batch: an N question takes no"
 t_has "$r" "q3=other" "--batch: a text question takes its default"
@@ -257,7 +257,7 @@ t_ok "cc_now is a number" sh -c "printf '%s' '$(printf '%s\n' "$r" | sed -n 's/^
 D=$(printf '%s\n' "$r" | sed -n 's/^dir=//p')
 t_has "$r" "Changes kept (--batch)" "--batch keeps at the end"
 t_file "$D/KEEP" "KEEP written"
-r=$(CCDC_TIMER_METHOD=background; export CCDC_TIMER_METHOD; run "$S/ask.sh" --out "$T_TMP/ask2" --apply --no-protected </dev/null 2>/dev/null)
+r=$(BT_TIMER_METHOD=background; export BT_TIMER_METHOD; run "$S/ask.sh" --out "$T_TMP/ask2" --apply --no-protected </dev/null 2>/dev/null)
 D=$(printf '%s\n' "$r" | sed -n 's/^dir=//p')
 t_has "$r" "touch $D/KEEP" "no terminal: says how to keep"
 sleep 4
@@ -265,13 +265,13 @@ t_eq "$(cat "$D/thing")" "before" "no answer: the timer put the change back"
 t_has "$(cat "$D/revert.log")" "undone: put thing back" "revert.log says what was undone"
 
 t_start "kit integrity check"
-unset CCDC_SKIP_VERIFY
+unset BT_SKIP_VERIFY
 mkdir -p "$T_TMP/dist"; cp "$S/init.sh" "$T_TMP/dist/v.sh"
 ( cd "$T_TMP/dist" && sha256sum v.sh >MANIFEST.sha256 )
 run "$T_TMP/dist/v.sh" --out "$OUT" >/dev/null 2>&1; t_eq "$?" 0 "untouched script passes the manifest check"
 echo "# tampered" >>"$T_TMP/dist/v.sh"
 r=$(run "$T_TMP/dist/v.sh" --out "$OUT" 2>&1); t_eq "$?" 3 "edited script is refused with exit 3"
 t_has "$r" "KIT CHECK FAILED" "message explains why"
-(CCDC_SKIP_VERIFY=1; export CCDC_SKIP_VERIFY; run "$T_TMP/dist/v.sh" --out "$OUT" >/dev/null 2>&1); t_eq "$?" 0 "CCDC_SKIP_VERIFY=1 bypasses the check"
+(BT_SKIP_VERIFY=1; export BT_SKIP_VERIFY; run "$T_TMP/dist/v.sh" --out "$OUT" >/dev/null 2>&1); t_eq "$?" 0 "BT_SKIP_VERIFY=1 bypasses the check"
 
 t_done

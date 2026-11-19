@@ -8,7 +8,7 @@
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/linux/SV-26-banning.sh"
-export CCDC_SKIP_VERIFY=1
+export BT_SKIP_VERIFY=1
 # shellcheck disable=SC2086
 run() { $SH "$C" --batch --no-color "$@"; }
 # row ADDR -> the first report line about ADDR (label, services, counts).
@@ -22,18 +22,18 @@ cat >"$B/nft" <<'STUB'
 # stand-in nft: the table exists once created; banned addresses live in $BANNED
 case "$*" in
     "list tables") exit 0 ;;
-    "list table inet ccdc_ban") [ -f "$BANNED.table" ] || exit 1
-        printf 'table inet ccdc_ban {\n set ban4 {\n  elements = { %s }\n }\n}\n' "$(sed 's/$/ timeout 30m expires 29m/' "$BANNED" | paste -sd, -)" ;;
+    "list table inet bt_ban") [ -f "$BANNED.table" ] || exit 1
+        printf 'table inet bt_ban {\n set ban4 {\n  elements = { %s }\n }\n}\n' "$(sed 's/$/ timeout 30m expires 29m/' "$BANNED" | paste -sd, -)" ;;
     "-f "*) : >"$BANNED.table" ;;
-    "add element inet ccdc_ban "*) ip=$(echo "$*" | sed 's/.*{ \([^ ]*\) .*/\1/'); echo "$ip" >>"$BANNED" ;;
-    "delete element inet ccdc_ban "*) ip=$(echo "$*" | sed 's/.*{ \([^ ]*\) }.*/\1/'); grep -vx "$ip" "$BANNED" >"$BANNED.t"; mv "$BANNED.t" "$BANNED" ;;
+    "add element inet bt_ban "*) ip=$(echo "$*" | sed 's/.*{ \([^ ]*\) .*/\1/'); echo "$ip" >>"$BANNED" ;;
+    "delete element inet bt_ban "*) ip=$(echo "$*" | sed 's/.*{ \([^ ]*\) }.*/\1/'); grep -vx "$ip" "$BANNED" >"$BANNED.t"; mv "$BANNED.t" "$BANNED" ;;
     *) exit 1 ;;
 esac
 STUB
 printf '#!/bin/sh\necho "iptables $*" >>"$FW_LOG"\n[ "$1" = -C ] && exit 1\n[ "$1" = -S ] && exit 0\nexit 0\n' >"$B/iptables"
 printf '#!/bin/sh\necho "ipset $*" >>"$FW_LOG"\n[ "$1" = list ] && exit 1\nexit 0\n' >"$B/ipset"
 chmod +x "$B/nft" "$B/iptables" "$B/ipset"
-CCDC_NFT="$B/nft"; CCDC_IPTABLES="$B/iptables"; CCDC_IPSET="$B/ipset"; export CCDC_NFT CCDC_IPTABLES CCDC_IPSET
+BT_NFT="$B/nft"; BT_IPTABLES="$B/iptables"; BT_IPSET="$B/ipset"; export BT_NFT BT_IPTABLES BT_IPSET
 
 # Sample logs: 12 SSH failures from .66, 3 from .77, 12 from the protected
 # scoring host .99, FTP/mail/IMAP failures from .88, 40 WordPress login POSTs
@@ -122,11 +122,11 @@ t_hasnt "$(cat "$BANNED")" "10.3.3.33" "--unban removes the ban"
 t_start "ipset and iptables backends"
 : >"$FW_LOG"; rm -rf "$ST"
 run --out "$O" --state "$ST" --backend ipset --apply --no-protected --log "$L/auth.log" >/dev/null 2>&1
-t_has "$(cat "$FW_LOG")" "ipset add ccdc_ban 10.3.3.33 timeout 1800 -exist" "ipset ban with a timeout"
-t_has "$(cat "$FW_LOG")" "iptables -I INPUT 1 -m set --match-set ccdc_ban src -j DROP" "one iptables rule for the set"
+t_has "$(cat "$FW_LOG")" "ipset add bt_ban 10.3.3.33 timeout 1800 -exist" "ipset ban with a timeout"
+t_has "$(cat "$FW_LOG")" "iptables -I INPUT 1 -m set --match-set bt_ban src -j DROP" "one iptables rule for the set"
 : >"$FW_LOG"; rm -rf "$ST"
 run --out "$O" --state "$ST" --backend iptables --apply --no-protected --log "$L/auth.log" >/dev/null 2>&1
-t_has "$(cat "$FW_LOG")" "iptables -I INPUT 1 -s 10.3.3.33 -j DROP -m comment --comment ccdc_ban" "plain iptables ban"
+t_has "$(cat "$FW_LOG")" "iptables -I INPUT 1 -s 10.3.3.33 -j DROP -m comment --comment bt_ban" "plain iptables ban"
 t_file "$ST/iptables-expiry" "expiry recorded for plain iptables"
 t_start "an attacker cannot choose who gets banned (log injection)"
 : >"$BANNED"; rm -f "$BANNED.table"; : >"$FW_LOG"
@@ -175,16 +175,16 @@ t_has "$out" "ssh" "--list says why"
 cat >"$B/nft2" <<'STUB'
 #!/bin/sh
 echo "nft $*" >>"$FW_LOG"
-case "$*" in "list tables"|"list table inet ccdc_ban") exit 0 ;; esac; exit 0
+case "$*" in "list tables"|"list table inet bt_ban") exit 0 ;; esac; exit 0
 STUB
 chmod +x "$B/nft2"; : >"$FW_LOG"
-CCDC_NFT="$B/nft2" run --out "$O" --state "$ST" --apply --no-protected --unban-all >/dev/null 2>&1
-t_has "$(cat "$FW_LOG")" "nft delete table inet ccdc_ban" "--unban-all removes the ban table"
+BT_NFT="$B/nft2" run --out "$O" --state "$ST" --apply --no-protected --unban-all >/dev/null 2>&1
+t_has "$(cat "$FW_LOG")" "nft delete table inet bt_ban" "--unban-all removes the ban table"
 t_has "$(cat "$ST/bans.csv")" "--unban-all" "and records it"
 if command -v script >/dev/null 2>&1; then
     # fails: 5 | web: Enter | ban: 60 | services: ssh | never: 10.0.0.9 | seconds: 0
     printf '5\n\n60\nssh\n10.0.0.9\n0\n' >"$T_TMP/answers"
-    out=$(CCDC_NO_TTY=0 script -qc "$SH '$C' --no-color --out '$O' --state '$T_TMP/state-q' --no-protected --log '$L/auth.log'" /dev/null <"$T_TMP/answers" 2>&1)
+    out=$(BT_NO_TTY=0 script -qc "$SH '$C' --no-color --out '$O' --state '$T_TMP/state-q' --no-protected --log '$L/auth.log'" /dev/null <"$T_TMP/answers" 2>&1)
     t_has "$out" "How many failed logins (SSH, FTP, mail)" "asks the failure limit"
     t_has "$out" "Addresses never to ban" "asks who never to ban"
     t_has "$out" "How often should it check?" "asks how often"

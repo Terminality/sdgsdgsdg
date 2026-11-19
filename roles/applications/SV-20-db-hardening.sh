@@ -73,7 +73,7 @@
 # WHAT IT CHANGES  (only with --apply)
 #   Database accounts and privileges, the test database, local_infile, the
 #   app config files that hold the database password, and a drop-in config
-#   file (99-ccdc-hardening.cnf) for local_infile and bind-address.
+#   file (99-bt-hardening.cnf) for local_infile and bind-address.
 #   db-bind restarts the database.  Every change has an undo line.
 #
 # DEPENDS ON
@@ -97,7 +97,7 @@
 #   --debug shows each SQL statement (passwords are never shown).
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -105,7 +105,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 ALL_ACTIONS="db-anon db-testdb db-infile db-remoteroot db-emptypw db-file db-apppw db-bind db-udf"
 
@@ -451,7 +451,7 @@ row() {
 }
 result() { if [ "$CC_APPLY" != 1 ]; then echo "would change"; elif [ "$1" -eq 0 ]; then echo changed; else echo failed; fi; }
 DROPIN=""
-for _d in /etc/mysql/mariadb.conf.d /etc/mysql/mysql.conf.d /etc/mysql/conf.d /etc/my.cnf.d; do [ -d "$_d" ] && { DROPIN="$_d/99-ccdc-hardening.cnf"; break; }; done
+for _d in /etc/mysql/mariadb.conf.d /etc/mysql/mysql.conf.d /etc/mysql/conf.d /etc/my.cnf.d; do [ -d "$_d" ] && { DROPIN="$_d/99-bt-hardening.cnf"; break; }; done
 # db_service -> _svc (the database service on this box) and _rcmd (restart it).
 db_service() {
     _svc=""; _rcmd=""
@@ -466,7 +466,7 @@ db_service() {
 dropin() {
     [ -n "$DROPIN" ] || return 1
     if [ ! -f "$DROPIN" ]; then
-        printf '# Added by CCDC SV-20 (database hardening). Delete this file to undo.\n[mysqld]\n' >"$DROPIN" || return 1
+        printf '# Added by SV-20 (database hardening). Delete this file to undo.\n[mysqld]\n' >"$DROPIN" || return 1
         cc_undo_add "remove $DROPIN (made by SV-20)" "rm -f $(cc_shquote "$DROPIN")"
     fi
     grep -v "^$1[ =]" "$DROPIN" >"$DROPIN.ccnew" && printf '%s = %s\n' "$1" "$2" >>"$DROPIN.ccnew" && cat "$DROPIN.ccnew" >"$DROPIN"; _dr=$?

@@ -15,6 +15,6 @@ port,53,scored DNS (both tcp and udp)
 service,apache2,serves the scored web site
 service,W3SVC,IIS on the Windows web server
 account,svc-web,the scoring engine logs in to the site as this user
-account,ccdc-automation,team automation account used by fan-out (rule 16)
+account,bt-automation,team automation account used by fan-out (rule 16)
 path,/var/www/html,scored web content
 host,10.0.0.5,scoring engine address - never block it

@@ -88,8 +88,8 @@
 #     settings           your answers, used as the next defaults
 #
 # WHAT IT CHANGES  (only with --apply)
-#   nftables: table "inet ccdc_ban" (two address sets with timeouts and one
-#   drop rule).  ipset: set "ccdc_ban" plus one iptables rule.  iptables
+#   nftables: table "inet bt_ban" (two address sets with timeouts and one
+#   drop rule).  ipset: set "bt_ban" plus one iptables rule.  iptables
 #   alone: one DROP rule per banned address, removed by a later check when
 #   the ban ends.  --unban-all (or the undo log) removes it all.  No other
 #   rule is touched.  There is no revert timer: every ban already ends by
@@ -97,7 +97,7 @@
 #
 # DEPENDS ON
 #   awk, tail, wc; nft or ipset+iptables or iptables; journalctl when the
-#   SSH log is only in the journal.  CCDC_NFT, CCDC_IPSET and CCDC_IPTABLES
+#   SSH log is only in the journal.  BT_NFT, BT_IPSET and BT_IPTABLES
 #   may name stand-ins (the tests use them).
 #
 # TESTED ON
@@ -115,10 +115,10 @@
 #
 # DEBUGGING
 #   --debug shows each log read and the counts per address.  events.log has
-#   one line per check.  "nft list table inet ccdc_ban" shows the bans.
+#   one line per check.  "nft list table inet bt_ban" shows the bans.
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 # Development copy: find lib/lib.sh by walking up from this file.  The build
 # step (tools/build.sh, LB-03) replaces this whole block with the library
 # itself, so the built script is a single standalone file.
@@ -126,7 +126,7 @@ _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -234,9 +234,9 @@ setting() { [ -f "$STATE/settings" ] && sed -n "s/^$1=//p" "$STATE/settings" | t
 now() { _t=$(date +%s 2>/dev/null); case "$_t" in ''|*[!0-9]*) awk 'BEGIN { srand(); print srand() }' ;; *) printf '%s\n' "$_t" ;; esac; }
 
 # ---- Firewall backend --------------------------------------------------------
-NFT=${CCDC_NFT:-$(cc_which nft)} || NFT=""
-IPSET=${CCDC_IPSET:-$(cc_which ipset)} || IPSET=""
-IPT=${CCDC_IPTABLES:-$(cc_which iptables)} || IPT=""
+NFT=${BT_NFT:-$(cc_which nft)} || NFT=""
+IPSET=${BT_IPSET:-$(cc_which ipset)} || IPSET=""
+IPT=${BT_IPTABLES:-$(cc_which iptables)} || IPT=""
 if [ -z "$BACKEND" ]; then
     if [ -n "$NFT" ] && "$NFT" list tables >/dev/null 2>&1; then BACKEND=nft
     elif [ -n "$IPSET" ] && [ -n "$IPT" ]; then BACKEND=ipset
@@ -251,9 +251,9 @@ fw_setup() {
     [ "$_fw_ready" = 1 ] && return 0
     case "$BACKEND" in
         nft)
-            if ! "$NFT" list table inet ccdc_ban >/dev/null 2>&1; then
+            if ! "$NFT" list table inet bt_ban >/dev/null 2>&1; then
                 cat >"$W/ban.nft" <<'EOF'
-table inet ccdc_ban {
+table inet bt_ban {
     set ban4 { type ipv4_addr; flags timeout; }
     set ban6 { type ipv6_addr; flags timeout; }
     chain input {
@@ -263,16 +263,16 @@ table inet ccdc_ban {
     }
 }
 EOF
-                cc_run "create the ban table (nft table inet ccdc_ban)" "$NFT" -f "$W/ban.nft" || return 1
-                cc_undo_add "remove all SV-26 bans" "$NFT delete table inet ccdc_ban"
+                cc_run "create the ban table (nft table inet bt_ban)" "$NFT" -f "$W/ban.nft" || return 1
+                cc_undo_add "remove all SV-26 bans" "$NFT delete table inet bt_ban"
             fi ;;
         ipset)
-            if ! "$IPSET" list ccdc_ban >/dev/null 2>&1; then
-                cc_run "create the ban set (ipset ccdc_ban)" "$IPSET" create ccdc_ban hash:ip timeout 0 -exist || return 1
-                cc_undo_add "remove all SV-26 bans" "$IPT -D INPUT -m set --match-set ccdc_ban src -j DROP; $IPSET destroy ccdc_ban"
+            if ! "$IPSET" list bt_ban >/dev/null 2>&1; then
+                cc_run "create the ban set (ipset bt_ban)" "$IPSET" create bt_ban hash:ip timeout 0 -exist || return 1
+                cc_undo_add "remove all SV-26 bans" "$IPT -D INPUT -m set --match-set bt_ban src -j DROP; $IPSET destroy bt_ban"
             fi
-            "$IPT" -C INPUT -m set --match-set ccdc_ban src -j DROP 2>/dev/null ||
-                cc_run "drop traffic from banned addresses" "$IPT" -I INPUT 1 -m set --match-set ccdc_ban src -j DROP || return 1 ;;
+            "$IPT" -C INPUT -m set --match-set bt_ban src -j DROP 2>/dev/null ||
+                cc_run "drop traffic from banned addresses" "$IPT" -I INPUT 1 -m set --match-set bt_ban src -j DROP || return 1 ;;
         iptables) : ;;
     esac
     _fw_ready=1
@@ -281,26 +281,26 @@ EOF
 fw_ban() {
     case "$BACKEND" in
         nft) case "$1" in *:*) _set=ban6 ;; *) _set=ban4 ;; esac
-             cc_run "ban $1 for $(($2 / 60)) min" "$NFT" add element inet ccdc_ban "$_set" "{ $1 timeout ${2}s }" ;;
-        ipset) cc_run "ban $1 for $(($2 / 60)) min" "$IPSET" add ccdc_ban "$1" timeout "$2" -exist ;;
-        iptables) cc_run "ban $1 for $(($2 / 60)) min" "$IPT" -I INPUT 1 -s "$1" -j DROP -m comment --comment ccdc_ban
-                  _rc=$?; [ "$_rc" -eq 0 ] && cc_undo_add "unban $1" "$IPT -D INPUT -s $1 -j DROP -m comment --comment ccdc_ban"; return "$_rc" ;;
+             cc_run "ban $1 for $(($2 / 60)) min" "$NFT" add element inet bt_ban "$_set" "{ $1 timeout ${2}s }" ;;
+        ipset) cc_run "ban $1 for $(($2 / 60)) min" "$IPSET" add bt_ban "$1" timeout "$2" -exist ;;
+        iptables) cc_run "ban $1 for $(($2 / 60)) min" "$IPT" -I INPUT 1 -s "$1" -j DROP -m comment --comment bt_ban
+                  _rc=$?; [ "$_rc" -eq 0 ] && cc_undo_add "unban $1" "$IPT -D INPUT -s $1 -j DROP -m comment --comment bt_ban"; return "$_rc" ;;
     esac
 }
 fw_unban() {
     case "$BACKEND" in
         nft) case "$1" in *:*) _set=ban6 ;; *) _set=ban4 ;; esac
-             cc_run "unban $1" "$NFT" delete element inet ccdc_ban "$_set" "{ $1 }" ;;
-        ipset) cc_run "unban $1" "$IPSET" del ccdc_ban "$1" ;;
-        iptables) cc_run "unban $1" "$IPT" -D INPUT -s "$1" -j DROP -m comment --comment ccdc_ban ;;
+             cc_run "unban $1" "$NFT" delete element inet bt_ban "$_set" "{ $1 }" ;;
+        ipset) cc_run "unban $1" "$IPSET" del bt_ban "$1" ;;
+        iptables) cc_run "unban $1" "$IPT" -D INPUT -s "$1" -j DROP -m comment --comment bt_ban ;;
     esac
 }
 # fw_list -> currently banned addresses, one per line.
 fw_list() {
     case "$BACKEND" in
-        nft) "$NFT" list table inet ccdc_ban 2>/dev/null | awk '/elements = \{/ { s = 1 } s { gsub(/elements = \{|[{},]/, " "); for (i = 1; i <= NF; i++) if ($i ~ /^[0-9a-fA-F.:]+$/ && $i ~ /[.:]/ && $(i - 1) != "timeout" && $(i - 1) != "expires") print $i } /\}/ { s = 0 }' ;;
-        ipset) "$IPSET" list ccdc_ban 2>/dev/null | awk '/^Members:/ { s = 1; next } s && NF { print $1 }' ;;
-        iptables) "$IPT" -S INPUT 2>/dev/null | awk '/ccdc_ban/ && /-s / { for (i = 1; i <= NF; i++) if ($i == "-s") { a = $(i + 1); sub(/\/32$/, "", a); print a } }' ;;
+        nft) "$NFT" list table inet bt_ban 2>/dev/null | awk '/elements = \{/ { s = 1 } s { gsub(/elements = \{|[{},]/, " "); for (i = 1; i <= NF; i++) if ($i ~ /^[0-9a-fA-F.:]+$/ && $i ~ /[.:]/ && $(i - 1) != "timeout" && $(i - 1) != "expires") print $i } /\}/ { s = 0 }' ;;
+        ipset) "$IPSET" list bt_ban 2>/dev/null | awk '/^Members:/ { s = 1; next } s && NF { print $1 }' ;;
+        iptables) "$IPT" -S INPUT 2>/dev/null | awk '/bt_ban/ && /-s / { for (i = 1; i <= NF; i++) if ($i == "-s") { a = $(i + 1); sub(/\/32$/, "", a); print a } }' ;;
     esac
 }
 
@@ -328,10 +328,10 @@ if [ "$MODE" != run ]; then
             fw_list >"$W/now"
             cc_show "" "Lifting $(grep -c . "$W/now") ban(s):"
             case "$BACKEND" in
-                nft) "$NFT" list table inet ccdc_ban >/dev/null 2>&1 && cc_run "remove the ban table (nft table inet ccdc_ban)" "$NFT" delete table inet ccdc_ban ;;
-                ipset) "$IPT" -C INPUT -m set --match-set ccdc_ban src -j DROP 2>/dev/null &&
-                           cc_run "remove the ban rule" "$IPT" -D INPUT -m set --match-set ccdc_ban src -j DROP
-                       "$IPSET" list ccdc_ban >/dev/null 2>&1 && cc_run "remove the ban set" "$IPSET" destroy ccdc_ban ;;
+                nft) "$NFT" list table inet bt_ban >/dev/null 2>&1 && cc_run "remove the ban table (nft table inet bt_ban)" "$NFT" delete table inet bt_ban ;;
+                ipset) "$IPT" -C INPUT -m set --match-set bt_ban src -j DROP 2>/dev/null &&
+                           cc_run "remove the ban rule" "$IPT" -D INPUT -m set --match-set bt_ban src -j DROP
+                       "$IPSET" list bt_ban >/dev/null 2>&1 && cc_run "remove the ban set" "$IPSET" destroy bt_ban ;;
                 iptables) while IFS= read -r _a; do fw_unban "$_a"; done <"$W/now"
                           [ "$CC_APPLY" = 1 ] && rm -f "$STATE/iptables-expiry" ;;
             esac
@@ -458,7 +458,7 @@ cc_show "" "  Logs read:"
 while IFS= read -r _f; do cc_show "" "    $_f  ($(what_log "$_f"))"; done <"$W/logs"
 [ "$USEJOURNAL" = 1 ] && cc_show "" "    the systemd journal  (SSH, FTP and mail: no auth.log on this box)"
 [ -s "$W/logs" ] || [ "$USEJOURNAL" = 1 ] || cc_show "$C_YEL" "    [!] no login logs found - nothing can be counted (use --log FILE)"
-cc_show "" "  Firewall:     $BACKEND$([ "$BACKEND" = nft ] && echo ' (table inet ccdc_ban, entries time out by themselves)')"
+cc_show "" "  Firewall:     $BACKEND$([ "$BACKEND" = nft ] && echo ' (table inet bt_ban, entries time out by themselves)')"
 cc_show "" "  Never banned:"
 while read -r _a _why; do
     case "$_why" in

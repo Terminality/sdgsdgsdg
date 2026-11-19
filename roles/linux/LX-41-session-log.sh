@@ -79,8 +79,8 @@
 #
 # WHAT IT CHANGES
 #   Nothing, unless you pass --setup-auditd, which adds one auditd rule
-#   (-a always,exit -F arch=... -S execve -k ccdc_cmd) so execve is logged,
-#   and, if you say yes, the same line in /etc/audit/rules.d/ccdc.rules so it
+#   (-a always,exit -F arch=... -S execve -k bt_cmd) so execve is logged,
+#   and, if you say yes, the same line in /etc/audit/rules.d/bt.rules so it
 #   survives a reboot.  Both have undo lines.  No revert timer: a logging rule
 #   cannot lock anyone out.
 #
@@ -116,12 +116,12 @@
 #   tail -f <state>/commands.log      watch commands live
 # =============================================================================
 
-# >>> CCDC-LIB
+# >>> BT-LIB
 _cc_d=$(cd "$(dirname "$0")" && pwd)
 while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$_cc_d"); done
 [ -f "$_cc_d/lib/lib.sh" ] || { echo "cannot find lib/lib.sh above $0" >&2; exit 3; }
 . "$_cc_d/lib/lib.sh"
-# <<< CCDC-LIB
+# <<< BT-LIB
 
 usage() {
     cat <<'USAGE'
@@ -255,19 +255,19 @@ if [ "$SETUP_AUDITD" = 1 ]; then
     else
         _arch=b64; case "$(uname -m 2>/dev/null)" in i?86|armv*) _arch=b32 ;; esac
         cc_show "$C_YEL" "Adding the auditd rule so every command is logged:"
-        cc_show "" "  auditctl -a always,exit -F arch=$_arch -S execve -k ccdc_cmd"
+        cc_show "" "  auditctl -a always,exit -F arch=$_arch -S execve -k bt_cmd"
         if cc_confirm "Add it now?"; then
-            if auditctl -a always,exit -F arch="$_arch" -S execve -k ccdc_cmd 2>>"$CC_LOG"; then
-                [ "$_arch" = b64 ] && auditctl -a always,exit -F arch=b32 -S execve -k ccdc_cmd 2>>"$CC_LOG"
+            if auditctl -a always,exit -F arch="$_arch" -S execve -k bt_cmd 2>>"$CC_LOG"; then
+                [ "$_arch" = b64 ] && auditctl -a always,exit -F arch=b32 -S execve -k bt_cmd 2>>"$CC_LOG"
                 CC_APPLY=1      # so the undo lines are recorded
-                cc_undo_add "remove the auditd execve rule" "auditctl -d always,exit -F arch=$_arch -S execve -k ccdc_cmd 2>/dev/null; auditctl -d always,exit -F arch=b32 -S execve -k ccdc_cmd 2>/dev/null; true"
+                cc_undo_add "remove the auditd execve rule" "auditctl -d always,exit -F arch=$_arch -S execve -k bt_cmd 2>/dev/null; auditctl -d always,exit -F arch=b32 -S execve -k bt_cmd 2>/dev/null; true"
                 cc_show "$C_GRN" "[ok] every command is now logged to $AUDITLOG"
                 # Loaded rules are lost at reboot unless they are in rules.d.
-                if [ -d /etc/audit/rules.d ] && [ ! -f /etc/audit/rules.d/ccdc.rules ] && cc_ask "Keep the rule after a reboot too?" Y "yes, write /etc/audit/rules.d/ccdc.rules" "no, only until the next reboot"; then
-                    { printf -- '-a always,exit -F arch=%s -S execve -k ccdc_cmd\n' "$_arch"
-                      [ "$_arch" = b64 ] && printf -- '-a always,exit -F arch=b32 -S execve -k ccdc_cmd\n'; } >/etc/audit/rules.d/ccdc.rules \
-                        && cc_undo_add "remove /etc/audit/rules.d/ccdc.rules" "rm -f /etc/audit/rules.d/ccdc.rules" \
-                        && cc_show "$C_GRN" "[ok] wrote /etc/audit/rules.d/ccdc.rules"
+                if [ -d /etc/audit/rules.d ] && [ ! -f /etc/audit/rules.d/bt.rules ] && cc_ask "Keep the rule after a reboot too?" Y "yes, write /etc/audit/rules.d/bt.rules" "no, only until the next reboot"; then
+                    { printf -- '-a always,exit -F arch=%s -S execve -k bt_cmd\n' "$_arch"
+                      [ "$_arch" = b64 ] && printf -- '-a always,exit -F arch=b32 -S execve -k bt_cmd\n'; } >/etc/audit/rules.d/bt.rules \
+                        && cc_undo_add "remove /etc/audit/rules.d/bt.rules" "rm -f /etc/audit/rules.d/bt.rules" \
+                        && cc_show "$C_GRN" "[ok] wrote /etc/audit/rules.d/bt.rules"
                 fi
                 # shellcheck disable=SC2034  # read by the library
                 CC_APPLY=0
@@ -759,7 +759,7 @@ if [ "$AUDIT_ON" != 1 ]; then
         _arch=b64; case "$(uname -m 2>/dev/null)" in i?86|armv*) _arch=b32 ;; esac
         show "${C_YEL:-}" "[!] auditd is not logging commands: only sudo/su commands are captured."
         show "${C_YEL:-}" "    Turn on full command logging with:  sudo sh $0 --setup-auditd"
-        show "${C_YEL:-}" "    (or by hand: auditctl -a always,exit -F arch=$_arch -S execve -k ccdc_cmd)"
+        show "${C_YEL:-}" "    (or by hand: auditctl -a always,exit -F arch=$_arch -S execve -k bt_cmd)"
     fi
 else
     show "${C_GRN:-}" "[ok] auditd is logging commands ($AUDITLOG)"
