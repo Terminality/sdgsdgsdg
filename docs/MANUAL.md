@@ -47,6 +47,7 @@ Contents:
 37. Mail password rotation, `roles/applications/SV-40-mail-passwords.sh` (SV-40)
 38. Service recovery, `roles/applications/SV-50-service-recovery.sh` (SV-50)
 39. Splunk hardening and passwords, `roles/applications/SV-44-splunk-hardening.sh` (SV-44)
+40. Web shell hunter, `roles/applications/SV-16-webshell-hunter.sh` (SV-16)
 
 ---
 
@@ -2731,3 +2732,64 @@ sudo sh SV-44-splunk-hardening.sh --protected p.csv --apply --batch --auth-file 
 | `Splunk refused the change (HTTP 400)` | Password rules (length, complexity) | `--length 24`, or set one with `[s]` |
 | `the test search FAILS` | A quarantined app or disabled input was needed | It's put back; skip that one next time |
 | `splunkd is not running` | Down | `SV-50 --services splunk` |
+
+## 40. Web shell hunter, `roles/applications/SV-16-webshell-hunter.sh` (SV-16)
+
+Finds the PHP files red team uses to get back into a site: web shells. SV-15 only sees files that changed since its backup, so a shell planted before the backup is backed up too. This one looks at what's inside each file.
+
+### How to run it
+
+```sh
+sudo sh SV-16-webshell-hunter.sh                                     # scan, dry run
+sudo sh SV-16-webshell-hunter.sh --protected p.csv --apply           # asks about each file
+sudo sh SV-16-webshell-hunter.sh --protected p.csv --apply --batch --url http://127.0.0.1/shop/
+sudo sh SV-16-webshell-hunter.sh --protected p.csv --watch 60 --auto-quarantine --apply   # keep watching
+```
+
+### What it looks for
+
+| Level | Found |
+| --- | --- |
+| HIGH | Request data run as code (`system($_GET..)`, `eval($_POST..)`, `assert($_REQUEST..)`, `$_GET['f']($_GET['a'])`, backticks); `eval(base64_decode(..))` and other decoded code; `preg_replace` with `/e`; known shell names (c99, r57, WSO, b374k, weevely, p0wny...); PHP in an upload or image folder; PHP inside a `.jpg`/`.png`/`.txt`; `.htaccess` that makes other files run as PHP or uses `auto_prepend_file`; a WordPress core file that differs from wordpress.org; a file in `wp-admin`/`wp-includes` WordPress doesn't ship |
+| MED | Functions that run programs (`shell_exec`, `passthru`, `proc_open`, `popen`); decoding functions; hex-escaped strings; long base64 blobs; PHP in a cache/temp folder |
+| LOW | Changed in the last `--hours` (24); owned by the web server account; a hidden `.name.php` |
+
+A file is HIGH if any HIGH reason matches, MED if any MED reason does. The matching line is shown, so you can tell a shell from a normal plugin. WordPress's empty `index.php` ("Silence is golden") is skipped, and core files that match wordpress.org drop their MED/LOW hints.
+
+**WordPress check:** it fetches the checksums for the installed version from wordpress.org. If that's blocked, save the page `https://api.wordpress.org/core/checksums/1.0/?version=X&locale=en_US` elsewhere and pass `--wp-checksums FILE`.
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Each HIGH/MED file | `[q]uarantine` `[k]eep` `[a]ll the rest default` (default: HIGH out, MED kept) | `--batch` |
+| Quarantine these? | `[y]` / `[n]` | `--apply` |
+
+### Safety
+
+- Dry run unless `--apply`. It only ever moves files to quarantine; the undo puts them back. Revert timer (120 s).
+- **Site check:** `--url` must still load afterwards. If not, everything goes back, then the files are tried **one at a time**. A file the site needs is put back and listed: clean that one by hand (remove the bad lines, keep the rest).
+- The check waits for PHP's cache (opcache), so a moved file can't look fine for a few seconds and then break the site.
+
+### Watch mode
+
+`--watch 60` checks every 60 seconds for new or changed PHP files and scans them right away. `--auto-quarantine --apply` moves HIGH ones out at once (and back if the site stops loading). Everything goes into `watch.txt`.
+
+### What it produces
+
+In `webshells-N/`: `output.txt`, `findings.txt` (every file, its score and reasons), `summary.txt`, `watch.txt`, `revert.sh`.
+
+### What to watch for
+
+- **Backup, file manager and page builder plugins** use exec functions, so MED is normal for them. Read the line before quarantining.
+- **A clever shell can avoid every pattern.** Look at the LOW hints too (`--show-low`): changed lately, owned by the web server.
+- **Shells kept in the database** (an option holding PHP) aren't seen. SV-15 compares the database.
+- After cleaning: run `SV-15 --backup` so the clean site is the one you restore to, and `SV-21 upload-nophp` so PHP can't run in uploads at all.
+
+### Problems and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `not checked against wordpress.org` | wordpress.org unreachable | `--wp-checksums FILE` |
+| `the site needs FILE: put back` | The shell is inside a file the site loads | Remove only the bad lines, then run again |
+| Lots of MED in one plugin | It runs programs legitimately | Keep it (`k`), or check the plugin's version |

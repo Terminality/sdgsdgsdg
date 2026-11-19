@@ -2,6 +2,7 @@
 e21f0b653aa9b2b212be22e235080b29dd4dcb193d277a04e47032fc7641883c  applications/SV-01-web-db-enum.sh
 c64336bcfeedf2356e58336ab2103b3978c20f97dab83a46af7cdae7f6637ffa  applications/SV-14-db-backup.sh
 89bf48cb8f56f29c8721a2b019b65aab8629765c9978759c4e5f6c68675357d8  applications/SV-15-site-backup.sh
+bfa433c622e186d7b1a9271b5a61ed4e7c100c2edeb90dec67e9b5bc5ab8f479  applications/SV-16-webshell-hunter.sh
 a6607165feb98b54d6845a3158b74c6c0fb1a340bed404bbac2301826c00973d  applications/SV-20-db-hardening.sh
 7cffe2902e17e873faac15b6b5983fd1f131f51ff51044a74af2ce143d6a7882  applications/SV-21-web-hardening.sh
 ed6ef3ddc83a88d64f2b484ebfd36534c70ed77c79d24ea0d65773ba8d1c0a8d  applications/SV-30-service-hardening.sh
