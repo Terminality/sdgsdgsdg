@@ -1,6 +1,6 @@
 # Blue team scripts
 
-Blue-team scripts for the Collegiate Cyber Defense Competition, written with Claude.
+Blue-team admin and hardening scripts, written with Claude.
 
 **Start here:** [`docs/PLAN.md`](docs/PLAN.md) (the plan), [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) (what is scored), [`AGENTS.md`](AGENTS.md) (rules for changing the repo). Core scripts are for Linux, Windows / AD and Network only; other roles write their own.
 
