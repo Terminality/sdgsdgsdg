@@ -3427,7 +3427,7 @@ Replies to allowed connections always pass, so a scored service still answers wh
 | Limit what the scored servers can START out? | `[y/N]`, then DNS, NTP, more places | `--restrict-out`, `--dns`, `--ntp`, `--out-allow` |
 | Threat prevention on the scored rules? | `[y/N]` | `--threat` |
 | Each rule, in plain words | `[K/s]` keep / skip | `--batch` |
-| Which zone / interface is outside, which has the servers | picked from the device's list | `--outside`, `--inside` |
+| Which zone / interface is outside, which has the servers | picked from the device's list (`a` = all of them, Palo Alto and FortiGate); without a terminal it never guesses | `--outside`, `--inside` (`all`) |
 | Nothing answers from here: go on anyway? | `[y/N]` | |
 | Put these rules on DEVICE now? | `[Y/n]` | `--apply` |
 | Check the SCOREBOARD: keep them? | `[Y/n]` within `--timer` seconds (120), else put back | `--batch` keeps |
@@ -3451,15 +3451,16 @@ NAT: Palo Alto and FortiGate match the OUTSIDE address of a box. Their NAT rules
 
 1. Every scored box:port and ping is tried from this box. If nothing answers, it stops and asks.
 2. One session to the firewall stays open; the rules go in through it.
-3. After `--wait` seconds (Palo Alto: up to `--commit-wait`) the same tries run again. Anything that answered before and no longer does: everything is put back at once, by itself, through the open session. The same happens if the commands failed or a new login fails.
-4. It asks you to check the scoreboard. No answer in time, or `n`: put back.
+3. The undo is written before anything is sent. After `--wait` seconds (Palo Alto: once the commit says it worked, at most `--commit-wait`) the same tries run again. Anything that answered before and no longer does: everything is put back at once, by itself, through the open session. The same happens if the firewall refused a command, a Palo Alto commit did not work, or a new login fails.
+4. Ctrl-C while a firewall is being changed puts it back too.
+5. It asks you to check the scoreboard. No answer in time, or `n`: put back.
 
 ### Putting it back later
 
 - `sh firewall-ruleset-N/undo/DEVICE.sh` (needs `BT_NET_PASS`), or
 - `sh NW-20-firewall-ruleset.sh --device ... --remove --apply` (uses `nw20-DEVICE.undo` in `--out`, kept between runs).
 
-Running it again replaces the earlier `bt-` rules; the ASA undo still puts the ORIGINAL access list back.
+Running it again deletes the earlier `bt-` rules first and puts the new ones on; putting a second run back leaves no `bt-` rules at all. The ASA undo still puts the ORIGINAL access list back.
 
 ### What it produces
 
@@ -3470,5 +3471,6 @@ In `firewall-ruleset-N/`: `output.txt`, `scored.txt`, `plan.txt` (every rule in 
 - **Not yet run on a real Palo Alto, ASA, FortiGate or MikroTik.** The commands follow each brand's documentation. Run without `--apply`, read `plan.txt` and `commands-DEVICE.txt`, then `--apply` on ONE firewall.
 - **A missed scored port is blocked.** Check the list against the competition packet before saying yes.
 - **The checks run from this box.** If this box is inside, its tries may not cross the firewall: watch the scoreboard during the countdown.
+- **ASA outgoing limits** sit on the servers' interface, so they also stop the servers reaching other inside networks (the team stays open). List those with `--out-allow`.
 - **Outgoing limits** stop updates and anything the servers fetch (package mirrors, an outside database). List those with `--out-allow`, or leave the limits off.
 - **The countdown only expires by itself in shells with `read -t`** (bash, ksh, mksh, yash, busybox); dash waits for the answer.

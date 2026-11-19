@@ -8,7 +8,8 @@ What changed, newest first. Each entry names the scripts touched and how they we
 - Scored boxes from `--allow`, a plain `.txt` list (`--file`), the newest SH-03 scan (offered port by port) or typed in. No CSV needed.
 - Asks about the list, the team, each rule, the outside and inside zones, and each firewall. Every scored service is tried before and after; one that stops answering puts everything back at once. Then you confirm against the scoreboard within `--timer` seconds, else put back. Undo script per device and `--remove`.
 - Palo Alto and FortiGate: NAT rules and virtual IPs leading to a scored box are read and added to its rules.
-- Tested: 105 checks with a stand-in firewall for every brand (one that breaks a scored service, so the put-back is real) under seven shells and three awks; the real `nft` accepts the Linux ruleset; live on a Linux router. Not yet on real firewalls.
+- Puts back by itself also when the firewall refuses a command, a Palo Alto commit does not say it worked, or the run is stopped (Ctrl-C) mid-change. The undo is written before anything is sent.
+- Tested: 128 checks with a stand-in firewall for every brand (one that breaks a scored service and one that refuses a command, so the put-back is real) under seven shells and three awks; the real `nft` accepts the Linux ruleset; live on a Linux router. Not yet on real firewalls.
 
 ## 2026-11-19: Network device hardening (NW-21, new)
 

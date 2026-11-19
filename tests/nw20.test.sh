@@ -25,6 +25,8 @@ pwf="$STUB_DIR/$host.pw"; [ -f "$pwf" ] || { echo "ssh: connect to host $host: C
 [ "$SSHPASS" = "$(cat "$pwf")" ] || { echo "Permission denied" >&2; exit 255; }
 if [ -n "$cmd" ]; then printf '%s\n' "$cmd" | tr ';' '\n'; else cat; fi | while IFS= read -r l; do
     printf '%s\n' "$l" >>"$STUB_DIR/$host.log"
+    [ "$l" = commit ] && echo "Configuration committed successfully"
+    [ -f "$STUB_DIR/$host.refuse" ] && case "$l" in *bt-in-block*) echo "$(cat "$STUB_DIR/$host.refuse")" ;; esac
     if [ -f "$STUB_DIR/$host.break" ]; then
         case "$l" in
             *bt-in-block*|*"access-group BT-IN in"*|*"bt-fw-in"*) grep -v '^10.0.0.5 80$' "$STUB_DIR/up" >"$STUB_DIR/up.n"; cat "$STUB_DIR/up.n" >"$STUB_DIR/up" ;;
@@ -40,6 +42,7 @@ STUB
 cat >"$B/nc" <<'STUB'
 #!/bin/sh
 # nc -z -w 3 ADDR PORT
+[ "$1" = -h ] && { echo "usage: nc [-46z] ..."; exit 0; }
 eval "a=\${$(($# - 1))}"; eval "p=\${$#}"
 grep -qx "$a $p" "$STUB_DIR/up"
 STUB
@@ -54,7 +57,7 @@ BT_SSH="$B/ssh"; BT_SSHPASS="$B/sshpass"; BT_NET_PASS='Dev-Pass-1'; export BT_SS
 PATH="$B:$PATH"; export PATH
 
 devices() {
-    rm -f "$D"/*.log "$D"/*.break
+    rm -f "$D"/*.log "$D"/*.break "$D"/*.refuse
     for h in pan asa fg mt lnx; do printf '%s\n' "$BT_NET_PASS" >"$D/$h.pw"; done
     printf '10.0.0.5 ping\n10.0.0.5 80\n10.0.0.5 443\n10.0.0.9 ping\n10.0.0.9 25\n' >"$D/up"; cp "$D/up" "$D/up.orig"
     cat >"$D/pan.out" <<'EOF'
@@ -252,6 +255,8 @@ set rulebase nat rules mail source 10.0.0.9
 set rulebase nat rules mail source-translation static-ip translated-address 172.25.20.9
 set rulebase nat rules mail source-translation static-ip bi-directional yes
 set rulebase nat rules outbound source any
+set rulebase nat rules "dns in" destination "dns pub"
+set rulebase nat rules "dns in" destination-translation translated-address 10.0.0.9
 set rulebase nat rules outbound source-translation dynamic-ip-and-port interface-address interface ethernet1/1
 EOF
 sed '/^config firewall policy$/,$d' "$D/fg.out" >"$D/fg.n"
@@ -269,6 +274,7 @@ out=$(run --device p1,pan,paloalto --device f1,fg,fortigate --batch 2>&1)
 _rd=$(newest)
 t_has "$out" "NAT: outside name web-pub leads to 10.0.0.5" "PAN: destination NAT found (by object name)"
 t_has "$out" "NAT: outside name 172.25.20.9 leads to 10.0.0.9" "PAN: bi-directional static NAT found"
+t_has "$out" "NAT to 10.0.0.9 uses a name with spaces: not added" "PAN: a name with spaces is reported, not used"
 t_ok "PAN: scored rule has the outside names" grep -q '^set rulebase security rules bt-in-10.0.0.5 .*destination \[ 10.0.0.5/32 172.25.20.55 web-pub \]' "$_rd/commands-p1.txt"
 t_ok "PAN: ping rule has them too" grep -q '^set rulebase security rules bt-ping .*destination \[ 10.0.0.5/32 10.0.0.9/32 172.25.20.55 web-pub 172.25.20.9 \]' "$_rd/commands-p1.txt"
 t_fail "PAN: the block rule stays any" grep -q 'bt-in-block .*web-pub' "$_rd/commands-p1.txt"
@@ -303,6 +309,61 @@ cat "$D/fg.n" >"$D/fg.out"
 out=$(run --device f1,fg,fortigate --batch 2>&1)
 _rd=$(newest)
 t_ok "FortiGate: moved before the first policy that is not ours" grep -qx 'move 9101 before 1' "$_rd/commands-f1.txt"
+
+t_ok "FortiGate: the earlier run's policies are deleted first" grep -qx 'delete 9101' "$_rd/commands-f1.txt"
+t_ok "FortiGate: team policy only from outside (no outgoing policy without NAT)" sh -c "sed -n '/set name \"bt-team\"/,/^next/p' '$_rd/commands-f1.txt' | grep -qx 'set srcintf \"wan1\"'"
+# Palo Alto with bt- rules from an earlier run: deleted first ("set" would add to them)
+devices
+printf 'set rulebase security rules bt-out-block from trust\nset rulebase security rules bt-out-block action deny\n' >>"$D/pan.out"
+out=$(run --device p1,pan,paloalto --batch 2>&1)
+_rd=$(newest)
+t_eq "$(grep -c '^delete rulebase security rules bt-out-block$' "$_rd/commands-p1.txt")" 1 "PAN: an earlier run's rule is deleted once, before the new ones"
+t_eq "$(head -n 1 "$_rd/commands-p1.txt")" "delete rulebase security rules bt-out-block" "PAN: and first"
+
+t_start "the firewall refuses a command: put back"
+devices; echo "Invalid syntax." >"$D/pan.refuse"
+out=$(run --device p1,pan,paloalto --batch --no-protected --apply 2>&1)
+t_has "$out" "[x] p1: the firewall refused a command: Invalid syntax." "the refusal is seen"
+t_has "$out" "[+] p1: put back" "and put back"
+t_fail "no --remove record left" test -f "$O/nw20-p1.undo"
+devices
+printf '===if\n2: eth0: <UP>\n3: eth1: <UP>\n===nft\n' >"$D/lnx.out"
+cp "$B/ssh" "$B/ssh.bak"; sed 's|^cat "\$STUB_DIR/\$host.out"$|cat "$STUB_DIR/$host.out"; [ -f "$STUB_DIR/$host.fail" ] \&\& case "$cmd" in *bt_fw.nft*) echo "Error: syntax error"; exit 1 ;; esac|' "$B/ssh.bak" >"$B/ssh"
+: >"$D/lnx.fail"
+out=$(run --device l1,lnx,linux --batch --no-protected --apply 2>&1)
+t_has "$out" "[x] l1: the commands did not go through" "Linux: nft failing is seen (its exit status is kept)"
+rm -f "$D/lnx.fail"; mv "$B/ssh.bak" "$B/ssh"
+t_ok "Linux: the remote command keeps nft's exit status" grep -q '_r=$?; rm -f /tmp/bt_fw.nft; exit $_r' "$(newest)/commands-l1.txt"
+
+t_start "stopped while a firewall is being changed: put back"
+devices
+$SH "$C" --out "$O" --no-color $ALLOW --wait 20 --device l1,lnx,linux --batch --no-protected --apply >"$T_TMP/stop.out" 2>&1 &
+_bg=$!
+_i=0; while [ "$_i" -lt 50 ] && ! grep -q 'bt_fw.nft' "$D/lnx.log" 2>/dev/null; do sleep 0.2; _i=$((_i + 1)); done
+sleep 1; kill -TERM "$_bg" 2>/dev/null; wait "$_bg" 2>/dev/null
+t_has "$(cat "$T_TMP/stop.out")" "stopped while l1 was being changed - putting it back" "the stop is seen"
+t_ok "the rules were taken out" grep -q 'nft delete table inet bt_fw' "$D/lnx.log"
+t_fail "no --remove record left" test -f "$O/nw20-l1.undo"
+
+t_start "lists are checked and merged"
+devices
+out=$(run --allow 10.0.0.5:70000,80,80,9-3 --device l1,lnx,linux --restrict-out --dns 10.0.0.20 --ntp 10.0.0.20 --out-allow 10.0.1.9:8000-8100 --batch 2>&1)
+_rd=$(newest)
+t_has "$out" "not a port (1-65535), skipped: 70000" "a port over 65535 is refused"
+t_has "$out" "not a port (1-65535), skipped: 9-3" "a backwards range is refused"
+t_has "$out" "ALLOW any -> 10.0.0.5 tcp 80,443" "ports given twice appear once"
+t_has "$out" "ALLOW the scored servers -> 10.0.0.20 tcp 53 udp 53,123 (DNS, NTP)" "DNS and NTP on one box: one rule"
+t_eq "$(grep -c 'comment "bt-out-10.0.0.20"' "$_rd/commands-l1.txt")" 2 "Linux: one tcp and one udp line for it"
+out=$(run --device a1,asa,cisco-asa --restrict-out --dns 10.0.0.20 --out-allow 10.0.1.9:8000-8100 --batch 2>&1)
+_rd=$(newest)
+t_ok "ASA: a range going out" grep -qx 'access-list BT-OUT extended permit tcp host 10.0.0.5 host 10.0.1.9 range 8000 8100' "$_rd/commands-a1.txt"
+t_ok "ASA: the servers still reach the team" grep -qx 'access-list BT-OUT extended permit ip host 10.0.0.5 10.0.0.0 255.255.255.0' "$_rd/commands-a1.txt"
+printf 'set zone zone-a network layer3 ethernet1/1\nset zone zone-b network layer3 ethernet1/2\n' >"$D/pan.out"
+out=$(run --device p1,pan,paloalto --batch 2>&1)
+t_has "$out" "no name looks right" "no terminal and no name that looks right: not guessed"
+t_has "$out" "p1: not built" "and the firewall is skipped"
+out=$(run --device p1,pan,paloalto --outside zone-a --inside all --batch 2>&1)
+t_ok "PAN: --inside all" grep -q '^set rulebase security rules bt-in-block from zone-a to \[ zone-b \] ' "$(newest)/commands-p1.txt"
 
 t_start "nothing answers from here: stop"
 devices; : >"$D/up"

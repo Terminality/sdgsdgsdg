@@ -30,8 +30,11 @@
 #   HOW IT KEEPS THE SCORED SERVICES UP
 #     - before: every scored box:port (and ping) is tried from this box
 #     - the rules go in through one open session to the firewall
-#     - after: the same tries; one that answered before and no longer does
-#       -> everything is put back at once, automatically
+#     - the undo is written before anything is sent
+#     - after: the same tries; one that answered before and no longer does,
+#       a command the firewall refused, a Palo Alto commit that did not
+#       work, or a new login that fails -> everything is put back at once
+#     - Ctrl-C (or a kill) while a firewall is being changed -> put back
 #     - then you are asked to check the scoreboard / your services within
 #       --timer seconds (default 120); no answer or "n" -> put back
 #     - REVERT LATER: sh <run>/undo/DEVICE.sh, or this script with --remove
@@ -67,7 +70,8 @@
 #                      newest netscan-N under --out)
 #   --team CIDR,...    your team's addresses (allowed everything)
 #   --outside NAME     the outside zone / interface (else asked)
-#   --inside NAME      the zone / interface the servers are on (else asked)
+#   --inside NAME      the zone / interface the servers are on (else asked;
+#                      "all" = every zone but outside: Palo Alto, FortiGate)
 #   --restrict-out     also limit what the servers start (asked otherwise, default no)
 #   --dns IP,...       DNS servers the servers may use (with --restrict-out)
 #   --ntp IP           time server the servers may use
@@ -76,7 +80,8 @@
 #   --remove           take out every bt- rule this script put on the device(s)
 #   --user NAME / --ask-password / --enable-env / --legacy-ssh   as NW-21
 #   --wait N           seconds before the checks (default 5)
-#   --commit-wait N    Palo Alto: seconds for a commit (default 120)
+#   --commit-wait N    Palo Alto: at most this many seconds for the commit
+#                      to say it worked (default 120), else put back
 #   --timer N          seconds to confirm (default 120)
 #   --no-color         no colours
 #   --help             this text plus the common options
@@ -253,6 +258,7 @@ fi
 printf '%s' "$DEVICES" | grep . | while IFS=',' read -r _n _a _v _u _p; do
     case " $VENDORS " in *" $_v "*) ;; *) echo "BADV|$_v"; continue ;; esac
     [ -n "$_n" ] && [ -n "$_a" ] || { echo "BAD|$_n"; continue; }
+    case "${_p:-22}" in *[!0-9]*) echo "BAD|$_n"; continue ;; esac
     printf '%s|%s|%s|%s|%s\n' "$_n" "$_a" "$_v" "${_u:-$DEFUSER}" "${_p:-22}"
 done >>"$W/devices"
 grep -q '^BAD' "$W/devices" && cc_die 2 "--device needs NAME,ADDRESS,VENDOR with a known vendor ($VENDORS)"
@@ -332,11 +338,19 @@ add_scored() {
     _tp=""; _upp=""
     for _x in $(printf '%s' "$2" | tr ',' ' '); do
         _pr=tcp; case "$_x" in */udp) _pr=udp; _x=${_x%/udp} ;; */tcp) _x=${_x%/tcp} ;; esac
-        case "$_x" in ''|*[!0-9-]*|-*|*-) cc_show "$C_RED" "  [x] $1: not a port, skipped: $_x"; continue ;; esac
-        if [ "$_pr" = udp ]; then _upp="$_upp,$_x"; else _tp="$_tp,$_x"; fi
+        case "$_x" in ''|*[!0-9-]*|-*|*-|*-*-*) cc_show "$C_RED" "  [x] $1: not a port, skipped: $_x"; continue ;; esac
+        if [ "${_x%-*}" -lt 1 ] || [ "${_x%-*}" -gt 65535 ] || [ "${_x#*-}" -lt 1 ] || [ "${_x#*-}" -gt 65535 ] || [ "${_x%-*}" -gt "${_x#*-}" ]; then
+            cc_show "$C_RED" "  [x] $1: not a port (1-65535), skipped: $_x"; continue; fi
+        if [ "$_pr" = udp ]; then case "$_upp," in *",$_x,"*) ;; *) _upp="$_upp,$_x" ;; esac
+        else case "$_tp," in *",$_x,"*) ;; *) _tp="$_tp,$_x" ;; esac; fi
     done
     if grep -q "^$1$US" "$W/scored"; then
-        awk -F"$US" -v OFS="$US" -v a="$1" -v t="${_tp#,}" -v u="${_upp#,}" '$1 == a { $2 = $2 (($2 != "" && t != "") ? "," : "") t; $3 = $3 (($3 != "" && u != "") ? "," : "") u } { print }' "$W/scored" >"$W/s.n" && cat "$W/s.n" >"$W/scored"
+        awk -F"$US" -v OFS="$US" -v a="$1" -v t="${_tp#,}" -v u="${_upp#,}" '
+            function merge(old, add,   n, x, i, seen, out) {  # awk, not shell: posix-ok
+                n = split(old "," add, x, ","); out = ""
+                for (i = 1; i <= n; i++) if (x[i] != "" && !(x[i] in seen)) { seen[x[i]] = 1; out = out (out == "" ? "" : ",") x[i] }
+                return out }
+            $1 == a { $2 = merge($2, t); $3 = merge($3, u) } { print }' "$W/scored" >"$W/s.n" && cat "$W/s.n" >"$W/scored"
     else j "$1" "${_tp#,}" "${_upp#,}" "$3" >>"$W/scored"; fi
 }
 printf '%s' "$ALLOWS" | grep . | while IFS= read -r _l; do printf '%s %s\n' "${_l%%:*}" "$(printf '%s' "$_l" | sed -n 's/^[^:]*://p')"; done >"$W/given"
@@ -416,7 +430,14 @@ if [ "$RESTRICT" = y ]; then
         j "$_d" "${_tp#,}" "${_upp#,}" "you listed it"
     done >>"$W/outallow"
     grep '^BAD ' "$W/outallow" | while IFS= read -r _l; do cc_show "$C_RED" "  [x] not ADDR:PORTS, left out: ${_l#BAD }"; done
-    grep -v '^BAD ' "$W/outallow" >"$W/o.n"; cat "$W/o.n" >"$W/outallow"
+    # one line per destination (DNS and NTP on the same box become one rule)
+    grep -v '^BAD ' "$W/outallow" | awk -F"$US" -v OFS="$US" '
+        function merge(old, add,   n, x, i, seen, out) {  # awk, not shell: posix-ok
+                n = split(old "," add, x, ","); out = ""
+            for (i = 1; i <= n; i++) if (x[i] != "" && !(x[i] in seen)) { seen[x[i]] = 1; out = out (out == "" ? "" : ",") x[i] }
+            return out }
+        { if (!($1 in t)) o[++n] = $1; t[$1] = merge(t[$1], $2); u[$1] = merge(u[$1], $3); w[$1] = (w[$1] == "" ? "" : w[$1] ", ") $4 }
+        END { for (i = 1; i <= n; i++) print o[i], t[o[i]], u[o[i]], w[o[i]] }' >"$W/o.n"; cat "$W/o.n" >"$W/outallow"
     [ -s "$W/outallow" ] || cc_show "$C_YEL" "  [*] no DNS, NTP or other destination listed: the servers will reach NOTHING outside the firewall"
 fi
 if [ -z "$THREAT" ]; then
@@ -455,16 +476,24 @@ grep -q "^indeny$US" "$W/rules" || cc_show "$C_YEL" "  [*] without the BLOCK rul
 # ---- 4. Each firewall: read, choose sides, build ------------------------------------------------
 header "4/6  each firewall"
 # pick LIST-FILE QUESTION DEFAULT-REGEX GIVEN -> CC_PICK (a name from the list)
+# With a 5th argument "all", "a" picks every name in the list (CC_PICK=all).
+# Without a terminal it never guesses: no name like the default -> refused.
 pick() {
     CC_PICK=""
-    if [ -n "$4" ]; then grep -qx "$4" "$1" && { CC_PICK=$4; return 0; }; cc_show "$C_RED" "  [x] '$4' is not on this device (it has: $(tr '\n' ' ' <"$1"))"; return 1; fi
+    if [ -n "$4" ]; then
+        [ "$4" = all ] && [ "${5:-}" = all ] && [ -s "$1" ] && { CC_PICK=all; return 0; }
+        grep -qxF "$4" "$1" && { CC_PICK=$4; return 0; }; cc_show "$C_RED" "  [x] '$4' is not on this device (it has: $(tr '\n' ' ' <"$1"))"; return 1; fi
     _pn=$(grep -c . "$1"); [ "$_pn" -gt 0 ] || return 1
-    _pd=$(grep -inE "$3" "$1" | head -n 1 | cut -d: -f1); [ -n "$_pd" ] && [ "$_pd" -le 9 ] || _pd=1
+    _pd=$(grep -inE "$3" "$1" | head -n 1 | cut -d: -f1)
+    if [ -z "$_pd" ] && ! _cc_can_ask; then
+        cc_show "$C_RED" "  [x] $2 - no name looks right ($(tr '\n' ' ' <"$1")) and nobody to ask: name it with --outside / --inside"; return 1; fi
+    [ -n "$_pd" ] && [ "$_pd" -le 9 ] || _pd=1
     [ "$_pn" -gt 9 ] && cc_show "$C_YEL" "  [*] only the first 9 are offered: name it with --outside / --inside"
-    set -- "$1" "$2"; _pf=$1; _pq=$2; _pi=0; set --
+    _pf=$1; _pq=$2; _pa=${5:-}; _pi=0; set --
     while IFS= read -r _x; do _pi=$((_pi + 1)); [ "$_pi" -le 9 ] && set -- "$@" "$_pi=$_x"; done <"$_pf"
+    [ "$_pa" = all ] && [ "$_pn" -gt 1 ] && set -- "$@" "a=all of them (scored servers in more than one)"
     cc_choose "$_pq" "$_pd" "$@"
-    CC_PICK=$(sed -n "${CC_CHOICE}p" "$_pf")
+    if [ "$CC_CHOICE" = a ]; then CC_PICK=all; else CC_PICK=$(sed -n "${CC_CHOICE}p" "$_pf"); fi
 }
 # mask PREFIX -> dotted mask (no "^": busybox awk may lack math)
 mask() { awk -v p="$1" 'BEGIN { for (k = 1; k <= 4; k++) { b = p - 8 * (k - 1); if (b > 8) b = 8; if (b < 0) b = 0; v = 256; r = 1; for (i = 0; i < 8 - b; i++) r *= 2; v = (b == 0) ? 0 : 256 - r; printf "%s%s", (k > 1 ? "." : ""), v } }'; }
@@ -476,6 +505,10 @@ cidrs() { for _cx in $(printf '%s' "$1" | tr ',' ' '); do printf '%s ' "$(cidr "
 natx() { for _cx in $(printf '%s' "$1" | tr ',' ' '); do awk -v i="$_cx" '$1 == i { printf "%s ", $2 }' "$W/nat"; done; }
 # shownat DEVICE -> say which NAT names were found, or warn that none were
 shownat() {
+    if grep -q ' SKIP$' "$W/nat"; then
+        grep ' SKIP$' "$W/nat" | while read -r _ni _nn; do cc_show "$C_RED" "  [!] NAT to $_ni uses a name with spaces: not added. Rename it, or add its outside address with --allow, or the scorer may be blocked"; done
+        grep -v ' SKIP$' "$W/nat" >"$W/nat.n"; cat "$W/nat.n" >"$W/nat"
+    fi
     if [ -s "$W/nat" ]; then
         while read -r _ni _nn; do cc_show "$C_CYN" "  [-] NAT: outside name $_nn leads to $_ni: it is added to the rules for $_ni (the firewall matches the outside name)"; done <"$W/nat"
         { printf '%s: NAT found, these outside names are added to the scored and ping rules:\n' "$1"; sed 's/^\([^ ]*\) \(.*\)/  \2 -> \1/' "$W/nat"; printf '\n'; } >>"$CC_RUN_DIR/plan.txt"
@@ -504,17 +537,21 @@ while IFS='|' read -r _n _a _v _u _p; do
         sed -n 's/^set zone \([^ ]*\) .*/\1/p' "$_raw.c" | awk '!s[$0]++' >"$W/zones"
         pick "$W/zones" "$_n: which zone is OUTSIDE (where red team and the scorer come from)?" 'untrust|outside|wan|internet|external' "$OUTSIDE" || { _ok=0; cc_show "$C_RED" "  [x] no zones read"; }
         _out=$CC_PICK
-        grep -vx "$_out" "$W/zones" >"$W/zin"
-        pick "$W/zin" "$_n: which zone are the scored servers in?" 'trust|inside|lan|dmz|server' "$INSIDE" || _ok=0
-        _in=$CC_PICK
-        grep -q '^set rulebase security rules bt-' "$_raw.c" && cc_show "$C_YEL" "  [*] bt- rules from an earlier run are there: they are replaced"
+        grep -vxF "$_out" "$W/zones" >"$W/zin"
+        pick "$W/zin" "$_n: which zone are the scored servers in?" 'trust|inside|lan|dmz|server' "$INSIDE" all || _ok=0
+        _in=$CC_PICK; [ "$_in" = all ] && _in="[ $(tr '\n' ' ' <"$W/zin")]"
+        # an earlier run's bt- rules out first ("set" on a rule that is there adds to its lists)
+        awk '$1 == "set" && $2 == "rulebase" && $3 == "security" && $4 == "rules" && $5 ~ /^bt-/ && !s[$5]++ { print "delete rulebase security rules " $5 }' "$_raw.c" >"$W/oldbt"
+        if [ -s "$W/oldbt" ]; then cc_show "$C_YEL" "  [*] bt- rules from an earlier run are there: they are replaced"; cat "$W/oldbt" >>"$W/fix.$_n"; fi
         awk '/^set rulebase security rules / { r = $5; if (!(r in s)) { s[r] = 1; o[++n] = r } a[r] = a[r] " " $0 }
              END { for (i = 1; i <= n; i++) { t = a[o[i]]; if (o[i] !~ /^bt-/ && t ~ / source any/ && t ~ / destination any/ && t ~ / application any/ && t ~ / service any/ && t ~ / action allow/) print o[i] } }' "$_raw.c" >"$W/anyany"
         while IFS= read -r _r; do cc_show "$C_YEL" "  [*] existing rule \"$_r\" allows anything to anything: it ends up BELOW the bt- rules, so it no longer lets the rest in"; done <"$W/anyany"
         # Palo Alto matches the destination address from BEFORE NAT: find the
         # outside address of each scored box (destination NAT, or a static
         # bi-directional source NAT) so the rule still matches the scorer.
-        awk '$1 == "set" && $2 == "address" && $4 == "ip-netmask" { a = $5; sub(/\/32$/, "", a); ip[$3] = a }
+        # (a quoted name with spaces is kept as one word; such a name is not used, only reported)
+        awk 'index($0, "\"") { o = ""; q = 0; for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); if (c == "\"") q = !q; o = o ((q && c == " ") ? "\001" : c) } $0 = o }
+             $1 == "set" && $2 == "address" && $4 == "ip-netmask" { a = $5; sub(/\/32$/, "", a); ip[$3] = a }
              $1 == "set" && $2 == "rulebase" && $3 == "nat" && $4 == "rules" {
                  r = $5; k = $6; v = ""; for (i = 7; i <= NF; i++) if ($i != "[" && $i != "]") v = v " " $i
                  if (k == "destination") d[r] = d[r] v
@@ -524,8 +561,8 @@ while IFS='|' read -r _n _a _v _u _p; do
                  else if (k == "source-translation" && $7 == "static-ip" && $8 == "bi-directional" && $9 == "yes") bi[r] = 1
                  rs[r] = 1 }
              END { for (r in rs) {
-                 if (r in dt) { t = (dt[r] in ip) ? ip[dt[r]] : dt[r]; sub(/\/32$/, "", t); n = split(d[r], x, " "); for (i = 1; i <= n; i++) if (x[i] != "any") print t, x[i] }
-                 if ((r in st) && (r in bi)) { n = split(s[r], x, " "); for (i = 1; i <= n; i++) { t = (x[i] in ip) ? ip[x[i]] : x[i]; sub(/\/32$/, "", t); print t, st[r] } } } }' "$_raw.c" | awk '!s[$0]++' | sort >"$W/nat"
+                 if (r in dt) { t = (dt[r] in ip) ? ip[dt[r]] : dt[r]; sub(/\/32$/, "", t); n = split(d[r], x, " "); for (i = 1; i <= n; i++) if (x[i] != "any") print t, (x[i] ~ /\001/ ? "SKIP" : x[i]) }
+                 if ((r in st) && (r in bi)) { n = split(s[r], x, " "); for (i = 1; i <= n; i++) { t = (x[i] in ip) ? ip[x[i]] : x[i]; sub(/\/32$/, "", t); print t, (st[r] ~ /\001/ ? "SKIP" : st[r]) } } } }' "$_raw.c" | awk '!s[$0]++' | sort >"$W/nat"
         shownat "$_n"
         # services, then rules, then move each to the top (last first)
         _th=""; [ "$THREAT" = y ] && _th=" profile-setting profiles virus default spyware default vulnerability default"
@@ -553,8 +590,8 @@ while IFS='|' read -r _n _a _v _u _p; do
         awk '/^interface / { i = $2 } $1 == "nameif" { print $2 }' "$_raw.c" >"$W/zones"
         pick "$W/zones" "$_n: which interface (nameif) is OUTSIDE?" 'outside|wan|internet|untrust' "$OUTSIDE" || { _ok=0; cc_show "$C_RED" "  [x] no interfaces read"; }
         _out=$CC_PICK
-        grep -vx "$_out" "$W/zones" >"$W/zin"
-        pick "$W/zin" "$_n: which interface are the scored servers behind?" 'inside|lan|dmz|server' "$INSIDE" || _ok=0
+        grep -vxF "$_out" "$W/zones" >"$W/zin"
+        pick "$W/zin" "$_n: which interface are the scored servers behind? (used for the outgoing limits)" 'inside|lan|dmz|server' "$([ "$INSIDE" = all ] || echo "$INSIDE")" || _ok=0
         _in=$CC_PICK
         _oldin=$(awk -v i="$_out" '$1 == "access-group" && $3 == "in" && $5 == i { print $2; exit }' "$_raw.c")
         _oldout=$(awk -v i="$_in" '$1 == "access-group" && $3 == "in" && $5 == i { print $2; exit }' "$_raw.c")
@@ -585,12 +622,16 @@ while IFS='|' read -r _n _a _v _u _p; do
                 case "$_k" in
                     team) for _x in $(printf '%s' "$_s" | tr ',' ' '); do printf 'access-list BT-OUT extended permit ip %s any\n' "$(addr "$_x")"; done ;;
                     outallow) for _x in $(printf '%s' "$_s" | tr ',' ' '); do
-                                  for _pp in $(printf '%s' "$_t" | tr ',' ' '); do printf 'access-list BT-OUT extended permit tcp host %s host %s eq %s\n' "$_x" "$_d" "$_pp"; done
-                                  for _pp in $(printf '%s' "$_ud" | tr ',' ' '); do printf 'access-list BT-OUT extended permit udp host %s host %s eq %s\n' "$_x" "$_d" "$_pp"; done; done ;;
-                    outdeny) for _x in $(printf '%s' "$_s" | tr ',' ' '); do printf 'access-list BT-OUT extended permit icmp host %s any echo-reply\naccess-list BT-OUT extended deny ip host %s any log\n' "$_x" "$_x"; done ;;
+                                  for _pp in $(printf '%s' "$_t" | tr ',' ' '); do case "$_pp" in *-*) _q="range ${_pp%-*} ${_pp#*-}" ;; *) _q="eq $_pp" ;; esac; printf 'access-list BT-OUT extended permit tcp host %s host %s %s\n' "$_x" "$_d" "$_q"; done
+                                  for _pp in $(printf '%s' "$_ud" | tr ',' ' '); do case "$_pp" in *-*) _q="range ${_pp%-*} ${_pp#*-}" ;; *) _q="eq $_pp" ;; esac; printf 'access-list BT-OUT extended permit udp host %s host %s %s\n' "$_x" "$_d" "$_q"; done; done ;;
+                    outdeny) for _x in $(printf '%s' "$_s" | tr ',' ' '); do
+                                 # this list is on the servers' interface: it sees traffic to the team too, so that stays open
+                                 for _tm in $(printf '%s' "$TEAM" | tr ',' ' '); do printf 'access-list BT-OUT extended permit ip host %s %s\n' "$_x" "$(addr "$_tm")"; done
+                                 printf 'access-list BT-OUT extended permit icmp host %s any echo-reply\naccess-list BT-OUT extended deny ip host %s any log\n' "$_x" "$_x"; done ;;
                 esac
             done <"$W/rules" >>"$W/fix.$_n"
             [ -n "$_oldout" ] && cc_show "$C_YEL" "  [*] the servers' interface uses access list $_oldout now: BT-OUT takes its place and ends with 'permit ip any any' for everything that is not a scored server"
+            cc_show "$C_YEL" "  [*] ASA: the outgoing block also stops the servers reaching OTHER inside networks (not the team): list those with --out-allow"
             printf 'access-list BT-OUT extended permit ip any any\naccess-group BT-OUT in interface %s\n' "$_in" >>"$W/fix.$_n"
         fi
         printf 'end\n' >>"$W/fix.$_n"
@@ -609,13 +650,13 @@ while IFS='|' read -r _n _a _v _u _p; do
         awk '/^config system interface/ { s = 1 } s && $1 == "edit" { n = $2; gsub(/"/, "", n); print n } /^end/ { s = 0 }' "$_raw.c" >"$W/zones"
         pick "$W/zones" "$_n: which interface is OUTSIDE?" 'wan|outside|internet|port1' "$OUTSIDE" || { _ok=0; cc_show "$C_RED" "  [x] no interfaces read"; }
         _out=$CC_PICK
-        grep -vx "$_out" "$W/zones" >"$W/zin"
-        pick "$W/zin" "$_n: which interface are the scored servers behind?" 'internal|lan|inside|dmz|port2' "$INSIDE" || _ok=0
-        _in=$CC_PICK
+        grep -vxF "$_out" "$W/zones" >"$W/zin"
+        pick "$W/zin" "$_n: which interface are the scored servers behind?" 'internal|lan|inside|dmz|port2' "$INSIDE" all || _ok=0
+        _in=$CC_PICK; _inq="\"$_in\""; [ "$_in" = all ] && _inq=$(awk '{ printf "%s\"%s\"", (NR > 1 ? " " : ""), $0 }' "$W/zin")
         # A box reached through a virtual IP (VIP) only matches a policy that
         # names the VIP: find the VIPs that lead to each scored box.
         awk '/^config firewall vip/ { s = 1; next } s && /^end/ { s = 0 }
-             s && $1 == "edit" { n = $2; gsub(/"/, "", n) }
+             s && $1 == "edit" { n = $0; sub(/^[ \t]*edit[ \t]+/, "", n); gsub(/"/, "", n); if (n ~ / /) n = "SKIP" }
              s && $1 == "set" && $2 == "mappedip" { m = $3; gsub(/"/, "", m); sub(/-.*/, "", m); print m, n }' "$_raw.c" | awk '!s[$0]++' | sort >"$W/nat"
         shownat "$_n"
         # the first policy that is not ours (ours are 9101-9199, from this or an earlier run)
@@ -623,6 +664,12 @@ while IFS='|' read -r _n _a _v _u _p; do
         awk '/^config firewall policy/ { s = 1 } s && $1 == "edit" { id = $2; a = 0 } s && /set srcaddr "all"/ { a++ } s && /set dstaddr "all"/ { a++ } s && /set service "ALL"/ { a++ } s && /set action accept/ { a++ } s && $1 == "next" && a == 4 { print id }' "$_raw.c" >"$W/anyany"
         while IFS= read -r _r; do cc_show "$C_YEL" "  [*] existing policy $_r allows all to all: it ends up BELOW the bt- policies"; done <"$W/anyany"
         _id=9100; : >"$W/ids"; : >"$W/uaddr"; : >"$W/usvc"
+        # an earlier run's policies (9101-9199) out first, so none is left over or half changed
+        awk '/^config firewall policy/ { s = 1; next } s && /^end/ { s = 0 } s && $1 == "edit" && $2 >= 9101 && $2 <= 9199 { print $2 }' "$_raw.c" >"$W/oldids"
+        if [ -s "$W/oldids" ]; then
+            cc_show "$C_YEL" "  [*] bt- policies from an earlier run are there: they are replaced"
+            { printf 'config firewall policy\n'; sed 's/^/delete /' "$W/oldids"; printf 'end\n'; } >>"$W/fix.$_n"
+        fi
         while IFS="$US" read -r _k _nm _s _d _t _ud _w; do
             _id=$((_id + 1)); echo "$_id" >>"$W/ids"
             _sa='"all"'; _da='"all"'; _sv='"ALL"'
@@ -636,9 +683,8 @@ while IFS='|' read -r _n _a _v _u _p; do
                   printf 'next\nend\n'; } >>"$W/fix.$_n"
                 echo "$_nm" >>"$W/usvc"; _sv="\"$_nm\""; fi
             case "$_k" in
-                team)     _si='"any"'; _di='"any"' ;;
-                scored|ping|indeny) _si="\"$_out\""; _di="\"$_in\"" ;;
-                outallow|outdeny)   _si="\"$_in\""; _di="\"$_out\"" ;;
+                team|scored|ping|indeny) _si="\"$_out\""; _di=$_inq ;;
+                outallow|outdeny)        _si=$_inq; _di="\"$_out\"" ;;
             esac
             [ "$_k" = ping ] && _sv='"PING"'
             _act=accept; case "$_k" in indeny|outdeny) _act=deny ;; esac
@@ -713,7 +759,7 @@ while IFS='|' read -r _n _a _v _u _p; do
             cat "$W/nftchk" >>"$CC_LOG"
             grep -qi 'syntax error\|unexpected' "$W/nftchk" && { _ok=0; cc_show "$C_RED" "  [x] nft refuses the ruleset: $(head -n 1 "$W/nftchk")"; }
         fi
-        { printf "cat > /tmp/bt_fw.nft <<'BTNFT'\n"; cat "$W/nft.$_n"; printf "BTNFT\n"; printf "if [ \"\$(id -u)\" = 0 ]; then nft -f /tmp/bt_fw.nft; else sudo -n nft -f /tmp/bt_fw.nft; fi; rm -f /tmp/bt_fw.nft\n"; } >"$W/fix.$_n"
+        { printf "cat > /tmp/bt_fw.nft <<'BTNFT'\n"; cat "$W/nft.$_n"; printf "BTNFT\n"; printf "if [ \"\$(id -u)\" = 0 ]; then nft -f /tmp/bt_fw.nft; else sudo -n nft -f /tmp/bt_fw.nft; fi; _r=\$?; rm -f /tmp/bt_fw.nft; exit \$_r\n"; } >"$W/fix.$_n"
         printf 'if [ "$(id -u)" = 0 ]; then nft delete table inet bt_fw; else sudo -n nft delete table inet bt_fw; fi\n' >"$W/undo.$_n"
         ;;
     esac
@@ -730,9 +776,11 @@ done <"$W/devices"
 # ---- 5. Apply, check, confirm ------------------------------------------------------------
 header "5/6  apply"
 # probe ADDR PORT -> 0 if a TCP connection opens (nc, else bash /dev/tcp)
+# (an nc without -z would say "down" for everything, so it is only used when it has -z)
+NCZ=0; cc_have nc && nc -h 2>&1 | grep -qE -- '-z|\[-[A-Za-z0-9]*z' && NCZ=1
 probe() {
-    if cc_have nc; then nc -z -w 3 "$1" "$2" >/dev/null 2>&1; return; fi
-    if cc_have bash; then bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$1" "$2" >/dev/null 2>&1; return; fi
+    if [ "$NCZ" = 1 ]; then nc -z -w 3 "$1" "$2" >/dev/null 2>&1; return; fi
+    if cc_have bash && cc_have timeout; then timeout 4 bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$1" "$2" >/dev/null 2>&1; return; fi
     return 2
 }
 pinged() { ping -c 1 -W 2 "$1" >/dev/null 2>&1; }
@@ -747,6 +795,17 @@ checks() {
             case "$_cr" in 0) echo "$_ca $_cp up" ;; 2) echo "$_ca $_cp unknown" ;; *) echo "$_ca $_cp down" ;; esac
         done
     done <"$W/scored" >"$1"
+}
+# refused VENDOR FILE -> the first line where the device refused a command (empty: none)
+refused() {
+    case "$1" in
+        paloalto)  _re='Invalid syntax|Unknown command|Server error|Commit failed|Validation Error|is not a valid reference|is invalid' ;;
+        cisco-*)   _re='^ERROR:|% Invalid|% Incomplete|% Ambiguous|% Unknown' ;;
+        fortigate) _re='Command fail|command parse error|entry not found|node_check_object fail|value parse error|Unknown action' ;;
+        mikrotik)  _re='failure:|syntax error|bad command name|expected end of command|no such item|input does not match' ;;
+        *)         _re='Error:|sudo: |command not found|Permission denied|Operation not permitted' ;;
+    esac
+    tr -d '\r' <"$2" | grep -iE "$_re" | head -n 1 | cut -c1-100
 }
 broke() { awk 'NR == FNR { b[$1 " " $2] = $3; next } b[$1 " " $2] == "up" && $3 == "down" { printf "%s:%s ", $1, $2 }' "$1" "$2"; }
 pre()  { case "$1" in cisco-*) en "$1" ;; paloalto) printf 'set cli pager off\nconfigure\n' ;; esac; }
@@ -793,6 +852,29 @@ write_undo() {   # write_undo VENDOR DEVICE ADDRESS USER PORT -> undo/DEVICE.sh 
     } >"$_uf"
     chmod 700 "$_uf"; printf '%s' "$_uf"
 }
+# putback -> take the rules off the device being changed ($_n ...): through the
+# open session when it is still there, else a new one
+putback() {
+    if [ -n "$_spid" ] && kill -0 "$_spid" 2>/dev/null; then
+        # Palo Alto: the open session is still in config mode
+        { [ "$_v" = paloalto ] && printf 'exit\n'; undo_lines "$_v" "$_n"; quit "$_v"; } >&3 2>/dev/null; exec 3>&-; wait "$_spid" 2>/dev/null
+    else
+        [ -n "$_spid" ] && { exec 3>&- 2>/dev/null; wait "$_spid" 2>/dev/null; }
+        undo_lines "$_v" "$_n" >"$W/un"; send "$_v" "$_u" "$_a" "$_p" "$W/un"
+    fi
+    rm -f "$CC_OUT/nw20-$_n.undo"
+}
+# Ctrl-C (or a kill) while a firewall is being changed: put it back first
+CUR=""
+onstop() {
+    trap '' INT TERM HUP
+    if [ -n "$CUR" ]; then
+        printf '\n' >&2; cc_show "$C_RED" "  [x] stopped while $CUR was being changed - putting it back"
+        putback; cc_show "$C_YEL" "  [*] $CUR: put back. Check it: the undo is $_uf"
+    fi
+    rm -rf "$W"; exit 130
+}
+trap onstop INT TERM HUP
 NOK=0; NBAD=0; APPLIED=0; : >"$CC_RUN_DIR/checks.txt"
 trap '' PIPE
 if [ ! -s "$W/ready" ]; then cc_show "$C_GRY" "  No firewall to change."
@@ -804,7 +886,10 @@ else
     cc_show "" "  Checking every scored box:port and ping from this box first (the same checks run after the change)..."
     checks "$W/before"
     while IFS= read -r _l; do cc_show "" "    before: $_l"; done <"$W/before"
-    grep -q ' unknown$' "$W/before" && cc_show "$C_YEL" "  [*] no nc or bash here: ports cannot be checked, only ping"
+    grep -q ' unknown$' "$W/before" && cc_show "$C_YEL" "  [*] no nc (with -z) or bash + timeout here: ports cannot be checked, only ping"
+    if grep -q ' ping up$' "$W/before" && ! grep -v ' ping ' "$W/before" | grep -q ' up$' && grep -v ' ping ' "$W/before" | grep -q .; then
+        cc_show "$C_YEL" "  [*] no scored PORT answered from here, only ping: the automatic check only sees ping. Watch the scoreboard."
+    fi
     if ! grep -q ' up$' "$W/before"; then
         cc_show "$C_RED" "  [!] NOTHING answered from this box before the change: the automatic check cannot protect the scored services."
         cc_ask "Go on anyway (you watch the scoreboard yourself)?" N "yes, go on" "no, stop - run it from a box that reaches the scored services" || { cc_show "$C_GRY" "  Stopped: nothing was changed."; : >"$W/ready"; }
@@ -816,25 +901,35 @@ $(sed -n "/^$_n (/,/^\$/p" "$CC_RUN_DIR/plan.txt")
 EOF
         cc_ask "Put these rules on $_n now?" Y "yes (checked right after; put back at once if a scored service stops answering)" "no, skip this firewall" || { cc_show "$C_GRY" "  skipped $_n"; continue; }
         APPLIED=1
-        rm -f "$W/fifo"; mkfifo "$W/fifo"
+        # the undo is written BEFORE anything is sent, so --remove works even if this run is killed
+        _uf=$(write_undo "$_v" "$_n" "$_a" "$_u" "$_p")
+        rm -f "$W/fifo"; mkfifo "$W/fifo"; _sess="$W/sess.$_n"; : >"$_sess"
         sshopts >"$W/opts"; set --; while IFS= read -r _o; do set -- "$@" "$_o"; done <"$W/opts"
+        CUR=$_n; _spid=""
         if [ "$(read_mode "$_v")" = exec ]; then
             # MikroTik and Linux: the commands as one exec; the undo goes in a second session if needed
-            SSHPASS=$BT_NET_PASS "$SSHPASS_BIN" -e "$SSH" "$@" -p "$_p" "$_u@$_a" "$(oneline "$_v" "$W/fix.$_n")" </dev/null >>"$CC_LOG" 2>&1; _sent=$?
-            _spid=""
+            SSHPASS=$BT_NET_PASS "$SSHPASS_BIN" -e "$SSH" "$@" -p "$_p" "$_u@$_a" "$(oneline "$_v" "$W/fix.$_n")" </dev/null >"$_sess" 2>&1; _sent=$?
         else
-            SSHPASS=$BT_NET_PASS "$SSHPASS_BIN" -e "$SSH" "$@" -p "$_p" "$_u@$_a" <"$W/fifo" >>"$CC_LOG" 2>&1 &
+            SSHPASS=$BT_NET_PASS "$SSHPASS_BIN" -e "$SSH" "$@" -p "$_p" "$_u@$_a" <"$W/fifo" >"$_sess" 2>&1 &
             _spid=$!
             exec 3>"$W/fifo"
             { pre "$_v"; cat "$W/fix.$_n"; post "$_v"; } >&3 2>/dev/null
             _sent=0
         fi
-        _w=$WAIT; [ "$_v" = paloalto ] && _w=$CWAIT
+        _w=$WAIT
+        if [ "$_v" = paloalto ]; then
+            # wait for the commit to finish (or fail), at most --commit-wait seconds, then --wait more
+            _cw=0; _w=0
+            while [ "$_cw" -lt "$CWAIT" ] && ! grep -qiE 'committed successfully|Commit failed|commit.*fail' "$_sess"; do nap 1; _cw=$((_cw + 1)); done
+            grep -qi 'committed successfully' "$_sess" && _w=$WAIT
+        fi
         nap "$_w"
-        _uf=$(write_undo "$_v" "$_n" "$_a" "$_u" "$_p")
         _keep=1; _why=""
         [ "$_sent" = 0 ] || { _keep=0; _why="the commands did not go through"; }
-        [ -n "$_spid" ] && ! kill -0 "$_spid" 2>/dev/null && { _keep=0; _why="the device closed the session"; }
+        _rf=$(refused "$_v" "$_sess")
+        [ "$_keep" = 1 ] && [ -n "$_rf" ] && { _keep=0; _why="the firewall refused a command: $_rf"; }
+        [ "$_keep" = 1 ] && [ "$_v" = paloalto ] && ! grep -qi 'committed successfully' "$_sess" && { _keep=0; _why="Palo Alto did not say the commit worked within $CWAIT seconds (--commit-wait)"; }
+        [ "$_keep" = 1 ] && [ -n "$_spid" ] && ! kill -0 "$_spid" 2>/dev/null && { _keep=0; _why="the device closed the session"; }
         if [ "$_keep" = 1 ]; then
             checks "$W/after"
             _b=$(broke "$W/before" "$W/after")
@@ -850,19 +945,13 @@ EOF
         fi
         if [ "$_keep" = 1 ]; then
             [ -n "$_spid" ] && { { save "$_v"; quit "$_v"; } >&3 2>/dev/null; exec 3>&-; wait "$_spid" 2>/dev/null; }
+            CUR=""; cat "$_sess" >>"$CC_LOG"
             cc_undo_add "take NW-20's rules off $_n" "sh $(cc_shquote "$_uf")"
             NOK=$((NOK + 1)); cc_show "$C_GRN" "  [+] $_n: rules on, scored services still answer. Undo: sh $_uf  (or this script with --remove --apply)"
             { printf '%s: kept\n' "$_n"; sed 's/^/  after: /' "$W/after" 2>/dev/null; } >>"$CC_RUN_DIR/checks.txt"
         else
             cc_show "$C_RED" "  [x] $_n: $_why - putting it back"
-            if [ -n "$_spid" ] && kill -0 "$_spid" 2>/dev/null; then
-                # Palo Alto: the open session is still in config mode
-                { [ "$_v" = paloalto ] && printf 'exit\n'; undo_lines "$_v" "$_n"; quit "$_v"; } >&3 2>/dev/null; exec 3>&-; wait "$_spid" 2>/dev/null
-            else
-                [ -n "$_spid" ] && { exec 3>&-; wait "$_spid" 2>/dev/null; }
-                undo_lines "$_v" "$_n" >"$W/un"; send "$_v" "$_u" "$_a" "$_p" "$W/un"
-            fi
-            rm -f "$CC_OUT/nw20-$_n.undo"
+            putback; CUR=""; cat "$_sess" >>"$CC_LOG"
             nap "$_w"
             checks "$W/after2"
             _b=$(broke "$W/before" "$W/after2")
