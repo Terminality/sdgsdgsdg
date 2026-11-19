@@ -2259,3 +2259,101 @@ With `--apply` it asks about each HIGH and MED finding that can be removed. File
 
 In `persistence-N/`: `output.txt`, `summary.txt` (counts per area, HIGH and MED list), `findings.txt` (every finding, numbered), `csv/`, `quarantine/`, `revert.sh`. No password hash is ever written.
 
+---
+
+## 33. Active Directory enum, `roles/windows-ad/WN-04-ad-enum.ps1` (WN-04)
+
+Run this on the domain controller immediately after SH-06 and before changing
+domain users, DNS or Group Policy. It is read-only and never requests password
+attributes or hashes.
+
+### How to run it
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-04-ad-enum.ps1 -Out C:\ccdc-out
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-04-ad-enum.ps1 -Out C:\ccdc-out -EventHours 12
+```
+
+### What it records
+
+- Domain/forest mode, controllers and FSMO roles.
+- Users, account-control flags, SPNs, delegation and logon scripts.
+- Recursive members of high-value privileged groups.
+- GPOs and reachable SYSVOL logon scripts.
+- Raw `repadmin` and `dcdiag /test:DNS` evidence when available.
+- Recent account, privileged-group, directory-change and log-clearing events.
+
+Review `privileged_members.csv` manually: an enabled privileged account is not
+automatically malicious. Confirm it against the team roster and packet.
+
+### Problems and fixes
+
+- **No domain found:** run it on MilkFarm or a domain-joined host with working
+  DNS and domain connectivity.
+- **Some tables are empty:** use a domain account that can read the directory;
+  run elevated for Security log access.
+- **Replication/DNS warning:** inspect the raw command output before changing
+  DNS. An existing failure can be a packet/environment issue, not Red Team.
+
+---
+
+## 34. Windows alerts, `roles/windows-ad/WN-44-windows-alerts.ps1` (WN-44)
+
+Start this after the initial Windows baseline and leave it running on the AD,
+e-commerce and workstation systems. It observes only; it does not contain or
+remove an attacker.
+
+### How to run it
+
+```powershell
+# one state/event check
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-44-windows-alerts.ps1 -Out C:\ccdc-out
+
+# repeat every 30 seconds and copy evidence to the jump box
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-44-windows-alerts.ps1 `
+  -Out C:\ccdc-out -Loop 30 -SendTo \\JUMPBOX\alerts
+
+# fast state-only check when event logs are too slow
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-44-windows-alerts.ps1 `
+  -Out C:\ccdc-out -NoEvents
+```
+
+### What it watches
+
+- Local users and Administrators membership.
+- Service state, startup identity and executable path.
+- Scheduled tasks and listening ports.
+- Firewall and Defender state.
+- Logons, account/group changes, service/task installation, audit-policy/log
+  clearing, Defender changes and PowerShell operational events.
+
+The first check creates the baseline. Later changes are HIGH or MED lines in
+`alerts.txt`; raw event text goes to `events.txt`. Use `-Accept` only after the
+host owner confirms the new state is legitimate.
+
+### Problems and fixes
+
+- **Security events missing:** run elevated and verify auditing is enabled.
+- **Event query is slow:** use `-NoEvents` for state monitoring and inspect the
+  Security log separately until the system is stable.
+- **Share copy fails:** keep the local evidence, verify SMB/DNS credentials,
+  then copy the run folder manually. Monitoring continues after copy failures.
+
+---
+
+## WRCCDC network validation profile
+
+`SH-03 --profile wrccdc` checks the common Windows/AD, web, mail, SMB, database,
+remote administration and Splunk ports in one fast pass. It is a candidate-port
+profile, not a declaration that every port should be open. Pair it with the
+private host list so missing scored services are flagged:
+
+```sh
+sh SH-03-network-scan.sh --target 192.168.1.0/24 \
+  --hosts PRIVATE-HOSTS.csv --profile wrccdc --out ~/ccdc-out
+```
+
+Run it before changes, after firewall/password/service work, and whenever
+Quotient reports a failure. The current packet and Quotient define the actual
+services; update the private host/protected lists as soon as they are known.
+

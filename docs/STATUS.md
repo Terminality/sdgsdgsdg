@@ -1,18 +1,18 @@
 # Build status
 
-26 of 32 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+28 of 32 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
 | Tier | Built | Total |
 | --- | --- | --- |
-| Enum (look only) | 6 | 7 |
+| Enum (look only) | 7 | 7 |
 | Backup and prep | 4 | 4 |
 | Hardening: easy | 3 | 3 |
 | Hardening: medium | 2 | 2 |
 | Hardening: hard | 2 | 6 |
 | Management | 3 | 3 |
-| Alerts | 3 | 4 |
+| Alerts | 4 | 4 |
 | Kit | 3 | 3 |
 
 ## Enum (look only)
@@ -21,7 +21,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | --- | --- | --- | --- | --- |
 | SH-05 | Linux enum | none | built | `roles/linux/SH-05-linux-enum.sh` |
 | SH-06 | Windows enum | none | built | `roles/windows-ad/SH-06-windows-enum.ps1` |
-| WN-04 | AD enum | none | planned |  |
+| WN-04 | AD enum | none | built | `roles/windows-ad/WN-04-ad-enum.ps1` |
 | SV-01 | Web and database enum (Linux) | none | built | `roles/applications/SV-01-web-db-enum.sh` |
 | SH-03 | Network scan | none | built | `roles/network/SH-03-network-scan.sh` |
 | SH-04 | Scan diff | none | built | `roles/network/SH-04-scan-diff.sh` |
@@ -76,7 +76,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | --- | --- | --- | --- | --- |
 | LX-40 | Linux alerts | none | built | `roles/linux/LX-40-change-watch.sh` |
 | LX-41 | Linux session & command logging | none | built | `roles/linux/LX-41-session-log.sh` |
-| WN-44 | Windows alerts | none | planned |  |
+| WN-44 | Windows alerts | none | built | `roles/windows-ad/WN-44-windows-alerts.ps1` |
 | SV-26 | Brute-force and spam banning | service | built | `roles/linux/SV-26-banning.sh` |
 
 ## Kit

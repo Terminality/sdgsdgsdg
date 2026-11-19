@@ -159,12 +159,17 @@ t_eq "$(grep -c . "$STUBLOG")" 2 "profile fast: quick scan and details"
 t_has "$(tail -n 1 "$STUBLOG")" "-sV" "   with versions"
 t_hasnt "$(cat "$STUBLOG")" "-sC" "   and no scripts"
 t_has "$(cat "$T_TMP/s/netscan-3/summary.txt")" "Vulns: not checked" "summary says when vulns were not checked"
+: >"$STUBLOG"
+srun --out "$T_TMP/s" --target 10.9.9.5 --profile wrccdc >/dev/null 2>&1
+t_has "$(sed -n 1p "$STUBLOG")" "-p 21,22,23,25,53,80,88" "WRCCDC profile scans the competition service set"
+t_has "$(sed -n 1p "$STUBLOG")" "3389,5432,5900,5985,5986" "WRCCDC profile includes Windows and both candidate databases"
+t_eq "$(grep -c -- '-p-' "$STUBLOG")" 0 "WRCCDC profile avoids a slow full scan"
 
 t_start "SH-04 compares two netscan-N runs"
 r=$($SH "$T_ROOT/roles/network/SH-04-scan-diff.sh" --runs "$T_TMP/s" --out "$T_TMP/d" 2>&1); t_eq "$?" 0 "SH-04 exits 0"
-t_has "$r" "netscan-2" "picks the older run"
-t_has "$r" "netscan-3" "and the newest run"
-r=$($SH "$T_ROOT/roles/network/SH-04-scan-diff.sh" --old "$T_TMP/s/netscan-3" --new "$T_TMP/s/netscan-1" --out "$T_TMP/d" 2>&1)
+t_has "$r" "netscan-3" "picks the older run"
+t_has "$r" "netscan-4" "and the newest run"
+r=$($SH "$T_ROOT/roles/network/SH-04-scan-diff.sh" --old "$T_TMP/s/netscan-4" --new "$T_TMP/s/netscan-1" --out "$T_TMP/d" 2>&1)
 t_eq "$?" 0 "SH-04 with --old and --new exits 0"
 t_ok "new vuln between runs flagged HIGH" grep -q '"HIGH","vulns"' "$(ls -d "$T_TMP"/d/diff-*/ | tail -n 1)csv/flags.csv"
 

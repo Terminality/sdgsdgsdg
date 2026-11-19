@@ -1,0 +1,10 @@
+host,ip,os,role,connect,port,user,scored_services,notes
+Milkware,192.168.1.2,alpine,router,ssh,22,admin,,Packet says router; inventory routes NAT and firewall before changing it
+MilkFarm,192.168.1.17,windows,Server 2016 Active Directory,winrm,5985,ccdc-automation,dns:53;kerberos:88;ldap:389;smb:445;winrm:5985,Run SH-06 WN-04 WN-35 WN-44; protect AD dynamic RPC
+Moocrosoft,192.168.1.63,windows,Server 2019 e-commerce,winrm,5985,ccdc-automation,http:80;https:443;rdp:3389,Discover IIS and database dependency before password or firewall changes
+Wagyu,192.168.1.60,windows,Windows 10 employee workstation,winrm,5985,ccdc-automation,rdp:3389,Orange Team may perform interactive user checks
+Moolissa,192.168.1.103,linux,Ubuntu web server,ssh,22,ccdc-automation,http:80;https:443,Map application and database dependency
+Cowbell,192.168.1.100,linux,database server,ssh,22,ccdc-automation,mysql:3306;postgres:5432,Packet table says MySQL while diagram says PostgreSQL; detect actual engine
+Milkhub,192.168.1.86,linux,mail server,ssh,22,ccdc-automation,smtp:25;submission:587;imap:143;imaps:993,Confirm exact Quotient checks before firewalling
+Cowbuntu,192.168.1.98,linux,SMB file sharing,ssh,22,ccdc-automation,smb:445,Protect Orange Team and scoring accounts
+Cowtoo,,gentoo,Gentoo server,ssh,22,ccdc-automation,,IP and scored services unknown; discover immediately

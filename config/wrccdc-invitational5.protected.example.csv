@@ -1,0 +1,34 @@
+type,value,note
+port,22/tcp,team SSH until another access path is proven
+port,53,Active Directory DNS; protect TCP and UDP
+port,80/tcp,likely scored HTTP
+port,88,Kerberos TCP and UDP
+port,123/udp,time synchronization may be an authentication dependency
+port,135/tcp,Windows RPC endpoint mapper
+port,139/tcp,Windows NetBIOS session when used
+port,143/tcp,mail IMAP when shown in Quotient
+port,389,LDAP TCP and UDP
+port,443/tcp,likely scored HTTPS
+port,445/tcp,SMB and AD dependency
+port,464,Kerberos password changes
+port,587/tcp,mail submission when shown in Quotient
+port,636/tcp,LDAPS when configured
+port,993/tcp,IMAPS when shown in Quotient
+port,1433/tcp,MSSQL only when discovered/scored
+port,3268/tcp,Active Directory global catalog
+port,3269/tcp,secure global catalog when configured
+port,3306/tcp,MySQL only when discovered/scored
+port,3389/tcp,RDP and Orange Team interactive checks
+port,5432/tcp,PostgreSQL only when discovered/scored
+port,5985/tcp,WinRM when used by the team or scored
+port,5986/tcp,WinRM TLS when used by the team or scored
+service,NTDS,Active Directory Domain Services
+service,DNS,Active Directory DNS
+service,Netlogon,domain authentication
+service,KDC,Kerberos authentication
+service,W3SVC,IIS when e-commerce uses it
+service,TermService,RDP and possible Orange Team check
+account,ccdc-automation,team automation account
+path,C:\Windows\SYSVOL,Group Policy and logon scripts
+path,C:\inetpub\wwwroot,IIS content when used
+host,192.168.220.3,packet VPN gateway; out of scope and never block

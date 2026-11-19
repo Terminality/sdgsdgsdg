@@ -59,6 +59,8 @@
 #                        outside  like fast, but does not trust ping (-Pn);
 #                                 run it from OUTSIDE the firewall to see
 #                                 what the red team sees
+#                        wrccdc   fast packet/service validation across common
+#                                 WRCCDC Windows, AD, web, mail, SMB and DB ports
 #   --ports LIST       scan only these ports (e.g. 22,80,443 or 1-1024)
 #                      instead of the quick and full scans
 #   --engine NAME      nmap | python | bash | nc   (default: first available,
@@ -1374,7 +1376,7 @@ SH-03 Network scan - live hosts, open ports, services, vulns
   --full-hosts LIST           full scan only these hosts    (default all up)
   --os / --no-os              OS guess, needs root          (default yes)
   --udp / --no-udp            top 25 UDP ports, needs root  (default no)
-  --profile NAME       fast | full | udp | outside  (preset answers, no questions)
+  --profile NAME       fast | full | udp | outside | wrccdc
   --ports LIST         scan only these ports instead of the quick and full scans
   --engine NAME        nmap | python | bash | nc     (default: best available)
   --no-dns             skip host name lookups
@@ -1452,7 +1454,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-case "$PROFILE" in ''|fast|full|udp|outside) ;; *) cc_die 2 "unknown profile '$PROFILE' (fast, full, udp or outside)" ;; esac
+case "$PROFILE" in ''|fast|full|udp|outside|wrccdc) ;; *) cc_die 2 "unknown profile '$PROFILE' (fast, full, udp, outside or wrccdc)" ;; esac
 case "$MAXHOSTS" in ''|*[!0-9]*) cc_die 2 "--max-hosts needs a whole number" ;; esac
 case "$MAXFLAGS" in ''|*[!0-9]*) cc_die 2 "--max-flags needs a whole number" ;; esac
 case "$PORTS" in *[!0-9,-]*) cc_die 2 "--ports takes numbers, commas and ranges only (e.g. 22,80,8000-8100)" ;; esac
@@ -1473,6 +1475,8 @@ case "$PROFILE" in
     fast|outside) preset A_QUICK Y; preset A_FULL N; preset A_SVC Y ;;
     full)         preset A_QUICK Y; preset A_FULL Y; preset A_SVC Y; preset A_OS Y ;;
     udp)          preset A_QUICK N; preset A_FULL N; preset A_UDP Y ;;
+    wrccdc)       preset A_QUICK N; preset A_FULL N; preset A_SVC Y
+                  [ -n "$PORTS" ] || PORTS="21,22,23,25,53,80,88,110,123,135,139,143,389,443,445,464,465,514,587,593,636,993,995,1433,2049,3268,3269,3306,3389,5432,5900,5985,5986,8000,8080,8089,8443,9000,9997" ;;
 esac
 if [ -n "$PROFILE" ]; then
     for _v in A_QUICK A_FULL A_SVC A_SCRIPTS A_VULN A_OS A_UDP; do preset "$_v" N; done

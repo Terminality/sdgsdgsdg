@@ -15,10 +15,12 @@ be9c8a1fed11ca9f31acfebd939a002690e656b70b3f4b318e9a2591a656d7fe  linux/SH-05-li
 f8755dac0d9a47fa58f9aaa18777082d6624ab8bc6cf9dc267891562d9de9872  network/NW-01-config-backup.sh
 5005c933f269688a8e71309f49684929bbf78012223309275f9949b0341e7edd  network/NW-07-config-audit.sh
 2268d89539f1dfdb3cd60267b7ce3b8a10cfe387b693db9f4163518d759bac46  network/NW-10-device-passwords.sh
-3190e209453de366ab64db0477b734ef8c5722ed4bbaba938d77fc38c6840168  network/SH-03-network-scan.sh
+facc0b4018ba8803b4f1b4476a14e4932b555162ddddff1417b8209f601372b7  network/SH-03-network-scan.sh
 df277fc4c669fd11dec6859f68287f8b48e8264719113a55151c0efb46663937  network/SH-04-scan-diff.sh
 6d25edc37fb521b09cce0fca7638ab54e98973118f580dbd0642182a1cd82292  windows-ad/SH-06-windows-enum.ps1
+d590ce0fbe230855fdac0d77768e59df5080e83a4950565d8a965c4e3b19cba0  windows-ad/WN-04-ad-enum.ps1
 347807b1e5c76682191d0d7951080dbf4567d20ba73ed8906cad2b6bc17cde5c  windows-ad/WN-20-password-rotation.ps1
 e244e9c0a76e92e3edd82ec45d8b246318491931c13001e6055df28178414d2d  windows-ad/WN-25-firewall.ps1
 cd4627ea3d0db881cfcb25dbebca16921d9864aaf7d86dfa4f913429f1c75377  windows-ad/WN-35-backup.ps1
 ae34ecf4cec73de4d64b45c1715ab3e3bbb0bc90507fa533b1331c41e812a2d8  windows-ad/WN-43-safe-fixes.ps1
+70bef6b547eb275de51e7a695fb7dfddc3808bf4a4fce0f1a57d210dee7d547c  windows-ad/WN-44-windows-alerts.ps1

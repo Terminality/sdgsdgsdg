@@ -2,6 +2,15 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-18: WRCCDC invitational readiness
+
+- Added WN-04 read-only Active Directory enumeration.
+- Added WN-44 Windows state and event alerting with optional off-host copies.
+- Added the SH-03 `wrccdc` validation profile for common competition services.
+- Added Invitational #5 host/protected examples and an operator runbook.
+- Documented the automation-engineer lane and safe Windows/Linux port closure.
+- Tests: WN-04, WN-44, SH-03 profile tests, POSIX lint, PowerShell 2 lint and standalone build verification.
+
 ## 2026-11-18: Linux review pass
 
 Every Linux script was run for real (dry run or read-only) on Ubuntu 24.04 under dash and busybox sh, with the output read line by line, plus a search for known portability traps.
