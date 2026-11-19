@@ -53,6 +53,7 @@ Contents:
 43. Webmail (Roundcube) hardening, `roles/applications/SV-41-roundcube-hardening.sh` (SV-41)
 44. Log shipping to Splunk, `roles/linux/LX-43-log-shipping.sh` (LX-43)
 45. Remote access lockdown, `roles/linux/LX-26-remote-access.sh` (LX-26)
+46. Rootkit and malware scan, `roles/linux/LX-45-rootkit-scan.sh` (LX-45)
 
 ---
 
@@ -3064,3 +3065,54 @@ In `remote-access-N/`: `output.txt`, `findings.txt`, `plan.txt`, `summary.txt`, 
 - **It comes back?** A cron job, service or `.bashrc` restarts it: find that with **LX-42**, then run LX-26 again.
 - **A remote desktop your team uses:** put its port on the protected list.
 - telnet, rsh, FTP, SNMP and the other old services: **SV-30**.
+
+## 46. Rootkit and malware scan, `roles/linux/LX-45-rootkit-scan.sh` (LX-45)
+
+LX-42 finds what red team leaves to come back. This finds **what hides**: a rootkit that lies to `ps`, `ss` and `ls`, a hidden kernel module, a replaced `ps` or `sshd`, a miner, malware in the temp and web folders.
+
+### How to run it
+
+```sh
+sudo sh LX-45-rootkit-scan.sh                                  # scan, dry run
+sudo sh LX-45-rootkit-scan.sh --protected p.csv --apply        # asks about each finding
+sudo sh LX-45-rootkit-scan.sh --protected p.csv --apply --batch --no-install
+```
+
+### What it checks
+
+| Area | Found |
+| --- | --- |
+| Hidden processes | A process in `/proc` that `ps` doesn't show (checked twice, a second apart) |
+| Hidden ports | A port listening in `/proc/net/tcp` that `ss` doesn't show |
+| Kernel modules | A module in `/sys/module` that `lsmod` doesn't list; known rootkit module names (diamorphine, reptile, suterusu...); the kernel's taint flags (out-of-tree, unsigned) |
+| Replaced programs | `ps ss netstat ls find top lsof ssh sshd sudo su login passwd w who last grep cat crontab systemctl ip kill pgrep du df stat md5sum`... that don't match their package (`dpkg -V` / `rpm -V`), or belong to no package |
+| Rootkit files | Paths known rootkits use (reptile, azazel, jynx, bdvl, beurk, processhider...), programs in `/dev` or `/dev/shm` |
+| Fake kernel threads | A process named like `[kworker/0:1]` that has a program file |
+| Miners | Known miner program names, `stratum+tcp://` and `--donate-level` on a command line; connections to mining-pool ports |
+| Sniffers | Network cards in promiscuous mode |
+| Malware | **ClamAV** over `/tmp /var/tmp /dev/shm /var/www /srv /home /root` and Roundcube (+ `--scan DIR`); **rkhunter** and **chkrootkit** warnings, when installed |
+
+`/etc/ld.so.preload` (the usual userland rootkit) is LX-42's check.
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Install ClamAV and rkhunter now? (only when missing and apt is there) | `[y]` / `[n]`, default no | `--install` / `--no-install` |
+| Each process finding | `[k]ill` / `[l]eave` / `[a]ll the rest default` | `--batch` |
+| Each file finding | `[q]uarantine` / `[l]eave` / `[a]ll the rest default` | `--batch` |
+| Do these? | `[y]` / `[n]` | `--apply` |
+
+### What it changes
+
+Only with `--apply`: processes killed, files quarantined (the undo puts files back). **Kernel modules are never unloaded**, because unloading a rootkit module often crashes the box. Find what loads it (LX-42 kernel), remove that, and reboot.
+
+### What it produces
+
+In `rootkit-N/`: `output.txt`, `findings.txt`, `summary.txt`, `clamav.txt` / `rkhunter.txt` / `chkrootkit.txt` when they ran, `revert.sh`.
+
+### What to watch for
+
+- **A kernel rootkit can hide from `/proc` too.** If nothing shows but the box still feels wrong, scan it from another box (SH-03): a port open there but not in `ss` is hidden.
+- **Run it twice before acting** on a "hidden" finding: a process that ended between the two views can show once.
+- **ClamAV needs signatures** (`freshclam`). Without internet, there are none.

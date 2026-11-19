@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-19: Rootkit and malware scan (LX-45, new)
+
+- **LX-45** looks for what hides: processes in /proc that ps doesn't show, listening ports in /proc/net that ss doesn't show (both checked twice, a second apart), kernel modules hidden from lsmod or with a rootkit's name, kernel taint, core programs (ps, ss, ls, ssh, sudo, login...) that don't match their package, known rootkit paths, programs in /dev and /dev/shm, fake kernel threads, miners, promiscuous interfaces, and ClamAV/rkhunter/chkrootkit when installed (installing them is offered).
+- Asked per finding: `[k]ill` / `[q]uarantine` / `[l]eave` / `[a]ll the rest`. Kernel modules are reported, not unloaded.
+- Found while testing: dpkg lists merged-/usr programs as `/bin/ss`, so both spellings are tried; the miner search must not match its own command line, so it reads one ps snapshot and matches program names; zombies are skipped; /dev's search must not repeat /dev/shm.
+- Tested: 22 checks under seven shells and three awks with harmless stand-ins. The ClamAV part only runs where ClamAV has signatures (not on the test box).
+
 ## 2026-11-18: Remote access lockdown (LX-26, new)
 
 - **LX-26** covers every way in except SSH (that's LX-22): tunnels out (ngrok, chisel, frp, cloudflared, bore, ligolo, `ssh -R`), web terminals (ttyd, gotty, shellinabox, wetty, tmate), bind and reverse shells (`nc -e`, `ncat --exec`, `socat exec:`, a shell whose input is a network socket), remote desktops (VNC, xrdp, NoMachine, TeamViewer, AnyDesk, RustDesk), admin panels (Webmin, Cockpit), quick file servers (`python -m http.server`, `php -S`), and database panels (listed).
