@@ -4,7 +4,7 @@
 # NAME:     Service hardening (FTP and other cleartext/legacy services)
 # ROLE:     Applications
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.2.0
+# VERSION:  1.3.0
 #
 # PURPOSE
 #   Hardens the insecure services that show up on competition Linux boxes - FTP
@@ -303,8 +303,11 @@ elif [ -d "$(P /etc/httpd)" ]; then APACHE_DIR=/etc/httpd; APACHE_SVC=httpd; fi
 APACHE_DROP=""
 [ "$APACHE_DIR" = /etc/apache2 ] && [ -d "$(P /etc/apache2/conf-enabled)" ] && APACHE_DROP=/etc/apache2/conf-enabled/zz-bt-hardening.conf
 [ "$APACHE_DIR" = /etc/httpd ] && [ -d "$(P /etc/httpd/conf.d)" ] && APACHE_DROP=/etc/httpd/conf.d/zz-bt-hardening.conf
+# Alpine: /etc/apache2 has no conf-enabled; httpd.conf reads conf.d/*.conf.
+[ "$APACHE_DIR" = /etc/apache2 ] && [ -z "$APACHE_DROP" ] && [ -d "$(P /etc/apache2/conf.d)" ] && APACHE_DROP=/etc/apache2/conf.d/zz-bt-hardening.conf
 NGINX_DIR=""; [ -f "$(P /etc/nginx/nginx.conf)" ] && NGINX_DIR=/etc/nginx
-PHP_INIS=$( { ls -d "$(P /etc/php)"/*/apache2/php.ini "$(P /etc/php)"/*/fpm/php.ini "$(P /etc/php.ini)" 2>/dev/null; } | sed "s|^$R||")
+# Debian/Ubuntu /etc/php/V/..., Rocky/Fedora /etc/php.ini, Alpine /etc/phpNN/php.ini
+PHP_INIS=$( { ls -d "$(P /etc/php)"/*/apache2/php.ini "$(P /etc/php)"/*/fpm/php.ini "$(P /etc/php.ini)" "$(P /etc)"/php[0-9]*/php.ini 2>/dev/null; } | sed "s|^$R||")
 POSTFIX_CF=""; [ -f "$(P /etc/postfix/main.cf)" ] && POSTFIX_CF=/etc/postfix/main.cf
 DOVECOT_CF=""; [ -f "$(P /etc/dovecot/dovecot.conf)" ] && DOVECOT_CF=/etc/dovecot/dovecot.conf
 CHRONY_CF=""; for _c in /etc/chrony/chrony.conf /etc/chrony.conf; do [ -f "$(P "$_c")" ] && { CHRONY_CF=$_c; break; }; done
@@ -620,6 +623,7 @@ svc_disable() {
 _svc_enabled() {
     case "$CC_INIT" in
         systemd) systemctl is-enabled --quiet "$1" 2>/dev/null ;;
+        openrc)  rc-update show 2>/dev/null | awk -v s="$1" '$1 == s { f = 1 } END { exit !f }' ;;
         *)       return 0 ;;   # best effort elsewhere
     esac
 }
@@ -797,7 +801,10 @@ web_version() {
     fi
     for _pi in $PHP_INIS; do
         _psvc=$APACHE_SVC
-        case "$_pi" in */fpm/*) _psvc=$(printf '%s' "$_pi" | sed -n 's|^/etc/php/\([^/]*\)/fpm/.*|php\1-fpm|p') ;; esac
+        case "$_pi" in
+            */fpm/*) _psvc=$(printf '%s' "$_pi" | sed -n 's|^/etc/php/\([^/]*\)/fpm/.*|php\1-fpm|p') ;;
+            /etc/php[0-9]*/php.ini) [ -n "$_psvc" ] || _psvc=$(printf '%s' "$_pi" | sed -n 's|^/etc/php\([0-9]*\)/.*|php-fpm\1|p') ;;   # Alpine
+        esac
         [ -n "$_psvc" ] || _psvc=php-fpm
         ini_kv web-version "$_psvc" "$_pi" expose_php Off
     done
@@ -914,7 +921,7 @@ config_test() {
 # Before anything changes: what is running and listening, and the web status.
 : >"$W/before"
 if [ -z "$R" ]; then
-    for _s in $APACHE_SVC nginx postfix dovecot $CHRONY_SVC $(for _pi in $PHP_INIS; do case "$_pi" in */fpm/*) printf '%s\n' "$_pi" | sed -n 's|^/etc/php/\([^/]*\)/fpm/.*|php\1-fpm|p' ;; esac; done); do
+    for _s in $APACHE_SVC nginx postfix dovecot $CHRONY_SVC $(for _pi in $PHP_INIS; do case "$_pi" in */fpm/*) printf '%s\n' "$_pi" | sed -n 's|^/etc/php/\([^/]*\)/fpm/.*|php\1-fpm|p' ;; /etc/php[0-9]*/php.ini) printf '%s\n' "$_pi" | sed -n 's|^/etc/php\([0-9]*\)/.*|php-fpm\1|p' ;; esac; done); do
         printf '%s %s %s\n' "$_s" "$(svc_state "$_s")" "$(for _p in $(svc_ports "$_s"); do listening "${_p%/*}" "${_p#*/}" && printf '%s ' "$_p"; done)" >>"$W/before"
     done
     HTTP_BEFORE=$(http_status)
