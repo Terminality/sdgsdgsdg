@@ -66,7 +66,9 @@ snap() { (cd "$S" && find etc -exec ls -lnd {} + | awk '{ print $1, $NF }' | sor
 printf 'admin OldAdmin44x\n' >"$T_TMP/auth"; chmod 600 "$T_TMP/auth"
 run() { $SH "$C" --splunk-home "$S" --out "$O" --no-color --auth-file "$T_TMP/auth" "$@"; }
 # A process called splunkd, so the script sees Splunk running.
-cp "$(command -v sleep)" "$T_TMP/splunkd"; "$T_TMP/splunkd" 600 & SPID=$!
+# A real file: under ksh93 and busybox, 'command -v sleep' prints just "sleep".
+SLEEP=""; for _d in /usr/bin /bin; do [ -x "$_d/sleep" ] && { SLEEP=$_d/sleep; break; }; done
+cp "$SLEEP" "$T_TMP/splunkd"; "$T_TMP/splunkd" 600 & SPID=$!
 # Wait until it shows up as splunkd (right after the fork it is still the shell).
 _i=0; while ! ps -eo comm= | grep -qx splunkd && [ "$_i" -lt 50 ]; do sleep 1; _i=$((_i + 1)); done
 

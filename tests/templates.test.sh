@@ -9,7 +9,8 @@ t_start "shell template runs as a dry run and writes its files"
 r=$($SH "$T_ROOT/templates/script-template.sh" --out "$T_TMP/out" --example hello 2>&1); t_eq "$?" 0 "exits 0"
 t_has "$r" "READ-ONLY" "the template starts as a read-only script"
 t_ok "log written" sh -c "ls '$T_TMP/out'/XX-00_*.log"
-t_ok "csv has the option value" sh -c "grep -q '\"example option\",\"hello\"' '$T_TMP/out'/XX-00_*_example.csv"
+t_ok "the table has the option value" sh -c "grep -Eq 'example option +hello' '$T_TMP/out'/XX-00_*_example.txt"
+t_fail "no CSV is left" sh -c "ls '$T_TMP/out'/*.csv >/dev/null 2>&1"
 # shellcheck disable=SC2086
 $SH "$T_ROOT/templates/script-template.sh" --nope >/dev/null 2>&1; t_eq "$?" 2 "unknown option exits 2"
 # shellcheck disable=SC2086
