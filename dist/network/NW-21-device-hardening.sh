@@ -52,7 +52,12 @@
 #     each finding               [f]ix (default) / [l]eave / [a]ll the rest default
 #     do these?                  --apply
 #     keep the changes? (after a management change, from another machine)
-#                                Y within --timer seconds, else put back; --batch keeps
+#                                Y within --timer seconds, else put back
+#   Never locks the team out: a change that can stop someone logging in
+#   (management limits, telnet / HTTP off, SSH or the web admin limited) is
+#   never the default answer for a management limit, and is never made
+#   without a person confirming a login from another machine - with --batch
+#   or no terminal it is shown and left.
 #
 # USAGE
 #   BT_NET_PASS='pw' sh NW-21-device-hardening.sh --hosts hosts.txt --team 10.0.0.0/24
@@ -72,6 +77,9 @@
 #   --ntp IP           take time from here
 #   --banner TEXT      login banner (default "Authorized access only.
 #                      Activity is monitored.")
+#   --fix-access       make "fix" the default answer for limiting who may log in
+#                      to a device (default: leave); a person still confirms a
+#                      login from another machine before it is kept
 #   --timeout MIN      idle timeout for management logins (default 10)
 #   --wait N           seconds before the new-login test (default 5)
 #   --commit-wait N    Palo Alto: seconds for a commit (default 120)
@@ -1630,6 +1638,7 @@ NW-21 Network device hardening - management access, telnet/HTTP, SNMP, logs, tim
   --log-host IP      send device logs here (Splunk)
   --ntp IP           take time from here
   --banner TEXT      login banner text
+  --fix-access       fix limits on who may log in by default (still confirmed)
   --timeout MIN      idle timeout for management logins (default 10)
   --wait N           seconds before the new-login test (default 5)
   --commit-wait N    Palo Alto commit time (default 120)
@@ -1644,7 +1653,7 @@ USAGE
 
 NL='
 '
-HOSTS=""; DEVICES=""; DEFUSER="admin"; USERSET=0; ASK=0; ENABLE=0; TEAM=""; ME=""; LOGHOST=""; NTP=""
+HOSTS=""; DEVICES=""; DEFUSER="admin"; USERSET=0; ASK=0; FIXACC=0; ENABLE=0; TEAM=""; ME=""; LOGHOST=""; NTP=""
 BANNER="Authorized access only. Activity is monitored."; TO=10; WAIT=5; CWAIT=120; TIMER=60; CONFIGS=""; LEGACY=0; COLOR=1
 num() { case "$2" in ''|*[!0-9]*) cc_die 2 "$1 needs a whole number" ;; esac; }
 ipv4() { printf '%s' "$2" | grep -q '^[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}$' || cc_die 2 "$1 needs an IPv4 address"; }
@@ -1655,6 +1664,7 @@ while [ $# -gt 0 ]; do
         --hosts)        [ $# -ge 2 ] || cc_die 2 "--hosts needs a file"; [ -r "$2" ] || cc_die 2 "--hosts: cannot read $2"; HOSTS=$2; shift 2 ;;
         --device)       [ $# -ge 2 ] || cc_die 2 "--device needs NAME,ADDRESS,VENDOR"; DEVICES="$DEVICES$2$NL"; shift 2 ;;
         --user)         [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; USERSET=1; shift 2 ;;
+        --fix-access)   FIXACC=1; shift ;;
         --ask-password) ASK=1; shift ;;
         --enable-env)   ENABLE=1; shift ;;
         --team)         [ $# -ge 2 ] || cc_die 2 "--team needs addresses"; TEAM="$TEAM,$2"; shift 2 ;;
@@ -2092,13 +2102,26 @@ awk -F"$US" '{ printf "%-14s %-4s %s\n", $1, $3, $4 }' "$W/find" >"$CC_RUN_DIR/f
 # ---- 2. Questions ---------------------------------------------------------------------------
 header "2/4  what to fix (Enter = the default in capitals)"
 : >"$W/plan"; _all=0
+# RISKY: changes that can stop someone logging in to the device.  They are
+# never the default, and never made without a person to confirm a login from
+# another machine (--batch or no terminal: shown and left).
+RISKY='mgmt|telnet|plain|http|sshwan|webany'
+CANCONFIRM=1; { [ "$CC_BATCH" = 1 ] || ! _cc_can_ask; } && CANCONFIRM=0
+# Tests only: BT_TEST_CONFIRM=1 plays the person who confirms.
+[ "${BT_TEST_CONFIRM:-0}" = 1 ] && CANCONFIRM=1
 while IFS="$US" read -r _n _i _l _t _d; do
     [ "$_d" = "-" ] && continue
+    # Limits on who may log in: leave by default (--fix-access: fix).
+    case "$_i" in mgmt|sshwan|webany) [ "$FIXACC" = 1 ] && [ "$_i" != sshwan ] && _d=f || _d=l ;; esac
+    if printf '%s\n' "$_i" | grep -qxE "$RISKY" && [ "$CANCONFIRM" = 0 ]; then
+        cc_show "$C_YEL" "  [-] $_n: $_t - left: it can stop someone logging in, so it needs a person to confirm a login from another machine (run without --batch)"
+        continue
+    fi
     if [ "$_all" = 0 ]; then
         case "$_i" in
-            mgmt) _how="limit it to $TEAM and this box; a new login is tested, then you confirm from another machine" ;;
+            mgmt) _how="ONLY $TEAM and this box could log in to it afterwards: a teammate outside that or a scoring engine would be LOCKED OUT; a new login is tested, then you confirm from another machine" ;;
             sshwan) _how="SSH on the inside (lan) only: you could no longer log in from OUTSIDE; a new login is tested, then you confirm from another machine" ;;
-            webany) _how="the web admin on the inside address only; a new login is tested, then you confirm from another machine" ;;
+            webany) _how="the web admin on the inside address only: nobody could open it from OUTSIDE; a new login is tested, then you confirm from another machine" ;;
             telnet|plain) _how="turn it off; SSH (and HTTPS) stay" ;;
             *) _how="change it; the undo puts it back" ;;
         esac
@@ -2171,7 +2194,7 @@ elif cc_ask "Do these $NCH change(s) now, one device at a time?" Y "yes (each de
         cc_show "" ""; cc_show "$C_CYN" "  -- $_n ($_v): $(tr '\n' ' ' <"$W/ids.$_n")"
         { pre "$_v"; lines "$_n" X "$W/ids.$_n"; post "$_v"; } >"$W/fix.$_n"
         { pre "$_v"; lines "$_n" U "$W/ids.$_n"; post "$_v"; save "$_v"; } >"$W/undo.$_n"
-        _risky=0; grep -qxE 'mgmt|telnet|plain|sshwan|webany' "$W/ids.$_n" && _risky=1
+        _risky=0; grep -qxE "$RISKY" "$W/ids.$_n" && _risky=1
         # 1. One session stays open: the changes go in through a FIFO.
         rm -f "$W/fifo"; mkfifo "$W/fifo"
         sshopts >"$W/opts"; set --; while IFS= read -r _o; do set -- "$@" "$_o"; done <"$W/opts"
@@ -2196,7 +2219,9 @@ elif cc_ask "Do these $NCH change(s) now, one device at a time?" Y "yes (each de
         if try_login "$_v" "$_u" "$_a" "$_p"; then
             _keep=1
             # 3. Management changes: confirm from another machine before saving.
-            if [ "$_risky" = 1 ] && [ "$CC_BATCH" != 1 ] && _cc_can_ask; then
+            if [ "$_risky" = 1 ] && [ "${BT_TEST_CONFIRM:-0}" = 1 ] && ! _cc_can_ask; then
+                cc_show "$C_GRY" "  (tests: BT_TEST_CONFIRM=1 confirms the login from another machine)"
+            elif [ "$_risky" = 1 ]; then
                 cc_show "$C_YEL" "  [*] A new login from this box works. Now log in to $_n from ANOTHER team machine (or its web page)."
                 CC_TIMER_DEADLINE=$(( $(cc_now) + TIMER ))
                 cc_ask_keep || _keep=0

@@ -3420,7 +3420,12 @@ A non-default SNMP community is reported, but its value is never shown or writte
 | Send the devices' logs to a log server? / Take the time from a time server? | an address, Enter = no | `--log-host`, `--ntp` |
 | Each finding | `[f]ix` (default) / `[l]eave` / `[a]ll the rest default` | `--batch` |
 | Do these? | `[y]` / `[n]` | `--apply` |
-| After a management or telnet change: log in from another team machine, keep? | `[y]` within `--timer` seconds (60), else put back | `--batch` keeps |
+| After a management or telnet change: log in from another team machine, keep? | `[y]` within `--timer` seconds (60), else put back | none: a person answers |
+
+**It never locks the team out.** A change that can stop someone logging in (a management limit, telnet or HTTP management off, SSH or the web admin limited) is:
+- never the default for a limit on who may log in: the default is `[l]eave`, and the question says who would be locked out (`--fix-access` makes fix the default; the confirmation below still happens)
+- never kept without a person confirming a login from ANOTHER machine within `--timer` seconds
+- with `--batch` or no terminal: not made at all, only shown ("left: ... run without --batch"). The other fixes (logging, time, banner, SNMP, idle timeout) still go in.
 
 ### How a device is changed
 

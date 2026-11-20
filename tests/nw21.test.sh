@@ -226,7 +226,9 @@ t_fail "the device password is not written anywhere" grep -rq 'Dev-Pass-1' "$O"
 t_start "--apply --batch"
 devices
 # shellcheck disable=SC2086
-out=$(run $DEVS --batch --no-protected --apply 2>&1)
+# A person confirms the logins from another machine (BT_TEST_CONFIRM) and
+# --fix-access makes the management limits the default answer.
+out=$(export BT_TEST_CONFIRM=1; run $DEVS --batch --no-protected --apply --fix-access 2>&1)
 for l in ' transport input ssh' 'ip access-list standard BT-MGMT' ' permit 10.0.0.0 0.0.0.255' " permit host $ME" ' access-class BT-MGMT in' ' exec-timeout 10 0' \
          'ip ssh version 2' 'no ip http server' 'no snmp-server community public' 'logging host 10.0.0.20' 'ntp server 10.0.0.20' \
          'banner login #Authorized access only. Activity is monitored.#' 'service password-encryption' 'write memory'; do
@@ -273,7 +275,7 @@ t_ok "MikroTik: telnet back" grep -qxF '/ip service enable telnet' "$D/mt.log"
 
 t_start "a new login fails: put back through the open session"
 devices
-out=$(run --device b1,bad,cisco-ios --batch --no-protected --apply 2>&1)
+out=$(export BT_TEST_CONFIRM=1; run --device b1,bad,cisco-ios --batch --no-protected --apply --fix-access 2>&1)
 t_has "$out" "[x] b1: a new login FAILED after the change" "the failed login is seen"
 t_has "$out" "[+] b1: put back, and a new login works again" "put back and checked"
 t_ok "the access-class was taken off" grep -qxF ' no access-class BT-MGMT in' "$D/bad.log"
@@ -327,9 +329,9 @@ for x in "[!] web admin (LuCI) over plain HTTP" "[!] telnet starts at boot (/etc
          "[*] time is not taken from 10.0.0.20" "[-] no login banner"; do t_has "$out" "$x" "OpenWRT: $x"; done
 t_has "$out" "Dry run: nothing was changed" "dry run"
 t_fail "a dry run sends no uci change" grep -q '^uci set' "$D/ow.log"
-t_has "$out" "What now? [f/L/a] l (default): leave it" "SSH from outside: the default is leave"
+t_has "$out" "SSH answers on the outside (wan) too - needed if you log in from outside; NW-20 can limit who may - left" "SSH from outside: left (never changed without a person)"
 _u0=$(cat "$O"/undo-*.log 2>/dev/null | grep -c .)
-out=$(run $OW --batch --apply --no-protected 2>&1)
+out=$(export BT_TEST_CONFIRM=1; run $OW --batch --apply --no-protected --fix-access 2>&1)
 c=$(cat "$D/ow.cfg")
 t_has "$c" "uhttpd.main.redirect_https='1'" "HTTPS only"
 t_hasnt "$c" "dropbear.@dropbear[0].Interface='lan'" "SSH from outside is left on by default"
@@ -367,4 +369,18 @@ if command -v script >/dev/null 2>&1; then
     t_has "$tt" "logs are not sent to 10.0.0.20" "the answer is used"
     t_hasnt "$tt" "time is not taken from" "no time server: not checked"
 fi
+t_start "never locks the team out"
+devices
+# --batch: nobody to confirm a login from another machine, so nothing that
+# can stop a login is changed - only shown.
+out=$(run $DEVS --batch --no-protected --apply 2>&1)
+t_has "$out" "left: it can stop someone logging in, so it needs a person to confirm a login from another machine" "--batch leaves the risky changes"
+t_fail "IOS: no management limit sent" grep -qxF ' access-class BT-MGMT in' "$D/ios.log"
+t_fail "IOS: telnet left" grep -qxF ' transport input ssh' "$D/ios.log"
+t_has "$(cat "$D/ios.log")" "logging host 10.0.0.20" "the safe changes are still made"
+# A person, no --fix-access: management limits default to leave.
+devices
+out=$(export BT_TEST_CONFIRM=1; run $DEVS --batch --no-protected --apply 2>&1)
+t_has "$out" "SSH to the device is open to any address (no access-class on the vty lines). What now? [f/L/a] l (default): leave it" "a management limit defaults to leave"
+t_fail "and is not sent" grep -qxF ' access-class BT-MGMT in' "$D/ios.log"
 t_done
