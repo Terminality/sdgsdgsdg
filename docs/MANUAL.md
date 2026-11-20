@@ -2386,6 +2386,7 @@ sudo sh SV-20-db-hardening.sh --protected p.csv --apply --batch --level safe --u
 | Question | Answers | Flag |
 | --- | --- | --- |
 | Which box is this? | `[s]plunk [w]ebmail [e]comm [f]ileshare [g]itea [b] web [o]ther` | `--box` |
+| Which box is this? (its scored ports are never offered) | `[s]plunk [w]ebmail [e]comm [f]ileshare (139, 445, 2049, 111) [g]itea (3000, 2222, 80, 443) [b] web: a ticket, help-desk or shop site (80, 443) [o]ther` | `--box splunk\|webmail\|ecomm\|fileshare\|gitea\|web\|other` |
 | How far should I go? | `[s]afe`, `[v]` service, `[a]ccess` | `--level` |
 | Each fix | `[y]` do it / `[n]` skip it (access-level fixes default to no) | `--only` / `--skip` |
 | Apply these changes? | `[y]` / `[n]` | `--batch` |
@@ -3055,8 +3056,8 @@ sudo sh LX-26-remote-access.sh --protected p.csv --apply --batch
 
 | Level | Found |
 | --- | --- |
-| HIGH | **Tunnels out:** ngrok, chisel, frpc/frps, cloudflared, bore, gost, ligolo, rathole, inlets, `ssh -R`. **Web terminals:** ttyd, gotty, shellinabox, wetty, tmate. **Bind/reverse shells:** `nc -e`, `ncat --exec`, `socat ... exec:`, a shell whose keyboard is a network connection. **Remote desktops:** x11vnc, Xvnc, vncserver, xrdp, NoMachine, TeamViewer, AnyDesk, RustDesk. |
-| MED | **Admin panels:** Webmin (10000), Cockpit (9090), Usermin, ISPConfig, Virtualmin. **Quick file servers:** `python -m http.server`, `php -S`, busybox httpd. |
+| HIGH | **Tunnels out:** ngrok, chisel, frpc/frps, cloudflared, bore, gost, ligolo, rathole, inlets, wstunnel, sshx, `ssh -R`. **Mesh VPNs:** Tailscale, ZeroTier. **DNS and ICMP tunnels:** iodine, dnscat2, ptunnel. **Web terminals:** ttyd, gotty, shellinabox, wetty, tmate, code-server, Jupyter. **Bind/reverse shells:** `nc -e`, `ncat --exec`, `socat ... exec:`, a shell whose keyboard is a network connection. **Remote desktops:** x11vnc, Xvnc, vncserver, xrdp, NoMachine, TeamViewer, AnyDesk, RustDesk, Vino, KRfb, GNOME Remote Desktop, MeshCentral, Guacamole, DWService, Chrome Remote Desktop, xpra. |
+| MED | **Admin panels:** Webmin (10000), Cockpit (9090), Usermin, ISPConfig, Virtualmin. **Quick file servers:** `python -m http.server`, `php -S`, busybox httpd. **Desktop control:** KDE Connect, Barrier, Synergy, Input Leap (keyboard and mouse from another machine; the Mint and Lubuntu desktops). |
 | LOW | **Database panels:** phpMyAdmin, Adminer (listed only) |
 
 Things on a scored port for the box, or on the protected list, are shown as kept and never offered.
@@ -3084,6 +3085,7 @@ In `remote-access-N/`: `output.txt`, `findings.txt`, `plan.txt`, `summary.txt`, 
 - **It comes back?** A cron job, service or `.bashrc` restarts it: find that with **LX-42**, then run LX-26 again.
 - **A remote desktop your team uses:** put its port on the protected list.
 - telnet, rsh, FTP, SNMP and the other old services: **SV-30**.
+- **Alpine** has no `ss`: the ports come from busybox `netstat`.
 
 ## 46. Rootkit and malware scan, `roles/linux/LX-45-rootkit-scan.sh` (LX-45)
 
