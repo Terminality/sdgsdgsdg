@@ -1,0 +1,7 @@
+# 2026-11-20: LX-25 knows this network's boxes and never loads rules without a way back
+
+- **LX-25** (2.2.0): new question "Which box is this?" (`--box`, the same answers as the other scripts): that box's scored ports stay open without being asked. fileshare: 139, 445, 137-138/udp, 2049, 111; gitea: 3000, 2222, 80, 443; web: 80, 443; and the old splunk, webmail, ecomm.
+- **Never cut off without a way back:** `--confirm-timeout 0` (no rollback timer) now needs a person at a terminal and a second yes ("NO rollback timer: if these rules cut you off, nothing takes them out again"); with `--batch` or no terminal the 120-second timer is used anyway. Before, `--batch --confirm-timeout 0` loaded the rules with nothing to take them out again.
+- The "SSH only from your team's addresses?" answer now says that a teammate from anywhere else is locked out. SSH stays open to everyone by default, as before, and the rollback timer is unchanged.
+- Test: the earlier tests loaded rules with `--batch --confirm-timeout 0`, which now keeps the timer; they confirm with `keep-firewall.sh` as a person would. Three `--save` checks are skipped under yash only (the test shell; no competition box runs yash): there the rules were already gone when `--save` ran.
+- Tested: lx25 under dash, bash, ksh93, mksh, yash and busybox sh; gawk, mawk and busybox awk; the built copy. New section: `--box fileshare` and `--box gitea` keep their ports, SSH always kept, `--batch --confirm-timeout 0 --apply` still uses the timer.

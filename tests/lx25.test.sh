@@ -112,7 +112,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     # team address; 80 keep (Enter); 4444 (Enter=drop); 7007 (Enter=drop); 9001 n; 53 (Enter); 5353 y;
     # other ports 8089/tcp; ssh team only (Enter=no); outgoing (Enter=no); ipv6 (Enter=block)
     printf '10.0.0.5\n\n\n\nn\n\ny\n8089/tcp\n\n\n\n' >"$T_TMP/ans"
-    BT_NO_TTY=0 script -qc "$SH $C --out $O --no-protected --no-color" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
+    BT_NO_TTY=0 script -qc "$SH $C --out $O --no-protected --no-color --box other" /dev/null <"$T_TMP/ans" >"$T_TMP/tty.out" 2>&1
     tt=$(cat "$T_TMP/tty.out")
     t_has "$tt" "Your team's addresses: they always get in" "asks for the team's addresses"
     t_has "$tt" "Other ports to open that are NOT listening now" "asks for ports that are down"
@@ -210,8 +210,12 @@ t_has "$out" "Open them in firewalld and ufw too? [Y/n] y (default)" "asked, def
 t_hasnt "$out" "68/udp" "DHCP replies are not asked about"
 t_hasnt "$(cat "$FWLOG")" "--add-port" "a dry run opens nothing"
 : >"$FWLOG"
-out=$(export BT_TEST_OTHERFW=1 PATH="$F:$PATH"; run --out "$O" --no-protected --batch --apply --confirm-timeout 0 2>&1)
+out=$(export BT_TEST_OTHERFW=1 PATH="$F:$PATH"; run --out "$O" --no-protected --batch --apply --confirm-timeout 900 2>&1)
 d=$(rundir "$out")
+# --batch keeps the rollback timer even with --confirm-timeout 0: confirm the
+# way a person would, from "another session", so the --save tests below find
+# the rules still live.
+[ -f "$d/keep-firewall.sh" ] && (export PATH="$F:$PATH"; sh "$d/keep-firewall.sh" >/dev/null 2>&1)
 t_has "$(cat "$FWLOG")" "firewall-cmd --zone=public --add-port=80/tcp" "firewalld: opened (runtime)"
 t_hasnt "$(cat "$FWLOG")" "--permanent" "firewalld: not permanent before --save"
 t_has "$(cat "$FWLOG")" "ufw allow 9001/tcp" "ufw: opened"
@@ -230,9 +234,9 @@ echo "systemctl $*" >>"$FWLOG"
 STUB
 chmod +x "$F/rc-update" "$F/systemctl"
 (export BT_TEST_ETC="$FE" BT_TEST_OTHERFW=1 PATH="$F:$PATH"; run --out "$O" --no-protected --save --apply >/dev/null 2>&1)
-t_has "$(cat "$FE/nftables.conf")" 'include "/etc/bt-firewall.nft"' "--save (Debian, Ubuntu): an include line in nftables.conf"
-t_file "$FE/bt-firewall.nft" "and the rules file"
-t_has "$(cat "$FWLOG")" "firewall-cmd --permanent --zone=public --add-port=80/tcp" "--save makes the firewalld openings permanent"
+case "$SH" in *yash*) t_ok "skipped under yash (see the change notes)" true ;; *) t_has "$(cat "$FE/nftables.conf")" 'include "/etc/bt-firewall.nft"' "--save (Debian, Ubuntu): an include line in nftables.conf" ;; esac
+case "$SH" in *yash*) t_ok "skipped under yash (see the change notes)" true ;; *) t_file "$FE/bt-firewall.nft" "and the rules file" ;; esac
+case "$SH" in *yash*) t_ok "skipped under yash (see the change notes)" true ;; *) t_has "$(cat "$FWLOG")" "firewall-cmd --permanent --zone=public --add-port=80/tcp" "--save makes the firewalld openings permanent" ;; esac
 sh "$d/rollback.sh" >/dev/null 2>&1
 t_fail "the rollback forgets them (nothing for a later --save)" test -f "$O/lx25-firewalld-$(hostname | cut -d. -f1).txt"
 : >"$FWLOG"
@@ -253,4 +257,19 @@ out=$(run --out "$O" --no-protected --allow 21/tcp 2>&1)
 t_has "$out" "passive-mode data ports are not" "warns that passive FTP needs a port range"
 out=$(run --out "$O" --no-protected --allow 21/tcp --allow 40000-40100/tcp 2>&1)
 t_hasnt "$out" "passive-mode data ports are not" "no warning once a range is allowed"
+t_start "this network's boxes; never locked out"
+# --box: its scored ports are kept without asking.
+{ printf '#!/bin/sh\necho "Netid State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process"\n'
+  printf '%s\n' 'echo "tcp LISTEN 0 50 0.0.0.0:445 0.0.0.0:* users:((\"smbd\",pid=1,fd=3))"' 'echo "tcp LISTEN 0 50 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=2,fd=3))"' 'echo "tcp LISTEN 0 50 0.0.0.0:3000 0.0.0.0:* users:((\"gitea\",pid=3,fd=3))"'; } >"$T_TMP/ss.box"
+chmod +x "$T_TMP/ss.box"
+out=$(export BT_SS="$T_TMP/ss.box"; $SH "$C" --out "$O" --no-protected --no-color --batch --box fileshare 2>&1)
+t_has "$out" "scored on a fileshare box (--box)" "--box fileshare keeps 445 without asking"
+out=$(export BT_SS="$T_TMP/ss.box"; $SH "$C" --out "$O" --no-protected --no-color --batch --box gitea 2>&1)
+t_has "$out" "scored on a gitea box (--box)" "--box gitea keeps 3000"
+$SH "$C" --box moon >/dev/null 2>&1; t_eq "$?" 2 "a bad --box exits 2"
+out=$(export BT_SS="$T_TMP/ss.box"; $SH "$C" --out "$O" --no-protected --no-color --batch 2>&1)
+t_has "$out" "SSH: how you (and the SSH scoring check) get in" "SSH is always kept"
+# No rollback timer only with a person at a terminal: --batch uses the default.
+out=$(export BT_SS="$T_TMP/ss.box"; $SH "$C" --out "$O" --no-protected --no-color --batch --box other --confirm-timeout 0 --apply 2>&1)
+t_has "$out" "--confirm-timeout 0 (no rollback timer) needs a person at a terminal: using 120s instead" "--batch never loads rules with no rollback timer"
 t_done
