@@ -31,8 +31,8 @@ Flókið network:
 
 | When | Script | What it does | Command |
 | --- | --- | --- | --- |
-| 0-4 min | **SH-03** Network scan | Every box inside and outside: open ports, versions, what each box looks like (router, domain controller, Gitea, file share, web app, RabbitMQ ...). Writes host-list rows | `sh SH-03-network-scan.sh` (asks the team number) |
-| 4-5 min | make the host list | Copy SH-03's `suggested-hosts.txt` to `hosts.txt` in the folder you run from; fix the names | `cp ~/bt-out/netscan-1/suggested-hosts.txt hosts.txt` |
+| 0-1 min | the host list | The 10 boxes from the team packet, ready made | `cp config/hosts.flokid.txt hosts.txt` |
+| 1-5 min | **SH-03** Network scan | Every box inside and outside: open ports, versions, what each box looks like (router, domain controller, Gitea, file share, web app, RabbitMQ ...). With `--hosts` it flags every machine that is up but **not in the packet** (the packet says there may be more) | `sh SH-03-network-scan.sh --hosts hosts.txt` (asks the team number) |
 | 5-7 min | **NW-01** Config backup | Saves the router's whole config (`uci export`, nftables, passwords file, keys, cron, start-up). Later runs show what changed | `sh NW-01-config-backup.sh` |
 | 7-8 min | **NW-07** Config audit | Reads the saved config offline: telnet, LuCI over plain HTTP, management open to everyone, default accounts, SSH keys. Touches nothing | `sh NW-07-config-audit.sh` |
 | 8-10 min | **NW-12** Accounts and sessions | Who is logged in to the router now, every account, SSH keys. Dry run: look first | `sh NW-12-device-sessions.sh` |
@@ -41,7 +41,7 @@ Flókið network:
 
 What to look at after each one:
 
-- **SH-03:** the "what each box looks like" table. Match each address to the diagram. A port you did not expect (4444, 31337, a second SSH) is red team. `roles.txt` has the table.
+- **SH-03:** `host is up but not on the host list` = a server the packet did not list: enum it, it may be scored by hand (Orange Team) or be red team's way in. Add it to `hosts.txt`. Then the "what each box looks like" table. Match each address to the diagram. A port you did not expect (4444, 31337, a second SSH) is red team. `roles.txt` has the table.
 - **NW-01:** the first run is the baseline. Every later run prints `[!] HIGH` for a new account, SSH key, firewall rule, port forward or cron line.
 - **NW-07:** each `[!]` says the setting and the fix; NW-21 makes most of them.
 - **NW-12:** a session from an address that is not yours, an account you don't know, a key you don't know. `--kick-outside` and `--disable-new` act on them, only when you choose.
