@@ -3,7 +3,7 @@
 # NAME:     Windows password rotation
 # ROLE:     Windows / AD  (wave 2, first 15 minutes)
 # KIND:     changes - dry run unless -Apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Default and leaked passwords are the red team's first way in.  This gives
@@ -12,6 +12,14 @@
 #   passwords to ONE file for the captain, never to the screen or the log.
 #   Accounts the team must keep as they are can be left out (-Exclude, the
 #   protected list), and chosen accounts can get chosen passwords (-Passwords).
+#
+#   The look and the questions are the same as the Linux scripts (LX-20).
+#   QUESTIONS (Enter takes the default in capitals; a parameter answers each):
+#     each account: new password?     [r]andom [s]et one (typed twice, hidden)
+#                                     [k]eep [a]ll the rest random
+#                                     (-Users, -Exclude, -Passwords answer them)
+#     apply these changes?            -Apply (Enter = no)
+#     no protected list: go on?       -NoProtected (Enter = no)
 #
 # USAGE
 #   powershell -NoProfile -ExecutionPolicy Bypass -File WN-20-password-rotation.ps1 -Out C:\bt-out              dry run
@@ -26,7 +34,8 @@
 #                      here STOPS the script before anything changes: a typo
 #                      would change the account you meant to keep
 #   -IgnoreMissing     only warn about such names (one list for many boxes)
-#   -Passwords FILE    chosen passwords: "account,password" lines.  Accounts
+#   -Passwords FILE    chosen passwords: "account password" lines (an older
+#                      "account,password" file still works).  Accounts
 #                      not in the file get a random one.  Spaces around both
 #                      are dropped.  Names not here, and disabled accounts,
 #                      are listed and not changed
@@ -43,16 +52,20 @@
 #                      only ones; on a member server or workstation this is
 #                      the default anyway (domain accounts are changed on a DC)
 #   -Print             also show the new passwords on screen at the end
+#   -Batch             no questions: the defaults (a dry run unless -Apply)
+#   -NoColor           no colours
 #   Common options (-Apply, -Out, -Protected, -NoProtected, -ForceScored,
 #   -Quiet, -DebugLog) come from the library.
 #
-# OUTPUTS  (under -Out, in WN-20_<host>_<UTC time>\)
-#   accounts.csv          account,scope,state,action,note  (no passwords)
+# OUTPUTS  (under -Out, one numbered folder per run: passwords-1, -2, ...)
+#   output.txt            everything shown on screen (never a password)
+#   accounts.txt          account, scope, state, action, note (no passwords)
 #   summary.txt           what was changed, skipped and why
-#   passwords.csv         host,account,password,time - only with -Apply,
+#   run.txt               id, host, time
+#   passwords.txt         HOST ACCOUNT PASSWORD TIME - only with -Apply,
 #                         readable by Administrators and SYSTEM only.  Give it
 #                         to the captain, then delete it from this box
-#   pending-password.csv  only while ONE account is being changed; left
+#   pending-password.txt  only while ONE account is being changed; left
 #                         behind if the script is stopped at that moment:
 #                         that account has either its old password or this one
 #
@@ -61,7 +74,7 @@
 #   domain accounts).  Nothing else: accounts are not enabled, disabled,
 #   unlocked or forced to change their password at next logon (that would
 #   break scored logins).  Old passwords cannot be put back - Windows keeps no
-#   copy anyone can restore - so passwords.csv is the record.
+#   copy anyone can restore - so passwords.txt is the record.
 #
 # DEPENDS ON
 #   WMI (local accounts, services), ADSI (WinNT and LDAP providers), schtasks.
@@ -101,7 +114,9 @@ param(
     [switch]$IncludeDisabled,
     [switch]$IncludeServices,
     [switch]$Print,
-    [switch]$Help
+    [switch]$Help,
+    [switch]$Batch,
+    [switch]$NoColor
 )
 
 if ($Help) {
@@ -110,9 +125,11 @@ if ($Help) {
     Write-Host '  -Exclude a,b         never touch these accounts'
     Write-Host '  -Users a,b           change only these accounts'
     Write-Host '  -IgnoreMissing       warn instead of stopping when a name is not an account here'
-    Write-Host '  -Passwords FILE      "account,password" lines to use instead of random ones'
+    Write-Host '  -Passwords FILE      "account password" lines to use instead of random ones'
     Write-Host '  -Length N            random password length (default 16)'
     Write-Host '  -IncludeMe -IncludeDisabled -IncludeServices -Print'
+    Write-Host '  -Batch               no questions: the defaults (a dry run unless -Apply)'
+    Write-Host '  -NoColor             no colours'
     Write-Host '  -Out DIR -Protected FILE -NoProtected -ForceScored -Quiet -DebugLog'
     exit 0
 }
@@ -141,7 +158,9 @@ Initialize-Cc -Id 'WN-20' -Name 'Windows password rotation' -Kind changes -Bound
 $Fake = $env:BT_WN20_FAKE
 if ($Fake) { Write-CcLog -Level WARN -Message "TEST MODE: stand-in accounts from $Fake; no real account is read or changed" }
 elseif ($Cc.Apply) { Assert-CcAdmin }
-Use-CcRunDir
+Use-CcNumberedDir 'passwords'
+Write-CcShow -Color Cyan -Text ('WN-20 Windows password rotation | host {0} | results in {1}' -f $Cc.Host, $Cc.RunDir)
+Write-CcLegend -Marks @('Yellow=[~] would change', 'Green=[+] changed', 'DarkGray=[-] left alone', 'Red=[x] failed')
 $os = Get-CcOsInfo
 $IsDC = $os.IsDC
 if ($Fake -and (Test-Path -LiteralPath (Join-Path $Fake 'is-dc'))) { $IsDC = $true }
@@ -273,7 +292,8 @@ if ($Passwords) {
     foreach ($l in @([IO.File]::ReadAllLines((Resolve-CcPath $Passwords)))) {
         $t = $l.Trim()
         if ($t -eq '' -or $t.StartsWith('#')) { continue }
-        $i = $t.IndexOf(',')
+        # "account password", or the older "account,password" (a name, then a comma).
+        if ($t -match '^[^\s,]+\s*,') { $i = $t.IndexOf(',') } else { $i = $t.IndexOfAny([char[]]@(' ', "`t")) }
         if ($i -lt 1) { continue }
         $n = $t.Substring(0, $i).Trim(); $p = $t.Substring($i + 1).Trim()
         if ($n -match '^(account|user|name)$') { continue }
@@ -312,30 +332,79 @@ foreach ($a in ($accounts | Sort-Object Name)) {
 }
 foreach ($n in $notes) { Write-CcLog -Level WARN -Message $n }
 
-# ---- Change -------------------------------------------------------------------
-$csv = New-CcCsv -Name accounts -Header @('account', 'scope', 'state', 'action', 'note')
-$pwFile = Join-Path $Cc.RunDir 'passwords.csv'
-$pend = Join-Path $Cc.RunDir 'pending-password.csv'
+# ---- 1/4 The accounts ------------------------------------------------------------
+Write-CcHeader ('1/4  accounts ({0}: {1})' -f $(if ($IsDC) { 'domain controller' } else { 'local' }), $accounts.Count)
+foreach ($x in $plan) {
+    if ($x.Act -eq 'change') { Write-CcShow -Color Yellow -Text ('  [~] {0,-24} {1,-7} new password ({2})' -f $x.A.Name, $x.A.Scope, $x.Src) }
+    elseif ($x.Why -notlike 'never changed*') { Write-CcShow -Color DarkGray -Text ('  [-] {0,-24} {1,-7} {2}' -f $x.A.Name, $x.A.Scope, $x.Why) }
+}
+
+# ---- 2/4 Questions: each account, then apply ----------------------------------------
+Write-CcHeader '2/4  questions (Enter = the default in capitals)'
+$todo = @($plan | Where-Object { $_.Act -eq 'change' })
+if ($todo.Count -gt 0 -and (Test-CcCanAsk)) {
+    $rest = $false
+    foreach ($x in $todo) {
+        if ($rest) { break }
+        $ln = Lc2 $x.A.Name
+        $dflt = 'r'; if ($given.ContainsKey($ln)) { $dflt = 's' }
+        $q = Read-CcChoice -Question ('{0} ({1}): new password?' -f $x.A.Name, $x.A.Scope) -Default $dflt -Options @(
+            ('r=random (' + $Length + ' characters, only in passwords.txt)'), $(if ($given.ContainsKey($ln)) { 's=the one from -Passwords' } else { 's=set one: typed twice, not shown' }),
+            'k=keep the old password', 'a=all the rest: their default')
+        switch ($q) {
+            'k' { $x.Act = 'skip'; $x.Why = 'kept (answered k)' }
+            'a' { $rest = $true }
+            's' {
+                if ($given.ContainsKey($ln)) { break }
+                while ($true) {
+                    $p1 = Read-CcSecret ('      New password for ' + $x.A.Name)
+                    $p2 = Read-CcSecret '      Again'
+                    if ($p1 -ne $p2) { Write-CcShow -Color Yellow -Text '      [*] The two did not match: type it again'; continue }
+                    if ($p1.Length -lt 8) { Write-CcShow -Color Yellow -Text '      [*] At least 8 characters: type it again'; continue }
+                    break
+                }
+                $given[$ln] = $p1; $x.Src = 'typed'; $p1 = ''; $p2 = ''
+            }
+        }
+    }
+}
+$todo = @($plan | Where-Object { $_.Act -eq 'change' })
+if ($todo.Count -gt 0 -and -not $Cc.Apply -and (Test-CcCanAsk)) {
+    if (Read-CcAsk -Question ('Apply these {0} change(s)?' -f $todo.Count) -Default N -Yes 'yes, change the passwords now' -No 'no, change nothing (dry run)') {
+        if (-not $Cc.Protected -and -not $Cc.NoProtected) {
+            Write-CcShow -Color Yellow -Text '[*] No protected list (the accounts the scoring engine logs in with).'
+            if (Read-CcAsk -Question 'Change passwords without one?' -Default N -Yes 'yes, go on without a protected list' -No 'no, stop') { $Cc.NoProtected = $true; $Cc.Apply = $true }
+        } else { $Cc.Apply = $true }
+        if ($Cc.Apply -and -not $Fake) { Assert-CcAdmin }
+    }
+}
+
+# ---- 3/4 Change -------------------------------------------------------------------
+Write-CcHeader $(if ($Cc.Apply) { '3/4  changing' } else { '3/4  dry run: nothing is changed' })
+$tab = New-CcTable -Name accounts -Columns @('account', 'scope', 'state', 'action', 'note')
+$rowsOut = @()
+function Row4($v) { Add-CcTableRow -File $tab -Values $v; $script:rowsOut += ,$v }
+$pwFile = Join-Path $Cc.RunDir 'passwords.txt'
+$pend = Join-Path $Cc.RunDir 'pending-password.txt'
 $shown = @()
 $changed = 0; $failed = 0; $would = 0; $skipped = 0
 
 # Make a file readable by Administrators and SYSTEM only, with this header.
 function New-Private([string]$p) {
-    [IO.File]::WriteAllText($p, "host,account,password,time`r`n")
+    [IO.File]::WriteAllText($p, ('{0,-16} {1,-24} {2,-24} {3}' -f 'HOST', 'ACCOUNT', 'PASSWORD', 'TIME') + "`r`n")
     if ((Test-CcWindows) -and (Test-CcCommand 'icacls.exe')) {
         [void](Invoke-CcProgram -FilePath 'icacls.exe' -Arguments @($p, '/inheritance:r', '/grant:r', '*S-1-5-32-544:F', '*S-1-5-18:F'))
     }
 }
-function Csv1([string]$s) { if ($s -match '[",]') { return '"' + $s.Replace('"', '""') + '"' }; return $s }
 
 foreach ($x in $plan) {
     $a = $x.A
     $state = 'enabled'; if ($a.Disabled) { $state = 'disabled' }
-    if ($x.Act -eq 'skip') { Add-CcCsvRow -File $csv -Values @($a.Name, $a.Scope, $state, 'skipped', $x.Why); $skipped++; continue }
+    if ($x.Act -eq 'skip') { Row4 @($a.Name, $a.Scope, $state, 'skipped', $x.Why); $skipped++; continue }
     if (-not $Cc.Apply) {
         Write-CcLog -Level WOULD -Message ('set a new password ({0}) for {1} account {2}' -f $x.Src, $a.Scope, $a.Name)
         $Cc.Would++; $would++
-        Add-CcCsvRow -File $csv -Values @($a.Name, $a.Scope, $state, 'would change', $x.Src)
+        Row4 @($a.Name, $a.Scope, $state, 'would change', $x.Src)
         continue
     }
     $pw = $given[(Lc2 $a.Name)]
@@ -344,7 +413,7 @@ foreach ($x in $plan) {
     # Written BEFORE the change and removed after it: if the script is
     # stopped in between, the password is not lost.
     New-Private $pend
-    $line = ('{0},{1},{2},{3}' -f (Csv1 $Cc.Host), (Csv1 $a.Name), (Csv1 $pw), [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"))
+    $line = ('{0,-16} {1,-24} {2,-24} {3}' -f $Cc.Host, $a.Name, $pw, [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"))
     [IO.File]::AppendAllText($pend, $line + "`r`n")
     $script:Why = ''
     $ok = Invoke-CcChange -Description ('set a new password ({0}) for {1} account {2}' -f $x.Src, $a.Scope, $a.Name) -Secret -Action {
@@ -355,14 +424,16 @@ foreach ($x in $plan) {
         Remove-Item -LiteralPath $pend -Force
         $chk = Test-Pw $a $pw
         $note = $x.Src; if ($chk -eq 'yes') { $note += '; new password tested' } elseif ($chk -eq 'no') { $note += '; WARNING: the new password did not work in a test logon - check this account' }
-        Add-CcCsvRow -File $csv -Values @($a.Name, $a.Scope, $state, 'changed', $note)
+        Row4 @($a.Name, $a.Scope, $state, 'changed', $note)
+        Write-CcShow -Color Green -Text ('  [+] new password for {0} ({1})' -f $a.Name, $note)
         $changed++
         if ($Print) { $shown += ('  {0,-24} {1}' -f $a.Name, $pw) }
     } else {
         Remove-Item -LiteralPath $pend -Force
         $why = ($script:Why -replace '[\r\n]+', ' ').Trim()
         Write-CcLog -Level ERROR -Message ('{0}: not changed - {1}' -f $a.Name, $why)
-        Add-CcCsvRow -File $csv -Values @($a.Name, $a.Scope, $state, 'FAILED', ('old password still in use: ' + $why))
+        Row4 @($a.Name, $a.Scope, $state, 'FAILED', ('old password still in use: ' + $why))
+        Write-CcShow -Color Red -Text ('  [x] {0}: NOT changed - {1}' -f $a.Name, $why)
         $failed++
     }
 }
@@ -374,9 +445,10 @@ $scope = 'local accounts'; if ($IsDC) { $scope = 'domain accounts (this is a dom
 $sum += ('Host: {0}   {1}' -f $Cc.Host, $scope)
 $sum += ''
 $sum += ('{0} changed, {1} would change, {2} failed, {3} skipped' -f $changed, $would, $failed, $skipped)
-foreach ($r in @(Import-Csv -LiteralPath $csv)) {
-    if ($r.action -eq 'skipped' -and $r.note -like 'never changed*') { continue }
-    $sum += ('  {0,-12} {1,-24} {2}' -f $r.action, $r.account, $r.note)
+Format-CcTable -File $tab
+foreach ($r in $rowsOut) {
+    if ($r[3] -eq 'skipped' -and $r[4] -like 'never changed*') { continue }
+    $sum += ('  {0,-12} {1,-24} {2}' -f $r[3], $r[0], $r[4])
 }
 if ($notes.Count -gt 0) { $sum += ''; $sum += 'Check:'; foreach ($n in $notes) { $sum += ('  ' + $n) } }
 $sum += ''
@@ -389,7 +461,13 @@ if ($Cc.Apply -and (Test-Path -LiteralPath $pwFile)) {
     $sum += 'Dry run: nothing was changed.  Check the list, then add -Apply.'
 }
 [IO.File]::WriteAllLines((Join-Path $Cc.RunDir 'summary.txt'), [string[]]$sum)
-if (-not $Quiet) { foreach ($l in $sum) { Write-Host $l } }
+Write-CcHeader '4/4  summary'
+foreach ($l in $sum) {
+    $col = ''
+    if ($l -like 'WN-20 *') { $col = 'Cyan' } elseif ($l -like '  FAILED*' -or $l -like '[!]*' -or $l -like '*WARNING*') { $col = 'Red' } elseif ($l -like '  changed*') { $col = 'Green' } elseif ($l -like '  would*' -or $l -like 'New passwords*' -or $l -like 'Dry run*') { $col = 'Yellow' } elseif ($l -like '  skipped*') { $col = 'DarkGray' }
+    Write-CcShow -Color $col -Text $l
+}
+# On screen only, never in output.txt or the log.
 if ($shown.Count -gt 0) { Write-Host ''; Write-Host 'New passwords (-Print):'; foreach ($l in $shown) { Write-Host $l } }
-Write-Host ('All results: ' + $Cc.RunDir)
+Write-Host ('All results: ' + $Cc.RunDir)   # always shown, even with -Quiet
 Complete-Cc
