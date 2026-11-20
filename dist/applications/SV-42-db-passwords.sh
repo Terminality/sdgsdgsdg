@@ -2262,14 +2262,14 @@ cc_csv_pretty "$CSV" "$CC_RUN_DIR/accounts.txt" 110
     [ -s "$W/notes" ] && printf '\nFound before the changes:\n'
     awk -F'|' '{ printf "  %-5s %s\n", $1, $2 }' "$W/notes"
     if [ -f "$PWOUT" ] && [ "$SITEFAIL" = 0 ]; then
-        printf '\nNew passwords: %s (mode 600)\n  Give them to the captain (and the scoring portal if a scored account changed), then: rm %s\n' "$PWOUT" "$PWOUT"
+        printf '\nNew passwords: %s (mode 600)\n  Give them to the captain, then: rm %s\n%s\n' "$PWOUT" "$PWOUT" '[!] SCORED ACCOUNTS: submit each new password in the scoring engine (Quotient: password change request) NOW - until then its checks use the old one and fail.'
     fi
     [ "$APPLIED" = 1 ] && [ -f "$CC_RUN_DIR/revert.sh" ] && printf 'Undo this run: sh %s/revert.sh --force\n' "$CC_RUN_DIR"
     printf 'Accounts: %s/accounts.txt\n' "$CC_RUN_DIR"
 } >"$CC_RUN_DIR/summary.txt"
 cc_show "" ""
 while IFS= read -r _l; do
-    case "$_l" in ==*|SV-42*) cc_show "$C_CYN" "$_l" ;; *'Failed (put back): '[1-9]*|*'PUT BACK'*|*HIGH*) cc_show "$C_RED" "$_l" ;; *NOTE*|*'New passwords'*|*'Give them'*) cc_show "$C_YEL" "$_l" ;; *) cc_show "" "$_l" ;; esac
+    case "$_l" in ==*|SV-42*) cc_show "$C_CYN" "$_l" ;; *'Failed (put back): '[1-9]*|*'PUT BACK'*|*HIGH*|'[!] SCORED'*) cc_show "$C_RED" "$_l" ;; *NOTE*|*'New passwords'*|*'Give them'*) cc_show "$C_YEL" "$_l" ;; *) cc_show "" "$_l" ;; esac
 done <"$CC_RUN_DIR/summary.txt"
 rm -rf "$W"
 if [ "$TIMER_ON" = 1 ]; then

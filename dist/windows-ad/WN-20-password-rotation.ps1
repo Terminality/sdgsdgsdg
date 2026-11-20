@@ -1637,6 +1637,7 @@ $sum += ''
 if ($Cc.Apply -and (Test-Path -LiteralPath $pwFile)) {
     $sum += ('New passwords: ' + $pwFile)
     $sum += '  Give this file to the captain, then delete it from this box.'
+    $sum += '[!] SCORED ACCOUNTS: submit each new password in the scoring engine (Quotient: password change request) NOW - until then its checks use the old one and fail.'
     $sum += '  Services and scheduled tasks that log in as a changed account need the new password too.'
 } elseif (-not $Cc.Apply) {
     $sum += 'Dry run: nothing was changed.  Check the list, then add -Apply.'

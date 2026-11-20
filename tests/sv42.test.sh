@@ -61,6 +61,7 @@ if [ "${BT_TEST_DB:-0}" = 1 ] && [ "$(id -u)" = 0 ] && command -v mysql >/dev/nu
     fi
     d=$(ls -d "$O"/db-passwords-* | sort -t- -k3 -n | tail -n 1)
     t_eq "$(ls -l "$d/passwords.txt" | cut -c1-10)" "-rw-------" "passwords.txt is root only"
+    t_has "$(cat "$d/summary.txt")" "[!] SCORED ACCOUNTS: submit each new password in the scoring engine" "the summary says to submit scored passwords to the scoring engine"
     _np=$(awk '$1 == "mysql" && $2 == "bt_sv42_app" { print $3 }' "$d/passwords.txt")
     t_ok "the app account has a new password" test -n "$_np"
     t_eq "$(login bt_sv42_app "$_np")" 1 "and it works"

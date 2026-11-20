@@ -595,6 +595,7 @@ cc_table_align "$DT"; [ -f "$PWOUT" ] && (umask 077; cc_table_align "$PWOUT")
     if [ -f "$PWOUT" ]; then
         printf 'New passwords: %s (mode 600)\n  Give them to the captain, then remove the file: rm %s\n' "$PWOUT" "$PWOUT"
         printf '  Then run NW-01 again: the changed account lines are expected changes.\n'
+        printf '%s\n' '[!] SCORED ACCOUNTS: submit each new password in the scoring engine (Quotient: password change request) NOW - until then its checks use the old one and fail.'
     fi
     [ "$CC_APPLY" = 1 ] || printf 'Dry run: nothing changed.  Try --apply on ONE device first (--device), then the rest.\n'
     printf 'All results: %s\n' "$CC_RUN_DIR"
