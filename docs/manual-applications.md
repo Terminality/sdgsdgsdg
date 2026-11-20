@@ -480,6 +480,7 @@ Who may connect (`hosts allow`, the NFS client list) is **only reported**: only 
 
 LX-25 `--box fileshare` keeps 139, 445, 137, 138, 2049, 111 open; SV-50 `--box fileshare` brings Samba and NFS back if they go down; LX-45 scans the shared folders for malware. All of them guess `fileshare` when they find a share.
 
+
 ### SV-21: PHP and web app hardening (`dist/applications/SV-21-web-hardening.sh`)
 
 Makes the web apps hard to take over and makes an uploaded web shell useless, without taking the site down. It finds the apps first (WordPress, Joomla, Drupal, PrestaShop, OpenCart, Magento, Roundcube), then offers each fix, graded like SV-20. After the changes, the site must still load, or everything is put back.

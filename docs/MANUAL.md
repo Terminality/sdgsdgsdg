@@ -63,6 +63,7 @@ Contents:
 53. Device change watch, `roles/network/NW-30-device-watch.sh` (NW-30)
 54. Gitea hardening, `roles/applications/SV-45-gitea-hardening.sh` (SV-45)
 55. File share hardening (Samba and NFS), `roles/applications/SV-46-fileshare-hardening.sh` (SV-46)
+56. Account lockdown (Windows / AD), `roles/windows-ad/WN-23-ad-lockdown.ps1` (WN-23)
 
 ---
 
@@ -3740,3 +3741,48 @@ Who may connect (`hosts allow`, the NFS client list) is **only reported**: only 
 ### With the other scripts
 
 LX-25 `--box fileshare` keeps 139, 445, 137, 138, 2049, 111 open; SV-50 `--box fileshare` brings Samba and NFS back if they go down; LX-45 scans the shared folders for malware. All of them guess `fileshare` when they find a share.
+
+## 56. Account lockdown (Windows / AD), `roles/windows-ad/WN-23-ad-lockdown.ps1` (WN-23)
+
+Run it on the domain controller (Vattar) early: red team's favourite moves there are adding themselves to an admin group, making a new account, or switching on a setting that hands out a crackable hash. It reads Active Directory through ADSI (no AD module), shows what it finds, and asks about each fix. Group Policy is not read or changed.
+
+### How to run it
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-23-ad-lockdown.ps1                                   # look + dry run
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-23-ad-lockdown.ps1 -Apply -Admins blueadmin,Administrator
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-23-ad-lockdown.ps1 -Apply -Batch -Admins blueadmin -Approved C:\team\users.txt
+```
+
+### What it finds
+
+| Finding | Level | Fix offered (default) |
+| --- | --- | --- |
+| A member of Domain Admins, Enterprise Admins, Schema Admins, Administrators, Account Operators, Backup Operators, Server Operators, Print Operators or DnsAdmins that is not yours | HIGH with `-Admins` or when made in the last `-Hours`; MED otherwise | remove from the group (**yes** when `-Admins` names your admins; **no** without it: it could be a teammate) |
+| No Kerberos pre-authentication (AS-REP roasting) | HIGH | require it (yes) |
+| Password not required | HIGH | require one (yes) |
+| Reversible encryption | HIGH | turn it off (yes) |
+| A user trusted for unconstrained delegation | HIGH | turn it off (yes) |
+| An account made in the last `-Hours` hours (default 24) | HIGH | disable (**no**: it could be a teammate) |
+| An enabled account not in `-Approved` (only when given) | MED | disable (yes) |
+| Guest enabled | HIGH | disable (yes) |
+| A user with an SPN (Kerberoastable), a computer with unconstrained delegation, password never expires, the krbtgt password age | MED / LOW | reported only (passwords: WN-20; krbtgt: WN-22) |
+
+Never touched: the account running it, the built-in Administrator, krbtgt and accounts on the protected list.
+
+### The questions
+
+| Question | Answers | Parameter |
+| --- | --- | --- |
+| Each finding | `[f]`ix it, `[k]`eep it, `[a]`ll the rest: their default | `-Admins`, `-Approved`, `-Only` / `-Skip` |
+| Apply these N change(s)? | `[y]` / `[N]` | `-Apply` |
+| No protected list: change AD without one? | `[y]` / `[N]` | `-NoProtected` |
+
+`-Batch` takes every default: a dry run unless `-Apply` is given.
+
+### Safety and output
+
+- Dry run unless `-Apply`. With `-Apply` the revert timer runs (120 s, `-Timer`): every change is undone by itself unless you answer "keep" after logging in from a NEW session. Each change has an undo line; `revert.ps1 -Force` in the run folder undoes the run later.
+- `-Admins` names that are not accounts stop the script before anything changes (a typo would remove the admin you meant to keep).
+- In `<out>\ad-lockdown-N\`: `output.txt`, `findings.txt` (level, kind, account, what was found, what was done), `summary.txt`, `run.txt`, `undo.txt`, `revert.ps1`.
+- Not yet run against a real domain: try it on a VM first.

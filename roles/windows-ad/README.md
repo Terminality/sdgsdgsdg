@@ -1,6 +1,6 @@
 # Windows / AD — identity + policy
 
-Scripts owned by this role. 5 of 9 are built.
+Scripts owned by this role. 6 of 9 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -12,7 +12,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | WN-43 | Windows safe fixes | Hardening: easy | safe | built | [`roles/windows-ad/WN-43-safe-fixes.ps1`](../../roles/windows-ad/WN-43-safe-fixes.ps1) |
 | WN-25 | Windows firewall | Hardening: hard | access | built | [`roles/windows-ad/WN-25-firewall.ps1`](../../roles/windows-ad/WN-25-firewall.ps1) |
 | WN-27 | Windows remote access lockdown | Hardening: hard | access | planned |  |
-| WN-23 | Account lockdown (Windows / AD) | Hardening: hard | access | planned |  |
+| WN-23 | Account lockdown (Windows / AD) | Hardening: hard | access | built | [`roles/windows-ad/WN-23-ad-lockdown.ps1`](../../roles/windows-ad/WN-23-ad-lockdown.ps1) |
 | WN-20 | Windows password rotation | Management | access | built | [`roles/windows-ad/WN-20-password-rotation.ps1`](../../roles/windows-ad/WN-20-password-rotation.ps1) |
 | WN-44 | Windows alerts | Alerts | none | planned |  |
 
