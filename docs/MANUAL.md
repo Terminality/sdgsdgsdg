@@ -1203,6 +1203,8 @@ sudo sh LX-22-ssh-hardening.sh --apply --allow-keys team.pub   # keep only the t
 
 | Question | Default | Flag |
 | --- | --- | --- |
+| Which box is this? `[s]plunk [w]ebmail [e]comm [f]ileshare [g]itea [b] web [o]ther` | other | `--box` (SSH is treated as scored on splunk, webmail and gitea) |
+| Gitea keeps N user keys for git over SSH: `[k]eep them all` / `[o]ne by one` (only when there are some) | keep | `--gitea-keys keep\|ask` |
 | Keep key #N? (one per key) | yes; **no** for keys that look planted | `--allow-keys FILE`, `--remove-all-keys`, `--keep-all-keys` |
 | Move `~/.ssh/rc` to quarantine? (runs at every login) | yes | |
 | Allow root to log in over SSH? `[y]` yes, `[n]` no, `[k]` key-only, `[l]` leave | `k` if root keeps a key; otherwise `l`, so root is never locked out | `--root-login yes/no/key-only/leave` |
@@ -1227,7 +1229,9 @@ Each question shows the current value and one line on what it does. A setting th
 
 - **Block at the top.** sshd uses the first value it reads, so the marked block at the top of `sshd_config` wins over the rest of the file and `sshd_config.d`. Nothing else in the file is changed.
 - **Tested first.** The new config must pass `sshd -t` or it is not installed.
-- **Reload check.** sshd is reloaded (open sessions stay up); if it stops listening the old config is put back at once.
+- **Reload check.** sshd is reloaded (open sessions stay up); if it stops listening the old config is put back at once. On **Ubuntu 24.04 and Mint 22** systemd holds the port (`ssh.socket`) and starts an sshd for each login: no reload is needed, and the next login uses the new config.
+- **Gitea's keys.** Gitea (also Forgejo, Gogs, GitLab) writes each user's key into the `git` account with a forced command that only runs git. Those are shown as Gitea's in one line, kept by default, and the `git` account is added to `AllowUsers`. A forced command with anything more in it (`; bash`) is still flagged as planted. Manage Gitea's keys in its web admin.
+- **Alpine** has no `ss`: the listening check uses busybox `netstat`.
 - **Revert timer.** Everything is undone after `--timer` seconds (default 120) unless you confirm, after logging in from a NEW session. A revert also reloads sshd.
 - **Evidence.** Removed keys are kept in `quarantine/`; rc files are moved there, not deleted.
 - **Protected accounts** keep their keys; a protected root keeps its login.

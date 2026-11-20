@@ -4,7 +4,7 @@
 # NAME:     SSH hardening and key cleanup
 # ROLE:     Linux  (wave 2, first 15 minutes)
 # KIND:     changes - dry run unless --apply
-# VERSION:  2.0.0
+# VERSION:  2.1.0
 #
 # PURPOSE
 #   A changed password does not stop a red team that planted an SSH key, and
@@ -24,7 +24,14 @@
 #        over anything below it and over sshd_config.d), tests it with
 #        "sshd -t" BEFORE installing, reloads sshd (open sessions stay up),
 #        checks sshd still listens, and puts the old config back by itself
-#        if not
+#        if not.  Ubuntu 24.04 and Mint 22 (ssh.socket: systemd starts an
+#        sshd per login) need no reload: the next login reads the new config
+#
+#   Gitea (Forgejo, Gogs, GitLab) writes its users' keys into the git
+#   account's authorized_keys with a forced command that only runs git.
+#   Those are shown as Gitea's, kept by default (one question for all of
+#   them, --gitea-keys), and the git account is added to AllowUsers.  A
+#   forced command with anything more in it is still flagged as planted.
 #     5. with a revert timer running: everything is undone after --timer
 #        seconds unless you confirm from a NEW SSH session that you can
 #        still log in
@@ -41,6 +48,9 @@
 #                       other key is removed, without asking
 #   --remove-all-keys   remove every key (no questions)
 #   --keep-all-keys     keep every key (no questions)
+#   --gitea-keys keep|ask  the keys Gitea (or Forgejo, Gogs, GitLab) wrote for
+#                       its users (they only run git, no shell): keep them all
+#                       (default) or ask about each one
 #   --root-login MODE   yes | no | key-only | leave   (PermitRootLogin)
 #   --no-passwords      turn password logins OFF (key only).  Off by default:
 #                       scoring engines usually log in with passwords
@@ -55,6 +65,9 @@
 #   --timer SECONDS     revert countdown (default 120)
 #   --no-timer          apply with no revert timer (not advised)
 #   --no-reload         install the config but do not reload sshd
+#   --box NAME          splunk | webmail | ecomm | fileshare | gitea | web |
+#                       other.  SSH is treated as scored on splunk, webmail
+#                       and gitea (git over SSH): password logins stay on
 #   --root DIR          treat DIR as / (tests; sshd is not reloaded)
 #   --no-color          no colours
 #   --batch             no questions: recommended answers
@@ -79,12 +92,15 @@
 #
 # DEPENDS ON
 #   sshd (to read the current settings, test and reload), ssh-keygen
-#   (fingerprints), awk.  BT_SSHD may name a stand-in sshd (the tests).
+#   (fingerprints), awk; ss, or netstat / busybox netstat (Alpine).
+#   BT_SSHD may name a stand-in sshd, BT_SSH_SOCKET=1 says ssh.socket is on
+#   (the tests).
 #
 # TESTED ON
 #   Ubuntu 24.04 with OpenSSH 9.6 under dash, bash, busybox sh, ksh93, mksh
 #   and yash (fake root and stand-in sshd), and live: after --apply the kept
-#   key still logs in and the removed key is refused.
+#   key still logs in and the removed key is refused.  Gitea key lines,
+#   ssh.socket and busybox netstat with stand-ins (fake root).
 #
 # KNOWN LIMITS / WHAT TO WATCH FOR
 #   - Keep a second root session open while applying.
@@ -117,7 +133,9 @@ LX-22 SSH hardening and key cleanup - see every key and setting, keep or change 
 
   --allow-keys FILE    team keys/fingerprints: every other key is removed
   --remove-all-keys    remove every key        --keep-all-keys   keep every key
-  --box NAME           splunk | webmail | ecomm | other (asked; SSH is scored on splunk and webmail)
+  --gitea-keys keep|ask   Gitea's user keys (git only, no shell): keep all, or ask each
+  --box NAME           splunk | webmail | ecomm | fileshare | gitea | web | other
+                       (asked; SSH is treated as scored on splunk, webmail and gitea)
   --banners / --no-banners   replace the login banners that show the OS (default yes)
   --root-login MODE    yes | no | key-only | leave
   --no-passwords       password logins OFF (key only) - careful, scoring uses passwords
@@ -138,7 +156,7 @@ USAGE
 }
 
 # ---- Options ----------------------------------------------------------------
-BOX=""; BANNERS=""; ALLOWKEYS=""; KEYMODE=""; ROOTMODE=""; NOPW=""; NOFWD=""; STRONG=""; ALLOWUSERS=""; AUSET=0; BANNER=""
+BOX=""; BANNERS=""; ALLOWKEYS=""; KEYMODE=""; GKEYS=""; ROOTMODE=""; NOPW=""; NOFWD=""; STRONG=""; ALLOWUSERS=""; AUSET=0; BANNER=""
 SETS=""; TIMER=120; NOTIMER=0; NORELOAD=0; R=""; COLOR=1
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
@@ -146,7 +164,8 @@ while [ $# -gt 0 ]; do
         --allow-keys)      [ $# -ge 2 ] || cc_die 2 "--allow-keys needs a file"; [ -r "$2" ] || cc_die 2 "--allow-keys: cannot read $2"; ALLOWKEYS=$2; KEYMODE=allow; shift 2 ;;
         --remove-all-keys) [ "$KEYMODE" = allow ] && cc_die 2 "use --allow-keys or --remove-all-keys, not both"; KEYMODE=all; shift ;;
         --keep-all-keys)   KEYMODE=keep; shift ;;
-        --box)             [ $# -ge 2 ] || cc_die 2 "--box needs splunk, webmail, ecomm or other"; BOX=$2; shift 2 ;;
+        --gitea-keys)      [ $# -ge 2 ] || cc_die 2 "--gitea-keys needs keep or ask"; GKEYS=$2; shift 2 ;;
+        --box)             [ $# -ge 2 ] || cc_die 2 "--box needs splunk, webmail, ecomm, fileshare, gitea, web or other"; BOX=$2; shift 2 ;;
         --banners)         BANNERS=Y; shift ;;
         --no-banners)      BANNERS=N; shift ;;
         --root-login)      [ $# -ge 2 ] || cc_die 2 "--root-login needs yes, no, key-only or leave"; ROOTMODE=$2; shift 2 ;;
@@ -169,7 +188,8 @@ while [ $# -gt 0 ]; do
         *)                 cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
+case "$BOX" in ''|splunk|webmail|ecomm|fileshare|gitea|web|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm, fileshare, gitea, web or other" ;; esac
+case "$GKEYS" in ''|keep|ask) ;; *) cc_die 2 "--gitea-keys must be keep or ask" ;; esac
 case "$ROOTMODE" in y|yes) ROOTMODE=yes ;; n|no) ROOTMODE=no ;; k|key-only) ROOTMODE=key-only ;; l|leave) ROOTMODE=leave ;; '') ;; *) cc_die 2 "--root-login must be yes, no, key-only or leave" ;; esac
 case "$TIMER" in ''|*[!0-9]*) cc_die 2 "--timer needs a whole number of seconds" ;; esac
 for _s in $SETS; do
@@ -234,9 +254,25 @@ cur() {  # cur KEY DEFAULT -> the value in effect now
 }
 _ports=$(cur port 22 | tr '\n' ' ')
 cc_show "" "  Port(s):  $_ports    Root login: $(rootword "$(cur permitrootlogin prohibit-password)")    Password logins: $(cur passwordauthentication yes)"
-if [ -z "$R" ] && cc_have ss; then
-    _l=$(ss -ltnp 2>/dev/null | awk '/"sshd"/ { print $4 }' | tr '\n' ' ')
-    if [ -n "$_l" ]; then cc_show "" "  Listening: $_l"; else cc_show "$C_YEL" "  sshd is not listening right now."; fi
+# Ubuntu 24.04 and Mint 22: systemd holds the port (ssh.socket) and starts
+# an sshd for each login, so no sshd is listening.  BT_SSH_SOCKET=1 in tests.
+SOCKET=0
+if [ -n "${BT_SSH_SOCKET:-}" ]; then SOCKET=$BT_SSH_SOCKET
+elif [ -z "$R" ] && [ "$CC_INIT" = systemd ] && systemctl is-active -q ssh.socket 2>/dev/null; then SOCKET=1; fi
+# listeners PROGRAM -> "addr:port ..." that PROGRAM listens on (ss, else
+# netstat, else busybox netstat on Alpine).
+listeners() {
+    if cc_have ss; then ss -ltnp 2>/dev/null | awk -v p="\"$1\"" 'index($0, p) { print $4 }'
+    else { netstat -ltnp 2>/dev/null || busybox netstat -ltnp 2>/dev/null; } | awk -v p="/$1" '$1 ~ /^tcp/ { n = $NF; if (substr(n, length(n) - length(p) + 1) == p || index(n, p " ")) print $4 }'
+    fi | tr '\n' ' '
+}
+if [ -z "$R" ] || [ -n "${BT_SSH_SOCKET:-}" ]; then
+    if [ "$SOCKET" = 1 ]; then
+        cc_show "" "  Listening: $(listeners systemd)(ssh.socket: systemd starts an sshd for each login, so a new config counts from the next login)"
+    else
+        _l=$(listeners sshd)
+        if [ -n "$_l" ]; then cc_show "" "  Listening: $_l"; else cc_show "$C_YEL" "  sshd is not listening right now."; fi
+    fi
 fi
 # Things only a person can judge.
 if [ -f "$CONF" ]; then
@@ -318,14 +354,26 @@ while IFS=: read -r _u _uid _h _sh; do
             _n=$((_n + 1)); _fp=$(fingerprint "$_t" "$_b")
             [ -n "$_fp" ] || _fp="...$(printf '%s' "$_b" | awk '{ print substr($0, length($0) - 11) }')"
             _v=ok; _why=""; _d=Y
-            case "$_o" in *command=*|*environment=*) _v=planted; _why="has a forced command or environment ($_o): runs something at every login with this key"; _d=N ;; esac
+            # Gitea / Forgejo / Gogs / GitLab write their users' keys with a
+            # forced command that only runs git (no shell).  Anything more in
+            # that command (; | & $ ...) is not theirs.
+            case "$_o" in *command=*)
+                _fc=$(printf '%s' "$_o" | sed -n 's/.*command="\([^"]*\)".*/\1/p')
+                case "$_fc" in
+                    *[\;\|\&\$\`\<\>]*) ;;
+                    *gitea*" serv key-"[0-9]*|*forgejo*" serv key-"[0-9]*|*gogs*" serv key-"[0-9]*|*gitlab-shell*" key-"[0-9]*)
+                        _v=gitea; _why="a Gitea user's key: it can only run git (push and pull), no shell. Gitea wrote it; manage it in Gitea (Site Administration, the user, SSH keys)" ;;
+                esac ;;
+            esac
+            [ "$_v" = ok ] && case "$_o" in *command=*|*environment=*) _v=planted; _why="has a forced command or environment ($_o): runs something at every login with this key"; _d=N ;; esac
             if [ "$_v" = ok ] && [ "$_uid" -gt 0 ] && [ "$_uid" -lt 1000 ]; then _v=planted; _why="on a service account ($_u): service accounts do not log in"; _d=N; fi
             if [ "$_v" = ok ] && nologin "$_sh"; then _v=planted; _why="$_u has no login shell ($_sh) but has a key"; _d=N; fi
             if [ "$_v" = ok ] && [ "$_f" != "$_h/.ssh/authorized_keys" ] && [ "$_f" != "$_h/.ssh/authorized_keys2" ]; then _v=check; _why="kept outside the home folder ($_f)"; fi
             if [ "$_v" = ok ] && [ "$_age" = recent ]; then _v=check; _why="the key file changed in the last 7 days"; fi
             [ "$_v" = ok ] && [ "$_uid" = 0 ] && { _v=check; _why="logs in as root"; }
             _act=""
-            case "$KEYMODE" in
+            # Gitea's keys follow --gitea-keys (asked below), not the key flags.
+            [ "$_v" = gitea ] || case "$KEYMODE" in
                 all)   _act=remove ;;
                 keep)  _act=keep ;;
                 allow) if grep -qxF "$_b" "$W/allowed" || grep -qxF "$_fp" "$W/allowed"; then _act=keep; else _act=remove; fi ;;
@@ -333,6 +381,8 @@ while IFS=: read -r _u _uid _h _sh; do
             if cc_is_protected account "$_u" && [ "$CC_FORCE_SCORED" != 1 ]; then _act=keep; _why="${_why:+$_why; }the account is on the protected list"; fi
             printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$_n" "$_u" "$_uid" "$_f" "$_ln" "$_t" "$_b" "$_c" "$_o" "$_fp" "$_v" "$_why" "$_d" "$_act" >>"$W/keys"
             case "$_v" in planted) _col=$C_RED; _tag="[!]" ;; check) _col=$C_YEL; _tag="[*]" ;; *) _col=$C_GRN; _tag="[ok]" ;; esac
+            # Many Gitea keys: one line each would bury the rest.
+            if [ "$_v" = gitea ]; then printf '%s\n' "$_f" >>"$W/gitea"; continue; fi
             cc_show "$_col" "  $_tag key #$_n  $_u  $_t $_fp  ${_c:-(no comment)}"
             cc_show "$C_GRY" "        file: $_f$([ "$_age" = recent ] && echo ' (changed in the last 7 days)')"
             [ -n "$_why" ] && cc_show "$_col" "        $_why"
@@ -340,6 +390,11 @@ while IFS=: read -r _u _uid _h _sh; do
     done
 done <"$W/users"
 [ "$_n" -eq 0 ] && cc_show "$C_GRN" "  [ok] no SSH keys on any account"
+NGIT=0
+if [ -s "$W/gitea" ]; then
+    NGIT=$(grep -c . "$W/gitea")
+    cc_show "$C_GRN" "  [ok] $NGIT Gitea user key(s) in $(sort -u "$W/gitea" | tr '\n' ' ')(git only, no shell; listed in keys.txt)"
+fi
 
 # ---- 3/5  Questions -------------------------------------------------------------------
 header "3/5  questions (each one lists the answers it takes; Enter = the one in capitals)"
@@ -349,14 +404,28 @@ yn() {
     [ "$CC_CHOICE" = y ]
 }
 if [ -z "$BOX" ]; then
-    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "o=other"
-    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
+    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "f=fileshare: Samba or NFS" "g=gitea (git over SSH may be scored)" "b=web: a ticket, help-desk or shop site" "o=other"
+    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; f) BOX=fileshare ;; g) BOX=gitea ;; b) BOX=web ;; *) BOX=other ;; esac
 fi
 SCORED=0
 case "$BOX" in splunk|webmail)
     SCORED=1
     cc_show "$C_YEL" "  SSH is SCORED on $BOX ($BOX-ssh): the scoring engine logs in, probably with a password. Password logins stay on and nothing here blocks it unless you say so." ;;
+gitea)
+    SCORED=1
+    cc_show "$C_YEL" "  Git over SSH may be SCORED on gitea (a clone or push through the git account). Password logins stay on, the git account and its Gitea keys are kept, and nothing here blocks it unless you say so." ;;
 esac
+# Gitea's user keys: all kept, or one by one.
+if [ "$NGIT" -gt 0 ]; then
+    if [ -z "$GKEYS" ]; then
+        cc_choose "Gitea keeps $NGIT user key(s) for git over SSH (they only run git, no shell). What to do with them?" k \
+            "k=keep them all (Gitea manages them; look at them in its web admin)" "o=one by one"
+        case "$CC_CHOICE" in o) GKEYS=ask ;; *) GKEYS=keep ;; esac
+    fi
+    if [ "$GKEYS" = keep ]; then
+        awk -F'|' 'BEGIN { OFS = "|" } $11 == "gitea" && $14 == "" { $14 = "keep" } { print }' "$W/keys" >"$W/keys.g" && mv "$W/keys.g" "$W/keys"
+    fi
+fi
 # Keys, one by one, unless a flag already decided.
 : >"$W/keydec"
 while IFS='|' read -r _n _u _uid _f _ln _t _b _c _o _fp _v _why _d _act; do
@@ -462,6 +531,10 @@ if [ -n "$ALLOWUSERS" ]; then
             case " $_au " in *" $_p "*) ;; *) _au="$_au $_p" ;; esac
         done
     fi
+    # The account Gitea's keys are on (git): git over SSH logs in as it.
+    for _p in $(awk -F'|' '$11 == "gitea" && $14 != "remove" { print $2 }' "$W/keys" | sort -u); do
+        case " $_au " in *" $_p "*) ;; *) _au="$_au $_p"; cc_show "$C_GRY" "        $_p added: Gitea's git over SSH logs in as it" ;; esac
+    done
     printf 'AllowUsers %s\n' "$_au" >>"$W/lines"
 fi
 # Login banners: /etc/issue and /etc/issue.net name the OS and version, and
@@ -535,10 +608,7 @@ NRC=$(grep -c . "$W/rcq" 2>/dev/null); case "$NRC" in ''|*[!0-9]*) NRC=0 ;; esac
 NCH=$((NSET + NRM + NRC + NBAN))
 APPLIED=0; TIMER_ON=0; _reload="not needed"
 result() { if [ "$1" -eq 0 ]; then echo changed; else echo failed; fi; }
-sshd_listening() {
-    if cc_have ss; then ss -ltnp 2>/dev/null | grep -q '"sshd"'
-    else netstat -ltnp 2>/dev/null | grep -q '/sshd'; fi
-}
+sshd_listening() { [ -n "$(listeners sshd)" ]; }
 sshd_reload_cmd() {
     if [ "$CC_INIT" = systemd ]; then echo 'systemctl reload ssh 2>/dev/null || systemctl reload sshd'
     elif cc_have rc-service; then echo 'rc-service sshd reload'
@@ -594,7 +664,7 @@ else
         "ready"*)
             if cc_guard path /etc/ssh/sshd_config; then
                 # A revert puts the file back and then reloads sshd (undo lines run newest first).
-                [ -z "$R" ] && [ "$NORELOAD" != 1 ] && cc_undo_add "reload sshd after the config is put back" "$(sshd_reload_cmd)"
+                [ -z "$R" ] && [ "$NORELOAD" != 1 ] && [ "$SOCKET" != 1 ] && cc_undo_add "reload sshd after the config is put back" "$(sshd_reload_cmd)"
                 if cc_backup_file "$CONF" && cc_run "install the hardened sshd_config" cp "$W/sshd_config.new" "$CONF"; then
                     _cfg_status="installed (passed sshd -t)"; cc_show "$C_GRN" "  [+] sshd_config: block of $(grep -c . "$W/lines") setting(s) installed at the top"
                 else _cfg_status="FAILED to install"; cc_show "$C_RED" "  [x] could not install sshd_config"; fi
@@ -602,7 +672,8 @@ else
     esac
     CC_QUIET=$_q
     case "$_cfg_status" in installed*)
-        if [ -n "$R" ] || [ "$NORELOAD" = 1 ]; then _reload="not reloaded (--no-reload or --root): run 'sshd -t' and reload sshd yourself"
+        if [ "$SOCKET" = 1 ]; then _reload="not needed: ssh.socket starts a new sshd for each login, so the next login uses the new config (open sessions stay up)"; cc_show "$C_GRN" "  [ok] $_reload"
+        elif [ -n "$R" ] || [ "$NORELOAD" = 1 ]; then _reload="not reloaded (--no-reload or --root): run 'sshd -t' and reload sshd yourself"
         elif ! sshd_listening; then _reload="sshd is not running; the new config applies when it starts"
         else
             cc_run_quiet "reload sshd" sh -c "$(sshd_reload_cmd)"; sleep 2
