@@ -4,7 +4,7 @@
 # NAME:     Rootkit and malware scan
 # ROLE:     Linux  (wave 2, then whenever something feels off)
 # KIND:     changes - dry run unless --apply (it only kills and quarantines)
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   LX-42 finds what red team leaves to come back (cron, services, keys).
@@ -14,13 +14,15 @@
 #
 #     hidden processes   a process in /proc that ps does not show
 #     hidden ports       a port listening in /proc/net that ss does not show
+#                        (busybox netstat on Alpine, where there is no ss)
 #     hidden modules     a kernel module in /sys/module that /proc/modules
 #                        (lsmod) does not list; out-of-tree or unsigned
 #                        modules (the kernel's taint flags); known rootkit
 #                        module names (diamorphine, reptile, suterusu ...)
 #     replaced programs  ps, ss, netstat, ls, find, top, lsof, ssh, sshd,
 #                        sudo, login, passwd ... that do not match their
-#                        package (dpkg -V / rpm -V)
+#                        package (dpkg -V / rpm -V / apk audit; on Alpine
+#                        a link to busybox counts as busybox, checked too)
 #     rootkit files      paths known rootkits leave (/etc/ld.so.preload is
 #                        LX-42's; here: reptile, azazel, jynx, bdvl, beurk,
 #                        diamorphine leftovers and the like)
@@ -30,7 +32,9 @@
 #     sniffers           network cards in promiscuous mode
 #     malware            ClamAV, rkhunter and chkrootkit when installed
 #                        (ClamAV over /tmp, /var/tmp, /dev/shm, the web
-#                        folders and the homes); offered to install when the
+#                        folders and the homes, and if you say so the shared
+#                        folders: Samba path =, NFS exports, Gitea's data);
+#                        offered to install with apt, dnf or apk when the
 #                        box can reach a package mirror
 #
 #   Then asked, one by one: kill a hidden / fake / miner process, quarantine
@@ -40,6 +44,7 @@
 #
 #   QUESTIONS (Enter takes the default in capitals; a flag answers each):
 #     install ClamAV / rkhunter now?      --install / --no-install
+#     also scan the shared folders?       --shares / --no-shares
 #     each finding: [k]ill / [q]uarantine / [l]eave / [a]ll the rest default
 #     apply?                              --apply
 #
@@ -53,6 +58,9 @@
 #   --install          install clamav and rkhunter if missing (needs a mirror)
 #   --no-install       never offer it
 #   --no-clamav        skip the ClamAV scan (it can take minutes)
+#   --shares           also scan the shared folders (Samba path =, NFS
+#                      /etc/exports, Gitea's data) without asking
+#   --no-shares        never scan them
 #   --scan DIR         also scan this folder with ClamAV (repeatable)
 #   --root DIR         treat DIR as / for the file checks (tests)
 #   --no-color         no colours
@@ -63,19 +71,25 @@
 #   chkrootkit.txt when they ran; quarantined files and their undo lines
 #
 # DEPENDS ON
-#   ps, ss, awk, /proc and /sys; dpkg or rpm for the program check;
+#   ps, ss (or netstat), awk, /proc and /sys; dpkg, rpm or apk for the
+#   program check;
 #   clamscan, rkhunter, chkrootkit when present.
 #
 # TESTED ON
 #   Ubuntu 24.04 with stand-ins (a miner, a fake kernel thread, a replaced
 #   program, rootkit file paths in a fake root, an EICAR test file for
 #   ClamAV), under dash, bash, busybox sh, ksh93, mksh and yash with gawk,
-#   mawk and busybox awk.
+#   mawk and busybox awk.  Alpine with stand-ins: no ss (busybox netstat),
+#   an apk database and apk audit; not yet on a real Alpine box.
 #
 # KNOWN LIMITS / WHAT TO WATCH FOR
 #   - A kernel rootkit can hide from /proc too.  If this finds nothing but
 #     the box still feels wrong, check from outside (SH-03 scan of the box:
 #     a port open there but not in ss is hidden).
+#   - ClamAV needs signatures (freshclam, needs internet).  Without them it
+#     says so instead of "found nothing".
+#   - Rocky: clamav and rkhunter come from EPEL; Alpine: the community
+#     repository.
 #   - The "hidden" checks compare two views a split second apart: a process
 #     that just ended can show once.  Run it twice before acting.
 # =============================================================================
@@ -1538,6 +1552,8 @@ LX-45 Rootkit and malware scan - hidden processes, ports and modules, replaced p
   --install          install clamav and rkhunter if missing
   --no-install       never offer it
   --no-clamav        skip the ClamAV scan
+  --shares           also scan the shared folders (Samba, NFS, Gitea)
+  --no-shares        never scan them
   --scan DIR         also scan this folder with ClamAV (repeatable)
   --root DIR         treat DIR as / for the file checks (tests)
   --no-color         no colours
@@ -1548,7 +1564,7 @@ USAGE
 
 NL='
 '
-INSTALL=""; CLAM=1; EXTRA=""; R=""; COLOR=1
+INSTALL=""; SHSCAN=""; CLAM=1; EXTRA=""; R=""; COLOR=1
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
@@ -1556,6 +1572,8 @@ while [ $# -gt 0 ]; do
         --install)    INSTALL=y; shift ;;
         --no-install) INSTALL=n; shift ;;
         --no-clamav)  CLAM=0; shift ;;
+        --shares)     SHSCAN=y; shift ;;
+        --no-shares)  SHSCAN=n; shift ;;
         --scan)       [ $# -ge 2 ] || cc_die 2 "--scan needs a folder"; [ -d "$2" ] || cc_die 2 "--scan: not a folder: $2"; EXTRA="$EXTRA$(cc_abspath "$2")$NL"; shift 2 ;;
         --root)       [ $# -ge 2 ] || cc_die 2 "--root needs a folder"; [ -d "$2" ] || cc_die 2 "--root: not a folder: $2"; R=$(cd "$2" && pwd); [ "$R" = / ] && R=""; shift 2 ;;
         --no-color|--no-colour) COLOR=0; shift ;;
@@ -1621,11 +1639,17 @@ done
 # Ports: /proc/net/tcp state 0A = LISTEN; ports in hex.
 awk 'FNR > 1 && $4 == "0A" { split($2, a, ":"); print a[2] }' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u | while IFS= read -r _h; do
     printf '%d\n' "0x$_h"; done | sort -un >"$W/pp"
-ss -lnt 2>/dev/null | awk 'NR > 1 { n = split($4, a, ":"); print a[n] }' | sort -un >"$W/sp"
+# The second view: ss, or netstat where there is no ss (Alpine: busybox
+# netstat; old boxes: net-tools).  Both print the local address in a column
+# ending in :PORT.
+SSN=""
+if cc_have ss; then SSN=ss; ss -lnt 2>/dev/null | awk 'NR > 1 { n = split($4, a, ":"); print a[n] }' | sort -un >"$W/sp"
+elif cc_have netstat; then SSN=netstat; netstat -lnt 2>/dev/null | awk '$1 ~ /^tcp/ && $NF == "LISTEN" { n = split($4, a, ":"); print a[n] }' | sort -un >"$W/sp"
+else : >"$W/sp"; fi
 _hp=$(comm -23 "$W/pp" "$W/sp" | tr '\n' ' ')
-if ! cc_have ss || { [ -s "$W/pp" ] && [ ! -s "$W/sp" ]; }; then cc_show "$C_YEL" "  [*] ss is missing or lists nothing: hidden-port check skipped"
-elif [ -n "$_hp" ]; then f HIGH port "listening in /proc/net/tcp but NOT shown by ss: $_hp- something is hiding it (check with SH-03 from another box)" none ""
-else ok "every listening TCP port in /proc is shown by ss"; fi
+if [ -z "$SSN" ] || { [ -s "$W/pp" ] && [ ! -s "$W/sp" ]; }; then cc_show "$C_YEL" "  [*] ss and netstat are missing or list nothing: hidden-port check skipped"
+elif [ -n "$_hp" ]; then f HIGH port "listening in /proc/net/tcp but NOT shown by $SSN: $_hp- something is hiding it (check with SH-03 from another box)" none ""
+else ok "every listening TCP port in /proc is shown by $SSN"; fi
 
 # ---- 2. Kernel modules ----------------------------------------------------------------------
 header "2/6  kernel modules"
@@ -1649,8 +1673,16 @@ grep -q "${US}module${US}" "$W/find" || ok "$(grep -c . "$W/mods") modules, none
 # ---- 3. Replaced programs --------------------------------------------------------------------
 header "3/6  replaced programs"
 CORE="ps ss netstat ls find top lsof ssh sshd sudo su login passwd w who last lastlog grep cat crontab systemctl ip ifconfig kill pgrep pkill du df stat md5sum sha256sum"
+# Alpine: busybox is most of them, doas is its sudo, OpenRC starts services.
+CORE="$CORE busybox doas rc-service rc-update openrc"
+APKDB=${BT_TEST_APKDB:-/lib/apk/db/installed}
+# Which package database to check against (BT_TEST_PM names it in tests).
+PMV=${BT_TEST_PM:-}
+if [ -z "$PMV" ]; then
+    if cc_have dpkg; then PMV=dpkg; elif cc_have rpm; then PMV=rpm; elif cc_have apk && [ -f "$APKDB" ]; then PMV=apk; fi
+fi
 : >"$W/replaced"
-if [ -z "$R" ] && cc_have dpkg; then
+if [ -z "$R" ] && [ "$PMV" = dpkg ]; then
     for _b in $CORE; do _p=$(cc_which "$_b") || continue; printf '%s\n' "$_p"; done | sort -u >"$W/bins"
     while IFS= read -r _p; do
         # With the merged /usr, dpkg may list /usr/bin/ss as /bin/ss.
@@ -1671,12 +1703,50 @@ if [ -z "$R" ] && cc_have dpkg; then
         grep -q "/${_c##*/}\$" "$W/bins" || continue
         f HIGH program "$_c does not match its package (replaced?): reinstall it - apt-get install --reinstall $(dpkg -S "$_c" 2>/dev/null | cut -d: -f1 | head -n 1)" none ""
     done <"$W/changed"
-elif [ -z "$R" ] && cc_have rpm; then
+elif [ -z "$R" ] && [ "$PMV" = rpm ]; then
     for _b in $CORE; do _p=$(cc_which "$_b") || continue; rpm -Vf "$_p" 2>/dev/null | awk -v p="$_p" '$1 ~ /5/ && $NF == p { print p }'; done | sort -u | while IFS= read -r _c; do
         f HIGH program "$_c does not match its package (replaced?): dnf reinstall $(rpm -qf "$_c")" none ""
     done
+elif [ -z "$R" ] && [ "$PMV" = apk ] && [ -f "$APKDB" ]; then
+    # Alpine.  Most core programs are links to /bin/busybox that no package
+    # lists (busybox makes them at install), so a link to busybox counts as
+    # busybox itself, and busybox is checked.  A real file in their place is
+    # what a rootkit leaves.
+    # "path package" for every file apk installed (F: folder, R: file, P: package).
+    awk '/^P:/ { p = substr($0, 3) } /^F:/ { d = substr($0, 3) } /^R:/ { print "/" d "/" substr($0, 3) " " p }' "$APKDB" 2>/dev/null | sort -u >"$W/apkown"
+    apk_owner() {
+        for _ao_q in "$1" "${1#/usr}" "/usr$1"; do
+            _ao_p=$(awk -v f="$_ao_q" '$1 == f { print $2; exit }' "$W/apkown"); [ -n "$_ao_p" ] && { printf '%s\n' "$_ao_p"; return 0; }
+        done
+        return 1
+    }
+    : >"$W/check"
+    for _b in $CORE; do
+        _p=$(cc_which "$_b") || continue
+        _l=$(readlink "$_p" 2>/dev/null)
+        case "$_l" in */busybox|busybox) _p=$(cc_which busybox) || continue ;; esac
+        if [ -h "$_p" ]; then
+            # Another link: follow it (doas -> /usr/bin/doas and the like).
+            _i=0; while [ -h "$_p" ] && [ "$_i" -lt 5 ]; do _l=$(readlink "$_p"); case "$_l" in /*) _p=$_l ;; *) _p="$(dirname "$_p")/$_l" ;; esac; _i=$((_i + 1)); done
+        fi
+        printf '%s\n' "$_p"
+    done | sort -u >"$W/bins"
+    while IFS= read -r _p; do
+        if _pk=$(apk_owner "$_p"); then printf '%s %s\n' "$_p" "$_pk" >>"$W/check"
+        else f HIGH program "$_p belongs to no package: placed there by hand?" quarantine "$_p"; fi
+    done <"$W/bins"
+    # apk audit: U = the file is not what the package put there.  Paths come
+    # without the leading / on some apk versions.
+    apk audit --system /bin /sbin /usr/bin /usr/sbin 2>/dev/null | awk '$1 == "U" { p = $2; if (p !~ /^\//) p = "/" p; print p }' | sort -u >"$W/changed"
+    while IFS=' ' read -r _p _pk; do
+        if grep -qxF "$_p" "$W/changed" || grep -qxF "${_p#/usr}" "$W/changed" || grep -qxF "/usr$_p" "$W/changed"; then
+            f HIGH program "$_p does not match its package (replaced?): reinstall it - apk fix $_pk" none ""
+        fi
+    done <"$W/check"
 fi
-grep -q "${US}program${US}" "$W/find" || ok "ps, ss, ls, ssh, sudo and the other core programs match their packages"
+if [ -n "$R" ]; then cc_show "$C_GRY" "  (program check skipped with --root: it checks this box's own programs)"
+elif [ -z "$PMV" ]; then cc_show "$C_YEL" "  [*] no dpkg, rpm or apk database here: program check skipped"
+else grep -q "${US}program${US}" "$W/find" || ok "ps, ss, ls, ssh, sudo and the other core programs match their packages ($PMV)"; fi
 
 # ---- 4. Rootkit files, fake kernel threads, miners, sniffers ---------------------------------
 header "4/6  rootkit files, fake kernel threads, miners, sniffers"
@@ -1708,7 +1778,10 @@ awk '{ c = tolower($2); a = tolower($0) }
     [ "$_p" = "$$" ] && continue
     f HIGH miner "a crypto miner: pid $_p ($_c, $(readlink "/proc/$_p/exe" 2>/dev/null))" kill "$_p $(cat "/proc/$_p/comm" 2>/dev/null)"
 done
-ss -tnp 2>/dev/null | awk 'NR > 1 { n = split($5, a, ":"); if (a[n] ~ /^(3333|4444|5555|7777|14433|14444|45700|45560|20580|9999)$/) print $5 " " $NF }' | while IFS= read -r _l; do
+{ if [ "$SSN" = ss ]; then ss -tnp 2>/dev/null | awk 'NR > 1 { print $5 " " $NF }'
+  # Alpine: busybox netstat -p gives PID/name in the last column.
+  elif [ "$SSN" = netstat ]; then { netstat -tnp 2>/dev/null || netstat -tn 2>/dev/null; } | awk '$1 ~ /^tcp/ && $6 == "ESTABLISHED" { print $5 " " (NF > 6 ? $NF : "") }'; fi
+} | awk '{ n = split($1, a, ":"); if (a[n] ~ /^(3333|4444|5555|7777|14433|14444|45700|45560|20580|9999)$/) print }' | while IFS= read -r _l; do
     f MED miner "a connection to a usual mining-pool port: $_l" none ""
 done
 for _i in /sys/class/net/*/flags; do
@@ -1720,26 +1793,80 @@ grep -Eq "${US}(miner|sniffer)${US}|calls itself" "$W/find" || ok "no fake kerne
 # ---- 5. Malware scanners ---------------------------------------------------------------------
 header "5/6  ClamAV, rkhunter, chkrootkit"
 _miss=""; cc_have clamscan || _miss="$_miss clamav"; cc_have rkhunter || _miss="$_miss rkhunter"
-if [ -n "$_miss" ] && [ -z "$R" ] && [ "$INSTALL" != n ] && cc_have apt-get; then
+# The install command for this box (BT_TEST_PM picks one in tests).
+_ipm=${BT_TEST_PM:-}
+if [ -z "$_ipm" ]; then
+    if cc_have apt-get; then _ipm=apt; elif cc_have dnf; then _ipm=dnf; elif cc_have yum; then _ipm=yum; elif cc_have apk; then _ipm=apk; fi
+fi
+case "$_ipm" in
+    apt|dpkg) _icmd="apt-get install -y -q"; _ihint="apt-get install$_miss" ;;
+    # Rocky / RHEL: clamav and rkhunter are in EPEL (Fedora has them itself).
+    dnf|rpm)  _icmd="dnf install -y -q"; _ihint="dnf install$_miss  (Rocky: needs EPEL - dnf install epel-release)" ;;
+    yum)      _icmd="yum install -y -q"; _ihint="yum install$_miss  (needs EPEL)" ;;
+    # Alpine: both are in the community repository.
+    apk)      _icmd="apk add -q"; _ihint="apk add$_miss  (community repository on in /etc/apk/repositories)" ;;
+    *)        _icmd=""; _ihint="" ;;
+esac
+if [ -n "$_miss" ] && [ -z "$R" ] && [ "$INSTALL" != n ] && [ -n "$_icmd" ]; then
     if [ "$INSTALL" = y ] || cc_ask "Install$_miss now (needs a package mirror; about 300 MB for ClamAV)?" N "yes, install them" "no, scan without them"; then
         if [ "$CC_APPLY" = 1 ] && cc_is_root; then
             cc_show "" "  installing$_miss ..."
             # shellcheck disable=SC2086  # a list of package names
-            DEBIAN_FRONTEND=noninteractive $(cc_have timeout && echo timeout 600) apt-get install -y -q $_miss >>"$CC_LOG" 2>&1 && cc_show "$C_GRN" "  [+] installed$_miss" || cc_show "$C_RED" "  [x] could not install$_miss (no mirror?)"
+            DEBIAN_FRONTEND=noninteractive $(cc_have timeout && echo timeout 600) $_icmd $_miss >>"$CC_LOG" 2>&1 && cc_show "$C_GRN" "  [+] installed$_miss" || cc_show "$C_RED" "  [x] could not install$_miss (no mirror?): $_ihint"
         else cc_show "$C_GRY" "  (installing needs --apply and root)"; fi
+    else cc_show "$C_GRY" "  to install them later: $_ihint"; fi
+elif [ -n "$_miss" ] && [ -z "$R" ] && [ -n "$_ihint" ]; then cc_show "$C_GRY" "  not installed:$_miss - to install: $_ihint"; fi
+SCAN=""
+# Gitea's repositories and the folders the box shares (Samba path =,
+# /etc/exports) hold files other people upload.  Asked: --shares / --no-shares.
+SHARES=""
+for _c in /etc/samba/smb.conf /etc/smb.conf; do
+    [ -f "$(P "$_c")" ] && SHARES="$SHARES$(sed -n 's/^[[:space:]]*path[[:space:]]*=[[:space:]]*//p' "$(P "$_c")" | sed 's/[[:space:]]*$//')$NL"
+done
+[ -f "$(P /etc/exports)" ] && SHARES="$SHARES$(awk '$1 ~ /^\// { print $1 }' "$(P /etc/exports)")$NL"
+SHARES="$SHARES/var/lib/gitea$NL/home/git$NL"
+# scan_dirs FILE -> the folders in FILE that exist, once each, under --root.
+scan_dirs() {
+    while IFS= read -r _d; do
+        # Samba's %U / %H style paths are per user: not one folder.
+        case "$_d" in *%*|'') continue ;; esac
+        case "$_seen" in *"$NL$_d$NL"*) continue ;; esac
+        _seen="$_seen$_d$NL"
+        [ -d "$(P "$_d")" ] && printf '%s\n' "$(P "$_d")"
+    done <"$1"
+}
+_seen="$NL"
+printf '%s\n' /tmp /var/tmp /dev/shm /var/www /srv /home /root /usr/share/roundcube >"$W/dirs"
+SCAN=$(scan_dirs "$W/dirs")
+[ -n "$SCAN" ] && SCAN="$SCAN$NL"
+# scan_dirs runs in a subshell above, so mark the usual ones seen again here.
+_seen="$NL$(cat "$W/dirs")$NL"
+printf '%s' "$SHARES" >"$W/sdirs"
+SH_FOUND=$(scan_dirs "$W/sdirs")
+# A share inside a folder scanned anyway (/srv/share in /srv) is not asked.
+printf '%s' "$SCAN" >"$W/base"
+SH_FOUND=$(printf '%s\n' "$SH_FOUND" | awk 'NR == FNR { if ($0 != "") b[$0] = 1; next } $0 != "" { for (d in b) if (index($0, d "/") == 1) next; print }' "$W/base" -)
+if [ -n "$SH_FOUND" ] && [ "$CLAM" = 1 ] && cc_have clamscan; then
+    if [ "$SHSCAN" = n ]; then :
+    elif [ "$SHSCAN" = y ] || cc_ask "Also scan the shared folders (Samba, NFS, Gitea): $(printf '%s' "$SH_FOUND" | sed "s|^$R||" | tr '\n' ' ')?" Y "yes, scan them too (uploads from other people; can take longer)" "no, only the usual folders"; then
+        SCAN="$SCAN$SH_FOUND$NL"
     fi
 fi
-SCAN=""
-for _d in /tmp /var/tmp /dev/shm /var/www /srv /home /root /usr/share/roundcube; do [ -d "$(P "$_d")" ] && SCAN="$SCAN$(P "$_d")$NL"; done
 SCAN="$SCAN$EXTRA"
 if [ "$CLAM" = 1 ] && cc_have clamscan; then
     cc_show "" "  ClamAV over: $(printf '%s' "$SCAN" | tr '\n' ' ')(can take a few minutes)"
-    # shellcheck disable=SC2046  # the folder list
-    clamscan -r -i --no-summary --max-filesize=20M $(printf '%s' "$SCAN" | tr '\n' ' ') >"$CC_RUN_DIR/clamav.txt" 2>>"$CC_LOG"
+    # The folders as a list file: share paths may have spaces.
+    printf '%s' "$SCAN" >"$W/scanlist"
+    clamscan -r -i --no-summary --max-filesize=20M --file-list="$W/scanlist" >"$CC_RUN_DIR/clamav.txt" 2>"$W/clamerr"
+    _crc=$?; cat "$W/clamerr" >>"$CC_LOG" 2>/dev/null
     sed -n 's/^\(.*\): \(.*\) FOUND$/\1\037\2/p' "$CC_RUN_DIR/clamav.txt" | while IFS="$US" read -r _x _sig; do
         f HIGH malware "ClamAV: ${_x#"$R"} is $_sig" quarantine "$_x"
     done
-    grep -q "${US}malware${US}" "$W/find" || ok "ClamAV found nothing (signatures from $(sigtool --info /var/lib/clamav/daily.c?d 2>/dev/null | sed -n 's/^Build time: //p' | head -n 1))"
+    # No signatures (no internet for freshclam): it scanned nothing.
+    if [ "$_crc" -eq 2 ] && grep -qi 'database' "$W/clamerr"; then
+        cc_show "$C_YEL" "  [*] ClamAV has no signatures, so it scanned nothing: run freshclam (needs internet), then this again"
+    else grep -q "${US}malware${US}" "$W/find" || ok "ClamAV found nothing (signatures from $(sigtool --info /var/lib/clamav/daily.c?d 2>/dev/null | sed -n 's/^Build time: //p' | head -n 1))"
+    fi
 else cc_show "$C_GRY" "  ClamAV: not installed (or --no-clamav)"; fi
 if [ -z "$R" ] && cc_have rkhunter; then
     rkhunter --check --sk --nocolors --rwo >"$CC_RUN_DIR/rkhunter.txt" 2>>"$CC_LOG"

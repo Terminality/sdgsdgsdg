@@ -3102,14 +3102,14 @@ sudo sh LX-45-rootkit-scan.sh --protected p.csv --apply --batch --no-install
 | Area | Found |
 | --- | --- |
 | Hidden processes | A process in `/proc` that `ps` doesn't show (checked twice, a second apart) |
-| Hidden ports | A port listening in `/proc/net/tcp` that `ss` doesn't show |
+| Hidden ports | A port listening in `/proc/net/tcp` that `ss` doesn't show (`netstat` where there is no `ss`, like Alpine) |
 | Kernel modules | A module in `/sys/module` that `lsmod` doesn't list; known rootkit module names (diamorphine, reptile, suterusu...); the kernel's taint flags (out-of-tree, unsigned) |
-| Replaced programs | `ps ss netstat ls find top lsof ssh sshd sudo su login passwd w who last grep cat crontab systemctl ip kill pgrep du df stat md5sum`... that don't match their package (`dpkg -V` / `rpm -V`), or belong to no package |
+| Replaced programs | `ps ss netstat ls find top lsof ssh sshd sudo su login passwd w who last grep cat crontab systemctl ip kill pgrep du df stat md5sum`... that don't match their package (`dpkg -V` / `rpm -V` / `apk audit`), or belong to no package. On Alpine a link to busybox counts as busybox, which is checked; `doas`, `rc-service` and `openrc` too |
 | Rootkit files | Paths known rootkits use (reptile, azazel, jynx, bdvl, beurk, processhider...), programs in `/dev` or `/dev/shm` |
 | Fake kernel threads | A process named like `[kworker/0:1]` that has a program file |
 | Miners | Known miner program names, `stratum+tcp://` and `--donate-level` on a command line; connections to mining-pool ports |
 | Sniffers | Network cards in promiscuous mode |
-| Malware | **ClamAV** over `/tmp /var/tmp /dev/shm /var/www /srv /home /root` and Roundcube (+ `--scan DIR`); **rkhunter** and **chkrootkit** warnings, when installed |
+| Malware | **ClamAV** over `/tmp /var/tmp /dev/shm /var/www /srv /home /root` and Roundcube (+ `--scan DIR`), and if you say so the shared folders (Samba `path =`, NFS `/etc/exports`, Gitea's `/var/lib/gitea`); **rkhunter** and **chkrootkit** warnings, when installed |
 
 `/etc/ld.so.preload` (the usual userland rootkit) is LX-42's check.
 
@@ -3117,7 +3117,8 @@ sudo sh LX-45-rootkit-scan.sh --protected p.csv --apply --batch --no-install
 
 | Question | Answers | Flag |
 | --- | --- | --- |
-| Install ClamAV and rkhunter now? (only when missing and apt is there) | `[y]` / `[n]`, default no | `--install` / `--no-install` |
+| Install ClamAV and rkhunter now? (only when missing; apt, dnf or apk) | `[y]` / `[n]`, default no | `--install` / `--no-install` |
+| Also scan the shared folders? (only when the box shares some outside the usual folders) | `[y]` / `[n]`, default yes | `--shares` / `--no-shares` |
 | Each process finding | `[k]ill` / `[l]eave` / `[a]ll the rest default` | `--batch` |
 | Each file finding | `[q]uarantine` / `[l]eave` / `[a]ll the rest default` | `--batch` |
 | Do these? | `[y]` / `[n]` | `--apply` |
@@ -3134,7 +3135,8 @@ In `rootkit-N/`: `output.txt`, `findings.txt`, `summary.txt`, `clamav.txt` / `rk
 
 - **A kernel rootkit can hide from `/proc` too.** If nothing shows but the box still feels wrong, scan it from another box (SH-03): a port open there but not in `ss` is hidden.
 - **Run it twice before acting** on a "hidden" finding: a process that ended between the two views can show once.
-- **ClamAV needs signatures** (`freshclam`). Without internet, there are none.
+- **ClamAV needs signatures** (`freshclam`). Without internet, there are none, and it says so instead of "found nothing".
+- **Installing:** Ubuntu and Mint `apt-get install clamav rkhunter`; Rocky needs EPEL first (`dnf install epel-release`); Fedora has them; Alpine `apk add clamav rkhunter` with the community repository on. When it doesn't install them, it prints the command.
 
 ## 47. AppArmor confinement, `roles/linux/LX-44-apparmor.sh` (LX-44)
 
