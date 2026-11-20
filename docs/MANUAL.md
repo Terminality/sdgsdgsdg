@@ -3165,7 +3165,7 @@ Run it three times, with time between:
 | mariadb / mysql | The package's own profile when there is one, else `bt-mysqld` |
 | postfix, dovecot | Not covered: they run many helper programs |
 
-On Red Hat / Rocky (SELinux, not AppArmor) it only shows the SELinux mode and how to turn it on.
+**Rocky and Fedora** use SELinux, not AppArmor: it says so, shows SELinux now and after a reboot (`SELINUX=` in `/etc/selinux/config`), how to turn it on when it is permissive, and that a disabled one needs a relabel and a reboot. Nothing is changed. **Alpine** has AppArmor off unless booted with it: it says so and stops (exit 0).
 
 ### The questions
 

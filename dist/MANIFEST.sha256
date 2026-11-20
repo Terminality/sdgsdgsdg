@@ -24,7 +24,7 @@ d6015e88bd2200df13a4d2dfb3464a1b6b86ce7d0ffd9df1da4ba17aae29445e  linux/LX-39-sa
 cbe48f9413db5fcdd0415f6899ca2ea49778605c49d2d0602f3deb96807a6b06  linux/LX-41-session-log.sh
 495ff3cc1edec46cc1c7a1991b274209134ed18dbf1452c8e4038cec4e161f42  linux/LX-42-persistence-sweep.sh
 a54791b1a2ad7450f392c2a4c0a00dd71b86e77d5054ef3227e4bc7b7218c2e1  linux/LX-43-log-shipping.sh
-65449033feadea52d8d1c3bdb99dfc797dd4b1a7d98914930e2a21389e02f0d3  linux/LX-44-apparmor.sh
+56c4c7014a7447ca5d5905c4a9169edd3bcf9feec4c8ceb00dff5436a1efdec1  linux/LX-44-apparmor.sh
 9149044eb7c18e1a8e4b5fa4c8d526542edde8e4f5ca13ccdb175b1ec1a4dfac  linux/LX-45-rootkit-scan.sh
 a608ea8d814a82669512cc9fe2b3c89b355efdfbddbd48cb61e973650ae8bd91  linux/LX-46-safe-updates.sh
 71f2ba47660a3598036894efa5544a6452f433740edbb528c8bb7045bebbe290  linux/SH-05-linux-enum.sh
