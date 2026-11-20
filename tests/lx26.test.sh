@@ -73,4 +73,46 @@ if [ "$(id -u)" = 0 ]; then
     fi
 fi
 stop_all
+
+t_start "this network's boxes and tools"
+for _b in fileshare gitea web; do $SH "$C" --out "$O" --no-color --box "$_b" --batch >/dev/null 2>&1; t_eq "$?" 0 "--box $_b is accepted"; done
+out=$($SH "$C" --out "$O" --no-color --batch 2>&1)
+t_has "$out" "Which box is this? (its scored ports are never offered) [s/w/e/f/g/b/O] o (default): other" "the box question offers the new boxes"
+for _n in tailscaled iodine guacd kdeconnectd; do cp "$SLEEP" "$B/$_n"; "$B/$_n" 600 & PIDS="$PIDS $!"; done
+_i=0; while ! ps -eo comm= | grep -qx kdeconnectd && [ "$_i" -lt 20 ]; do sleep 1; _i=$((_i + 1)); done
+out=$(run --batch 2>&1)
+t_has "$out" "[!] HIGH tunnel: a mesh VPN (a way in that skips the firewall): tailscaled" "Tailscale is HIGH"
+t_has "$out" "[!] HIGH tunnel: a DNS or ICMP tunnel (data hidden in lookups or pings): iodine" "iodine is HIGH"
+t_has "$out" "[!] HIGH remote desktop: a remote desktop: guacd" "Guacamole is HIGH"
+t_has "$out" "[*] MED desktop control: keyboard and mouse from another machine: kdeconnectd" "KDE Connect is MED"
+stop_all
+if [ "$HAVE_NC" = 1 ]; then
+    cp "$(command -v nc)" "$B/ttyd"; "$B/ttyd" -lk 3000 >/dev/null 2>&1 & PIDS="$PIDS $!"
+    _i=0; while ! ss -lnt 2>/dev/null | grep -q ':3000 ' && [ "$_i" -lt 10 ]; do sleep 1; _i=$((_i + 1)); done
+    out=$($SH "$C" --out "$O" --no-color --box gitea --batch 2>&1)
+    t_has "$out" "(kept: scored port 3000)" "--box gitea keeps port 3000"
+    out=$($SH "$C" --out "$O" --no-color --box web --batch 2>&1)
+    t_hasnt "$out" "(kept: scored port 3000)" "--box web does not"
+    stop_all
+fi
+
+t_start "no ss or netstat: busybox netstat (Alpine)"
+# A PATH without ss and netstat, and a stand-in busybox that prints what
+# Alpine's busybox netstat -lntup prints (PID/name last).
+NB="$T_TMP/noss"; mkdir -p "$NB"
+for _d in /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
+    for _x in "$_d"/*; do _n=${_x##*/}; case "$_n" in ss|netstat|busybox) continue ;; esac; [ -e "$NB/$_n" ] || ln -s "$_x" "$NB/$_n" 2>/dev/null; done
+done
+cp "$SLEEP" "$B/x11vnc"; "$B/x11vnc" 600 & VP=$!; PIDS="$PIDS $VP"
+_i=0; while ! ps -eo comm= | grep -qx x11vnc && [ "$_i" -lt 20 ]; do sleep 1; _i=$((_i + 1)); done
+{ printf '#!/bin/sh\n[ "$1" = netstat ] || exit 1\n'
+  printf 'echo "Active Internet connections (only servers)"\n'
+  printf 'echo "Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name"\n'
+  printf 'echo "tcp        0      0 0.0.0.0:5900            0.0.0.0:*               LISTEN      %s/x11vnc"\n' "$VP"; } >"$NB/busybox"
+chmod +x "$NB/busybox"
+# The shell by its full path: "busybox sh" would find the stand-in.
+_shx=$SH; case "$SH" in busybox*) _shx="$(command -v busybox) ${SH#busybox }" ;; *) _shx=$(command -v "$SH") ;; esac
+out=$(export PATH="$NB"; $_shx "$C" --out "$O" --no-color --box ecomm --batch 2>&1)
+t_has "$out" "x11vnc (pid $VP, port 5900)" "the port comes from busybox netstat"
+stop_all
 t_done
