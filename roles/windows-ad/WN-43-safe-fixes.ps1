@@ -856,7 +856,13 @@ function F-winlogon {
         else { Fine winlogon "$k\Userinit" $ui.Data }
     }
     $sh = R-Get $k 'Shell'
-    if ($null -ne $sh -and (Lc $sh.Data).Trim() -ne 'explorer.exe' -and $sh.Data.Trim() -ne '') { RegSetRaw winlogon $k 'Shell' 'String' $sh.Data 'explorer.exe' }
+    # Server Core has no explorer.exe: setting Shell to it would leave every
+    # logon with no shell at all.  There it is only reported.
+    $hasExplorer = $true
+    if ($Fake) { $hasExplorer = -not (Test-Path -LiteralPath (Fake-Path 'no-explorer')) }
+    elseif ($env:SystemRoot) { $hasExplorer = Test-Path -LiteralPath (Join-Path $env:SystemRoot 'explorer.exe') }
+    if ($null -ne $sh -and (Lc $sh.Data).Trim() -ne 'explorer.exe' -and $sh.Data.Trim() -ne '' -and -not $hasExplorer) { Res winlogon "$k\Shell" $sh.Data $sh.Data 'left: no explorer.exe here (Server Core?) - check the Shell value by hand' }
+    elseif ($null -ne $sh -and (Lc $sh.Data).Trim() -ne 'explorer.exe' -and $sh.Data.Trim() -ne '') { RegSetRaw winlogon $k 'Shell' 'String' $sh.Data 'explorer.exe' }
     elseif ($null -ne $sh) { Fine winlogon "$k\Shell" $sh.Data }
     # A stored logon password is readable by any admin.  Its value is never
     # shown or logged; the key backup (admin-only) keeps it for -Undo.

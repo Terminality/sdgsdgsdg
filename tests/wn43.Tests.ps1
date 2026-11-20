@@ -276,6 +276,19 @@ T-Eq (Reg "$CCS\Services\Netlogon\Parameters" 'FullSecureChannelProtection') '0'
 T-Eq (Row 'services.csv' 'name' 'Spooler' 'state') 'Running' 'Spooler left alone off a DC'
 T-Eq (Row 'auditpol.csv' 'guid' '{0CCE923C-69AE-11D9-BED3-505054503030}' 'setting') '(none)' 'directory-change auditing only on a DC'
 
+T-Start 'Server Core: no explorer.exe, so Shell is only reported'
+Plant
+$f = Join-Path $fake 'registry.csv'; $rows = @(Import-Csv -LiteralPath $f); foreach ($x in $rows) { if ($x.name -eq 'Shell') { $x.data = 'cmd.exe' } }; $rows | Export-Csv -LiteralPath $f -NoTypeInformation
+[IO.File]::WriteAllText((Join-Path $fake 'no-explorer'), '')
+$r = Run @('-Out', $out, '-Protected', $prot, '-Apply', '-Batch', '-Only', 'winlogon')
+T-Eq (Reg "$NT\Winlogon" 'Shell') 'cmd.exe' 'Shell is not set to a missing explorer.exe'
+T-Has $r.Text 'no explorer.exe here (Server Core?)' 'and it says why'
+T-Eq (Reg "$NT\Winlogon" 'Userinit') 'C:\Windows\system32\userinit.exe,' 'Userinit is still fixed'
+Remove-Item -LiteralPath (Join-Path $fake 'no-explorer') -Force
+$rows = @(Import-Csv -LiteralPath $f); foreach ($x in $rows) { if ($x.name -eq 'Shell') { $x.data = 'cmd.exe' } }; $rows | Export-Csv -LiteralPath $f -NoTypeInformation
+$r = Run @('-Out', $out, '-Protected', $prot, '-Apply', '-Batch', '-Only', 'winlogon')
+T-Eq (Reg "$NT\Winlogon" 'Shell') 'explorer.exe' 'with explorer.exe there, Shell is set back as before'
+
 T-Start 'the look and the questions'
 Plant
 $r = Run @('-Out', $out, '-Protected', $prot, '-Batch')

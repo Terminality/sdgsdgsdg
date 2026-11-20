@@ -294,7 +294,15 @@ if (Want 'runkeys') { $rows = @(R-RunKeys); $counts['runkeys'] = $rows.Count; fo
 if (Want 'startup') { $rows = @(R-Startup); $counts['startup'] = $rows.Count; foreach ($r in $rows) { $j = Judge $r.Run; $l = $j[0]; if ($l -eq 'LOW' -and $r.Run -match '\.(bat|cmd|ps1|vbs|js|hta|exe)$') { $l = 'MED' }; Find $l 'startup' $r $(if ($j[1]) { $j[1] } else { 'starts at every logon' }) ('quarantine ' + $r.Name) } }
 if (Want 'winlogon') {
     $rows = @(R-Winlogon); $counts['winlogon'] = $rows.Count
-    foreach ($r in $rows) { if ((Lc $r.Run).TrimEnd(',', ' ') -ne (Lc $WinlogonOk[$r.Id]).TrimEnd(',', ' ')) { Find 'HIGH' 'winlogon' $r ('changed from Windows'' own (' + $WinlogonOk[$r.Id] + '): runs at every logon') ('set ' + $r.Id + ' back to ' + $WinlogonOk[$r.Id]) } }
+    # Server Core has no explorer.exe: there a different Shell is only reported.
+    $hasExplorer = $true
+    if ($Fake) { $hasExplorer = -not (Test-Path -LiteralPath (Join-Path $Fake 'no-explorer')) }
+    elseif ($env:SystemRoot) { $hasExplorer = Test-Path -LiteralPath (Join-Path $env:SystemRoot 'explorer.exe') }
+    foreach ($r in $rows) {
+        if ((Lc $r.Run).TrimEnd(',', ' ') -eq (Lc $WinlogonOk[$r.Id]).TrimEnd(',', ' ')) { continue }
+        if ($r.Id -eq 'Shell' -and -not $hasExplorer) { Write-CcShow -Color Yellow -Text ('  [*] winlogon: Shell is ' + $r.Run + ' and there is no explorer.exe (Server Core?): check it by hand'); continue }
+        Find 'HIGH' 'winlogon' $r ('changed from Windows'' own (' + $WinlogonOk[$r.Id] + '): runs at every logon') ('set ' + $r.Id + ' back to ' + $WinlogonOk[$r.Id])
+    }
 }
 if (Want 'services') { $rows = @(R-Services); $counts['services'] = $rows.Count; foreach ($r in $rows) { $j = Judge $r.Run; if ($j[0] -ne 'LOW') { Find $j[0] 'services' $r $j[1] ('disable and stop the service ' + $r.Id) } } }
 if (Want 'wmi') { $rows = @(R-Wmi); $counts['wmi'] = $rows.Count; foreach ($r in $rows) { $j = Judge $r.Run; $l = 'HIGH'; $w = 'a WMI event subscription runs this'; if ($j[1]) { $w += ': ' + $j[1] }; Find $l 'wmi' $r $w ('remove the WMI binding ' + $r.Name) } }

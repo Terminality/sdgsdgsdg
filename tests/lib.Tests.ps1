@@ -331,8 +331,8 @@ Complete-Cc
 $env:BT_TEST_SCHTASKS = $sch
 $env:BT_TEST_ANSWERS = 'n'
 $r = Run $s @('-Out', $o3, '-Apply', '-NoProtected', '-Mine', $mk)
-T-Has ([IO.File]::ReadAllText($sch)) '/SC ONCE' 'a one-time scheduled task is set'
-T-Has ([IO.File]::ReadAllText($sch)) '/RU SYSTEM' 'running as SYSTEM'
+T-Has ([IO.File]::ReadAllText($sch)) 'once at ' 'a one-time scheduled task is set'
+T-Has ([IO.File]::ReadAllText($sch)) 'as SYSTEM' 'running as SYSTEM'
 T-Has $r.Text 'Revert timer: everything is undone at' 'the time is shown'
 T-Has $r.Text '==========[ KEEP OR REVERT ]==========' 'the keep question has its header'
 T-Has $r.Text 'KEPT=False' 'no: not kept'

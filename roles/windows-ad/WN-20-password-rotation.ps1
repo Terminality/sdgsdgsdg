@@ -15,6 +15,7 @@
 #
 #   The look and the questions are the same as the Linux scripts (LX-20).
 #   QUESTIONS (Enter takes the default in capitals; a parameter answers each):
+#     more than 5 accounts: one by one? [R]andom for all / [e]ach one
 #     each account: new password?     [r]andom [s]et one (typed twice, hidden)
 #                                     [k]eep [a]ll the rest random
 #                                     (-Users, -Exclude, -Passwords answer them)
@@ -342,7 +343,13 @@ foreach ($x in $plan) {
 # ---- 2/4 Questions: each account, then apply ----------------------------------------
 Write-CcHeader '2/4  questions (Enter = the default in capitals)'
 $todo = @($plan | Where-Object { $_.Act -eq 'change' })
-if ($todo.Count -gt 0 -and (Test-CcCanAsk)) {
+# Many accounts (a domain controller): one question first, so nobody has to
+# answer a hundred.
+$each = $true
+if ($todo.Count -gt 5 -and (Test-CcCanAsk)) {
+    $each = ((Read-CcChoice -Question ('{0} accounts get a new password. Go through them one by one?' -f $todo.Count) -Default r -Options @('r=no: a random password for every one of them (the -Passwords ones get theirs)', 'e=yes: ask about each account (random, set one, keep)')) -eq 'e')
+}
+if ($todo.Count -gt 0 -and $each -and (Test-CcCanAsk)) {
     $rest = $false
     foreach ($x in $todo) {
         if ($rest) { break }
