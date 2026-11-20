@@ -358,7 +358,8 @@ function Get-CcOsInfo {
 #   output.txt.
 function Write-CcShow {
     param([string]$Color = '', [string]$Text = '')
-    if ($Color -and -not $script:Cc.NoColor) { Write-Host $Text -ForegroundColor $Color } else { Write-Host $Text }
+    # -Quiet: only warnings and errors on screen (output.txt still gets it all).
+    if (-not $script:Cc.Quiet) { if ($Color -and -not $script:Cc.NoColor) { Write-Host $Text -ForegroundColor $Color } else { Write-Host $Text } }
     if ($script:Cc.Tee) { try { [IO.File]::AppendAllText($script:Cc.Tee, $Text + "`r`n") } catch { } }
 }
 
@@ -373,14 +374,15 @@ function Write-CcHeader {
 #   -Marks takes other pairs: @('Red=[!] DOWN','Green=[ok] up').
 function Write-CcLegend {
     param([string[]]$Marks = @('Red=[!] HIGH', 'Yellow=[*] MED', 'Green=[ok] fine', 'Yellow=[~] would change', 'Green=[+] changed', 'Red=[x] failed'))
-    Write-Host 'Legend: ' -NoNewline
+    $q = $script:Cc.Quiet
+    if (-not $q) { Write-Host 'Legend: ' -NoNewline }
     $plain = 'Legend:'
     foreach ($m in $Marks) {
         $p = $m -split '=', 2
-        if ($script:Cc.NoColor) { Write-Host ($p[1] + '   ') -NoNewline } else { Write-Host ($p[1] + '   ') -ForegroundColor $p[0] -NoNewline }
+        if (-not $q) { if ($script:Cc.NoColor) { Write-Host ($p[1] + '   ') -NoNewline } else { Write-Host ($p[1] + '   ') -ForegroundColor $p[0] -NoNewline } }
         $plain = $plain + ' ' + $p[1] + '  '
     }
-    Write-Host ''
+    if (-not $q) { Write-Host '' }
     if ($script:Cc.Tee) { try { [IO.File]::AppendAllText($script:Cc.Tee, $plain.TrimEnd() + "`r`n") } catch { } }
 }
 

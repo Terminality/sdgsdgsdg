@@ -32,7 +32,14 @@ function Run([string[]]$a) {
     return @{ Code = $LASTEXITCODE; Text = $text; Dir = $dir }
 }
 function ReadF($p) { if (Test-Path -LiteralPath $p) { return [IO.File]::ReadAllText($p) }; return '' }
-function Item($dir, $name) { foreach ($r in @(Import-Csv -LiteralPath (Join-Path $dir 'items.csv'))) { if ($r.item -eq $name) { return $r } }; return $null }
+# Rows dir -> the rows of items.txt (a " | " table) as hashtables.
+function Rows($dir) {
+    $lines = @(Get-Content -LiteralPath (Join-Path $dir 'items.txt'))
+    $h = @($lines[0] -split '\|' | ForEach-Object { $_.Trim() }); $out = @()
+    foreach ($l in @($lines | Select-Object -Skip 1)) { $v = @($l -split '\|' | ForEach-Object { $_.Trim() }); $r = @{}; for ($i = 0; $i -lt $h.Count; $i++) { $r[$h[$i]] = $v[$i] }; $out += $r }
+    return $out
+}
+function Item($dir, $name) { foreach ($r in @(Rows $dir)) { if ($r.item -eq $name) { return $r } }; return $null }
 
 T-Start 'options'
 $r = Run @('-List'); T-Eq $r.Code 0 '-List exits 0'; T-Has $r.Text 'secpolicy' '-List names the items'
@@ -156,11 +163,41 @@ esac
     Remove-Item Env:\FAIL_SECEDIT
     T-Eq $r.Code 5 'a failed item exits 5'
     T-Has (Item $r.Dir 'secpolicy').detail 'access denied' "the program's own message is kept"
-    T-Eq (@(Import-Csv -LiteralPath (Join-Path $r.Dir 'items.csv')).Count) 2 '-Only runs just those items'
+    T-Eq (@(Rows $r.Dir).Count) 2 '-Only runs just those items'
     $r = Run @('-Out', $out, '-Only', 'registry,firewall,tasks', '-Quiet')
     T-Eq $r.Code 0 'all good exits 0'
     T-HasNot $r.Text 'saved  ' '-Quiet keeps the item list off the screen'
     T-Has $r.Text 'not copied off the box' 'reminds to copy off the box, even with -Quiet'
+
+    T-Start 'the look and the questions'
+    $env:BT_TEST_BOX_GUESS = '-'
+    $o5 = Join-Path $tmp 'out5'
+    $r = Run @('-Out', $o5, '-Batch')
+    T-Has $r.Text 'WN-35 Windows backup | host' 'the title line'
+    T-Has $r.Text 'Legend: [+] saved' 'the legend'
+    T-Has $r.Text '==========[ 1/3  questions ]==========' 'numbered headers'
+    T-Has $r.Text '[?] Which box is this? [d/b/e/f/s/O] o (default): other' 'the box question'
+    T-Has $r.Text '[?] Back up the website files too? (IIS sites; can take minutes on a big site) [Y/n] y (default)' 'the web files question, default yes'
+    T-Has $r.Text '[?] Also save the AD database? It holds EVERY domain password hash [y/N] n (default)' 'a domain controller is asked about the AD database, default no'
+    T-Has $r.Text '[?] Copy the backup off the box?' 'and where to copy it'
+    T-Has $r.Text '  [+] hosts' 'each item is shown as it is saved'
+    T-True ($r.Dir -match 'backup-1$') 'a numbered folder backup-1'
+    T-True (Test-Path -LiteralPath (Join-Path $r.Dir 'items.txt')) 'items.txt table'
+    T-Has (ReadF (Join-Path $r.Dir 'output.txt')) '==========[ 3/3  summary ]==========' 'output.txt has the screen'
+    T-True (@(Get-ChildItem -LiteralPath $r.Dir -Recurse -Filter '*.csv' | Where-Object { $_.Name -ne 'audit-policy.csv' }).Count -eq 0) 'no CSV in the backup folder (but audit-policy.csv: auditpol /restore reads only that)'
+    T-HasNot (ReadF (Join-Path $r.Dir 'SHA256SUMS.txt')) 'output.txt' 'the hash list leaves out output.txt (it grows after)'
+    # Typed answers: box other, no web files, one extra folder, copy off the box.
+    $c5 = Join-Path $tmp 'copy5'; New-Item -ItemType Directory -Path $c5 -Force | Out-Null
+    $env:BT_TEST_ANSWERS = ('o;n;' + (Join-Path $sd 'app') + ';n;' + $c5)
+    $r = Run @('-Out', $o5)
+    Remove-Item Env:\BT_TEST_ANSWERS
+    T-Eq (Item $r.Dir 'web').status 'skipped' 'n: website files left out'
+    T-Eq (Item $r.Dir 'paths').status 'ok' 'the typed folder is saved'
+    T-True (Test-Path -LiteralPath (Join-Path $c5 'backup-2')) 'and the backup is copied where typed'
+    $r = Run @('-Out', $o5, '-Only', 'hosts', '-Batch')
+    T-HasNot $r.Text 'Back up the website files too?' '-Only without web: not asked'
+    T-HasNot $r.Text 'Other folders to back up' '-Only: the extra folders are not asked'
+    Remove-Item Env:\BT_TEST_BOX_GUESS
 }
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
