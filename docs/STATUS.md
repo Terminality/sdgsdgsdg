@@ -1,6 +1,6 @@
 # Build status
 
-46 of 50 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+47 of 51 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -15,7 +15,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | Hardening: medium | 2 | 2 |
 | Hardening: hard | 4 | 6 |
 | Management | 4 | 4 |
-| Alerts | 3 | 4 |
+| Alerts | 4 | 5 |
 | Kit | 3 | 3 |
 
 ## Enum (look only)
@@ -110,6 +110,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 
 | ID | Script | Risk | Status | File |
 | --- | --- | --- | --- | --- |
+| NW-30 | Device change watch | none | built | `roles/network/NW-30-device-watch.sh` |
 | LX-40 | Linux alerts | none | built | `roles/linux/LX-40-change-watch.sh` |
 | LX-41 | Linux session & command logging | none | built | `roles/linux/LX-41-session-log.sh` |
 | WN-44 | Windows alerts | none | planned |  |
