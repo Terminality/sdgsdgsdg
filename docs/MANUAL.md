@@ -1767,9 +1767,10 @@ sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.txt --apply --p
 
 | Option | What it does |
 | --- | --- |
-| `--hosts FILE` / `--device SPEC` | The devices, as for NW-01 |
+| `--hosts FILE` / `--device SPEC` | The devices, as for NW-01. Without them it asks: the host list `config/hosts.txt` if there is one, else each device (address, what it is with `[o]` OpenWRT first, a name, the login) |
 | `--user NAME` | Default login account (`admin`) |
-| `--ask-password` | Ask for the CURRENT password instead of `$BT_NET_PASS` |
+| `--ask-password` | Ask for the CURRENT password instead of `$BT_NET_PASS` (also asked, hidden, when `BT_NET_PASS` is not set) |
+| `--random` | A new random password per device, without the question "New passwords? `[r]`andom per device / `[t]`ype one for every device (hidden, typed twice)" |
 | `--passwords FILE` | Chosen new passwords: `device password` lines (a space between; `#` starts a comment), by device name or address (same characters as below, 8+). Devices not in the file get a random password. A name that is no device in this run is reported. An older `device,password` file is still read |
 | `--new-password-env` | Use `$BT_NET_NEWPASS` for every device (letters, digits and `_ . , @ % + = -`, 12+ characters). Default: a new random password per device |
 | `--enable-env` | Cisco: log in through `enable` with `$BT_NET_ENABLE` |
@@ -1779,6 +1780,8 @@ sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.txt --apply --p
 | `--revert-after N` | MikroTik: the device puts the old password back by itself after N seconds unless the new one was proven (default 90) |
 | `--configs DIR` | NW-01's saved configs (default `<out>/net-configs`) |
 | `--legacy-ssh` | Allow old SSH algorithms |
+
+With `--apply` it asks once, "Change the password on N device(s) now?", before anything is sent (`--batch` says yes). Each device gets one line on screen: `[+]` changed and the new login tested, `[~]` would change, `[-]` skipped, `[x]` failed with the old password put back. The new passwords are only in `passwords.txt` (mode 600).
 
 Password logins need `sshpass` on the admin workstation. Every password travels in an environment variable, on the session's input, or (MikroTik) in a mode-600 ssh config file that is deleted right after; never on a command line. Device output is never logged (it can echo the new password).
 
@@ -1793,6 +1796,7 @@ Password logins need `sshpass` on the admin workstation. Every password travels 
 | `vyos` | `set system login user U authentication plaintext-password` (stored hashed), `commit`, `save` | `save` |
 | `mikrotik` | one command: first `/system scheduler add name="bt-nw10-revert" interval=Ns` (sets the OLD password back), then `/user set [find name="U"] password="NEW"`. New login works: the scheduled job is removed and its removal checked. It fails: the device puts the old password back by itself; the old login is tested after the wait | immediate |
 | `linux` | `chpasswd` (or `sudo -n chpasswd`) | immediate |
+| `openwrt` | `printf 'NEW\nNEW\n' \| passwd root` in the open session (busybox `passwd`; `printf` is built into the shell, so the password is on no command line). The same password is the web (LuCI) login | immediate |
 | `pfsense`, `opnsense` | not changed: listed with "change it in the web GUI" | |
 
 ### What it produces

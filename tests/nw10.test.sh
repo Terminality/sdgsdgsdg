@@ -63,6 +63,7 @@ while IFS= read -r l; do
         *plaintext-password*) new=$(echo "$l" | sed "s/.*plaintext-password '\(.*\)'/\1/") ;;
         "/user set "*) new=$(echo "$l" | sed 's/.*password="\(.*\)"/\1/') ;;
         *chpasswd*) new=$(printf '%s\n' "$l" | awk -F"'" '{ print $6 }') ;;
+        *"| passwd "*) new=$(printf '%s\n' "$l" | awk -F"'" '{ print $4 }') ;;
         "enable secret "*) echo "${l#enable secret }" >"$STUB_DIR/$host.en" ;;
         "show privilege") [ "$prev" = en_ok ] && echo "Current privilege level is 15" || echo "Current privilege level is 1" ;;
     esac
@@ -203,4 +204,36 @@ pend=$(ls "$O"/NW-10_*/pending-password.txt 2>/dev/null | tail -n 1)
 t_file "${pend:-$O/none}" "pending-password.txt is left behind"
 t_eq "$(ls -l "$pend" | cut -c1-10)" "-rw-------" "and is mode 600"
 t_has "$(cat "$T_TMP/stop.out")" "EITHER its old password OR the new one" "the message says what to do"
+t_start "OpenWRT"
+printf 'Old-Pass-1\n' >"$D/owrt.pw"; rm -f "$D/owrt.log" "$D/owrt.mode"
+out=$(BT_NET_PASS='Old-Pass-1' run --out "$O" --no-color --device router,owrt,openwrt,root --batch 2>&1)
+t_has "$out" "[~] router (openwrt, owrt): root - would change" "dry run: one line per device"
+t_eq "$(cat "$D/owrt.pw")" "Old-Pass-1" "a dry run changes nothing"
+out=$(BT_NET_PASS='Old-Pass-1' run --out "$O" --no-color --device router,owrt,openwrt,root --batch --apply --no-protected 2>&1)
+t_has "$(cat "$D/owrt.log")" "| passwd 'root'" "busybox passwd, the new password on its input"
+t_has "$out" "[+] router (openwrt, owrt): root - changed (new login tested)" "changed and tested"
+_np=$(cat "$D/owrt.pw")
+t_hasnt "$_np" "Old-Pass-1" "the password really changed"
+t_hasnt "$out" "$_np" "the new password is never on screen"
+t_has "$(cat "$(ls -d "$O"/NW-10_*/ | tail -n 1)passwords.txt" 2>/dev/null)$(cat "$O"/NW-10_*/passwords.txt 2>/dev/null)" "$_np" "it is in passwords.txt"
+printf 'Old-Pass-1\n' >"$D/owrt.pw"; echo ignore >"$D/owrt.mode"
+out=$(BT_NET_PASS='Old-Pass-1' run --out "$O" --no-color --device router,owrt,openwrt,root --batch --apply --no-protected 2>&1)
+t_has "$out" "[x] router (openwrt, owrt): root - failed: new password did not work; old password restored and tested" "a change that does not take: the old one is kept"
+rm -f "$D/owrt.mode"
+
+t_start "questions: devices, current password, new password"
+if command -v script >/dev/null 2>&1; then
+    printf 'Old-Pass-1\n' >"$D/owrt.pw"; rm -f "$D/owrt.mode"
+    # address, type (Enter = OpenWRT), name, user, another (Enter = no),
+    # current password, new passwords: t, typed twice, then: change now? Enter
+    printf 'owrt\n\n\n\n\nOld-Pass-1\nt\nTyped-Pass-12\nTyped-Pass-12\n\n' >"$T_TMP/ans"
+    mkdir -p "$T_TMP/empty"
+    tt=$(cd "$T_TMP/empty" && unset BT_NET_PASS && BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --apply --no-protected" /dev/null <"$T_TMP/ans" 2>&1)
+    t_has "$tt" "What is owrt?" "the device is asked for"
+    t_has "$tt" "The CURRENT device password (hidden, never saved)" "the current password is asked"
+    t_has "$tt" "New passwords?" "how to make the new ones is asked"
+    t_has "$tt" "[t] type one for every device" "with every answer spelled out"
+    t_has "$tt" "Change the password on 1 device(s) now?" "one yes before anything is sent"
+    t_eq "$(cat "$D/owrt.pw")" "Typed-Pass-12" "the typed password is set"
+fi
 t_done

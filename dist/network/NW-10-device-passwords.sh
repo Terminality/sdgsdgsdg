@@ -21,10 +21,20 @@
 #   screen or the log.
 #
 #   Vendors: cisco-ios, cisco-asa, paloalto (commit), fortigate, vyos
-#   (commit, save), mikrotik, linux.  pfsense/opnsense: not supported (no
+#   (commit, save), mikrotik, linux, openwrt (log in as root; busybox passwd
+#   reads the new password from the session; that one password is also the
+#   web (LuCI) login).  pfsense/opnsense: not supported (no
 #   safe CLI for it) - change those in the web GUI; they are listed.
 #
+#   QUESTIONS (only when no flag answers them; --batch takes the defaults):
+#     which devices (the host list, or typed)     --hosts FILE / --device SPEC
+#     the CURRENT password (hidden)               $BT_NET_PASS / --ask-password
+#     new passwords: [r]andom per device /        --random / --new-password-env
+#                    [t]ype one for all (hidden)  / --passwords FILE
+#     change them now?                            --apply (--batch: yes)
+#
 # USAGE
+#   sh NW-10-device-passwords.sh --apply                                       asks everything
 #   BT_NET_PASS='current' sh NW-10-device-passwords.sh --hosts hosts.txt          dry run
 #   BT_NET_PASS='current' sh NW-10-device-passwords.sh --hosts hosts.txt --apply
 #   sh NW-10-device-passwords.sh --device r1,10.0.0.1,cisco-ios,admin --ask-password --apply
@@ -35,6 +45,7 @@
 #   --ask-password       ask for the CURRENT password (else $BT_NET_PASS)
 #   --new-password-env   use $BT_NET_NEWPASS as the new password for every
 #                        device (default: a new random one per device)
+#   --random             a new random password per device (no question)
 #   --passwords FILE     chosen new passwords: "device password" lines (the
 #                        device's name or address, a space, the password;
 #                        # starts a comment).  Devices not in the file
@@ -53,6 +64,7 @@
 #   --configs DIR        NW-01's saved configs (default <out>/net-configs);
 #                        Cisco privilege levels are read from there
 #   --legacy-ssh         allow old SSH algorithms
+#   --no-color           no colours
 #   --help               this text plus the common options
 #
 # OUTPUTS  (under --out, in NW-10_<host>_<UTC time>/)
@@ -1540,13 +1552,13 @@ cc_net_ask_devices() {
     done
     [ -n "$CC_NET_DEVICES" ]
 }
-# cc_net_ask_password -> BT_NET_PASS: used as it is when already set (setting
+# cc_net_ask_password [LABEL] -> BT_NET_PASS: used as it is when already set (setting
 #   it is the answer), else typed now, hidden, never logged.  Returns 1 when
 #   there is no password and nobody to ask.
 cc_net_ask_password() {
     [ -n "${BT_NET_PASS:-}" ] && return 0
     _cc_can_ask || return 1
-    printf '%s[?]%s Device password (hidden, never saved): ' "${C_CYN:-}" "${C_OFF:-}" >/dev/tty
+    printf '%s[?]%s %s (hidden, never saved): ' "${C_CYN:-}" "${C_OFF:-}" "${1:-Device password}" >/dev/tty
     stty -echo </dev/tty 2>/dev/null; read -r BT_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
     [ -n "$BT_NET_PASS" ]
 }
@@ -1601,7 +1613,7 @@ cc_finish() {
 }
 # <<< BT-LIB
 
-VENDORS="cisco-ios cisco-asa paloalto fortigate vyos mikrotik linux pfsense opnsense"
+VENDORS="cisco-ios cisco-asa paloalto fortigate vyos mikrotik linux pfsense opnsense openwrt"
 
 usage() {
     cat <<'USAGE'
@@ -1612,6 +1624,7 @@ NW-10 Network device password rotation - change, prove the new login, then save 
   --user NAME          default login account (admin)
   --ask-password       ask for the current password
   --new-password-env   new password from $BT_NET_NEWPASS (default: random per device)
+  --random             a new random password per device (no question)
   --passwords FILE     "device password" lines: chosen new passwords
   --enable-env         Cisco: enable password from $BT_NET_ENABLE
   --enable-too         Cisco: also set a new enable secret
@@ -1621,7 +1634,11 @@ NW-10 Network device password rotation - change, prove the new login, then save 
   --revert-after N     MikroTik: automatic put-back after N seconds (default 90)
   --configs DIR        NW-01's saved configs (Cisco privilege levels)
   --legacy-ssh         allow old SSH algorithms
+  --no-color           no colours
   --help               show this text
+
+Without --hosts or --device it asks which devices, the current password and
+what the new passwords should be.
 
 USAGE
     cc_usage_common
@@ -1629,14 +1646,16 @@ USAGE
 
 NL='
 '
-HOSTS=""; DEVICES=""; DEFUSER="admin"; ASK=0; NEWENV=0; ENABLE=0; ENTOO=0; LEN=16; WAIT=5; CWAIT=120; CONFIGS=""; LEGACY=0; PWFILE=""; MTREV=90
+HOSTS=""; DEVICES=""; DEFUSER="admin"; USERSET=0; ASK=0; NEWENV=0; RANDPW=0; COLOR=1; ENABLE=0; ENTOO=0; LEN=16; WAIT=5; CWAIT=120; CONFIGS=""; LEGACY=0; PWFILE=""; MTREV=90
 num() { case "$2" in ''|*[!0-9]*) cc_die 2 "$1 needs a whole number" ;; esac; }
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
         --hosts)            [ $# -ge 2 ] || cc_die 2 "--hosts needs a file"; [ -r "$2" ] || cc_die 2 "--hosts: cannot read $2"; HOSTS=$2; shift 2 ;;
         --device)           [ $# -ge 2 ] || cc_die 2 "--device needs NAME,ADDRESS,VENDOR"; DEVICES="$DEVICES$2$NL"; shift 2 ;;
-        --user)             [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; shift 2 ;;
+        --user)             [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; USERSET=1; shift 2 ;;
+        --random)           RANDPW=1; shift ;;
+        --no-color|--no-colour) COLOR=0; shift ;;
         --ask-password)     ASK=1; shift ;;
         --new-password-env) NEWENV=1; shift ;;
         --passwords)        [ $# -ge 2 ] || cc_die 2 "--passwords needs a file"; [ -r "$2" ] || cc_die 2 "--passwords: cannot read $2"; PWFILE=$2; shift 2 ;;
@@ -1652,12 +1671,18 @@ while [ $# -gt 0 ]; do
         *)                  cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-[ -n "$HOSTS$DEVICES" ] || cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
 [ "$LEN" -ge 12 ] || cc_die 2 "--length must be at least 12"
 
 # shellcheck disable=SC2034  # read by the library: tables as .txt, no CSV
 CC_TABLES=1
 cc_init "NW-10" "Device password rotation" changes
+# shellcheck disable=SC2034  # read by cc_color_init
+[ "$COLOR" = 1 ] || CC_NOCOLOR=1
+cc_color_init
+# No device named, no host list and nobody to ask: stop before a run folder.
+if [ -z "$HOSTS$DEVICES" ] && ! _cc_can_ask && ! cc_net_hostfile >/dev/null; then
+    cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
+fi
 cc_use_run_dir
 W="$CC_RUN_DIR/.work"
 (umask 077; mkdir -p "$W") || cc_die 3 "cannot create $W"
@@ -1669,11 +1694,32 @@ SSH=${BT_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
 SSHPASS_BIN=${BT_SSHPASS:-$(cc_which sshpass)} || cc_die 3 "sshpass not found (apt install sshpass): password changes need password logins"
 cc_have mkfifo || cc_die 3 "mkfifo not found"
 
+header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
+cc_show "$C_CYN" "NW-10 Device password rotation | from $CC_HOST | results in $CC_RUN_DIR"
+cc_show "" "Legend: ${C_GRN}[+]${C_OFF} changed, new login tested   ${C_YEL}[~]${C_OFF} would change   ${C_YEL}[-]${C_OFF} skipped   ${C_RED}[x]${C_OFF} failed (the old password was put back)"
+header "1/3  devices and passwords"
 # ---- Passwords --------------------------------------------------------------
+if [ -z "$HOSTS$DEVICES" ]; then
+    cc_net_ask_devices "$DEFUSER" "$USERSET" || cc_die 2 "no devices given (or use --hosts FILE / --device NAME,ADDRESS,VENDOR)"
+    HOSTS=$CC_NET_HOSTS; DEVICES=$CC_NET_DEVICES
+fi
 if [ "$ASK" = 1 ]; then
     [ -r /dev/tty ] || cc_die 3 "--ask-password needs a terminal; set BT_NET_PASS"
     printf 'CURRENT device password: ' >/dev/tty; stty -echo </dev/tty 2>/dev/null
     read -r BT_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
+else
+    cc_net_ask_password "The CURRENT device password"
+fi
+# The new passwords, when no flag said.
+if [ "$NEWENV" = 0 ] && [ "$RANDPW" = 0 ] && [ -z "$PWFILE" ] && _cc_can_ask; then
+    cc_choose "New passwords?" r "r=a new random one per device (only in passwords.txt, mode 600)" "t=type one for every device (hidden, typed twice)"
+    if [ "$CC_CHOICE" = t ]; then
+        printf '%s[?]%s New password (hidden; letters, digits and _ . , @ %% + = -; 12 or more): ' "$C_CYN" "$C_OFF" >/dev/tty
+        stty -echo </dev/tty 2>/dev/null; read -r BT_NET_NEWPASS </dev/tty; printf '\n%s[?]%s Again: ' "$C_CYN" "$C_OFF" >/dev/tty
+        read -r _again </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
+        [ "$BT_NET_NEWPASS" = "$_again" ] || { rm -rf "$W"; cc_die 2 "the two new passwords differ: nothing changed"; }
+        _again=""; NEWENV=1
+    fi
 fi
 OLDPW=${BT_NET_PASS:-}
 [ -n "$OLDPW" ] || cc_die 3 "the current password is needed: set BT_NET_PASS or use --ask-password"
@@ -1712,6 +1758,7 @@ vendor_of() {
         /opnsense/ { print "opnsense"; exit }
         /pfsense/ { print "pfsense"; exit }
         /mikrotik|routeros/ { print "mikrotik"; exit }
+        /openwrt|lede|luci/ { print "openwrt"; exit }
         /cisco/ { print "cisco-ios"; exit }'
 }
 : >"$W/devices"
@@ -1764,6 +1811,9 @@ setpw() {
         vyos)      printf "source /opt/vyatta/etc/functions/script-template\nconfigure\nset system login user %s authentication plaintext-password '%s'\ncommit\nsave\nexit\n" "$2" "$3" ;;
         mikrotik)  printf '/user set [find name="%s"] password="%s"\n' "$2" "$3" ;;
         linux)     printf "if [ \"\$(id -u)\" = 0 ]; then printf '%%s:%%s\\\\n' '%s' '%s' | chpasswd; else printf '%%s:%%s\\\\n' '%s' '%s' | sudo -n chpasswd; fi\n" "$2" "$3" "$2" "$3" ;;
+        # OpenWRT: busybox passwd reads the new password twice from its input
+        # (printf is built into ash: the password is not on a command line).
+        openwrt)   printf "printf '%%s\\\\n%%s\\\\n' '%s' '%s' | passwd '%s' >/dev/null 2>&1\n" "$3" "$3" "$2" ;;
     esac
 }
 setenable() { printf 'configure terminal\nenable secret %s\nend\n' "$2"; }
@@ -1914,7 +1964,24 @@ mt_change() {
 awk -F'\t' -v df="$W/devices" 'BEGIN { while ((getline l < df) > 0) { split(l, d, "|"); k[d[1]] = 1; k[d[2]] = 1 } } !($1 in k) { print $1 }' "$W/given" >"$W/given_missing"
 [ -s "$W/given_missing" ] && cc_warn "in --passwords but not a device in this run: $(tr '\n' ' ' <"$W/given_missing")"
 : >"$W/rows_out"
-row() { cc_table_row "$DT" "$1" "$2" "$3" "$4" "$5"; printf '%s|%s|%s|%s\n' "$1" "$3" "$4" "$5" >>"$W/rows_out"; }
+header "2/3  each device"
+# --apply: one yes before anything is sent (--batch: yes).
+if [ "$CC_APPLY" = 1 ]; then
+    _nd=$(awk -F'|' '$3 != "pfsense" && $3 != "opnsense"' "$W/devices" | grep -c .)
+    if ! cc_ask "Change the password on $_nd device(s) now? (each new login is tested first; a failed one gets its old password back)" Y "yes, change them" "no, change nothing"; then
+        cc_show "$C_GRY" "  Nothing changed."; rm -rf "$W"; cc_finish; exit 0
+    fi
+fi
+row() {
+    cc_table_row "$DT" "$1" "$2" "$3" "$4" "$5"; printf '%s|%s|%s|%s\n' "$1" "$3" "$4" "$5" >>"$W/rows_out"
+    # One line on screen per device (the password itself never).
+    case "$5" in
+        changed*) cc_show "$C_GRN" "  [+] $1 ($3, $2): $4 - $5" ;;
+        "would change"*) cc_show "$C_YEL" "  [~] $1 ($3, $2): $4 - $5" ;;
+        skipped*) cc_show "$C_YEL" "  [-] $1 ($3, $2): $4 - $5" ;;
+        *) cc_show "$C_RED" "  [x] $1 ($3, $2): $4 - $5" ;;
+    esac
+}
 while IFS='|' read -r _n _a _v _u _p; do
     case "$_v" in pfsense|opnsense)
         row "$_n" "$_a" "$_v" "$_u" "skipped: change it in the web GUI (System > User Manager)"; continue ;;
@@ -2025,6 +2092,7 @@ cc_table_align "$DT"; [ -f "$PWOUT" ] && (umask 077; cc_table_align "$PWOUT")
     [ "$CC_APPLY" = 1 ] || printf 'Dry run: nothing changed.  Try --apply on ONE device first (--device), then the rest.\n'
     printf 'All results: %s\n' "$CC_RUN_DIR"
 } >"$CC_RUN_DIR/summary.txt"
+header "3/3  summary"
 cat "$CC_RUN_DIR/summary.txt"
 rm -rf "$W"
 cc_finish
