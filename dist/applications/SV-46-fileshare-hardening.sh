@@ -157,7 +157,7 @@ CC_LIB_VERSION="0.7.0"
 : "${CC_FORCE_SCORED:=0}"   # 1 = allowed to touch a protected *account*
 : "${CC_NO_PROTECTED:=0}"   # 1 = operator accepted running with no list
 : "${CC_OUT:=${BT_OUT:-}}"              # output folder (operator-chosen)
-: "${CC_PROTECTED:=${BT_PROTECTED:-}}"  # protected-list CSV
+: "${CC_PROTECTED:=${BT_PROTECTED:-}}"  # protected-list file (protected.txt)
 CC_ID="${CC_ID:-CC-00}"
 CC_LOG=""                   # set by cc_init; empty means "log file not open"
 CC_N_DONE=0                 # changes made
@@ -222,6 +222,7 @@ cc_die() {
     _cc_die_code=$1
     shift
     cc_log ERROR "$*"
+    _cc_csv_cleanup 2>/dev/null
     exit "$_cc_die_code"
 }
 
@@ -329,8 +330,8 @@ Common options (every script in the kit):
   --dry-run          show what would change (the default)
   --out DIR          folder for logs, CSV files, backups and the undo log
                      (default: $BT_OUT, else ~/bt-out)
-  --protected FILE   protected-list CSV (default: $BT_PROTECTED, else
-                     DIR/protected.csv)
+  --protected FILE   the protected list (default: $BT_PROTECTED, else
+                     DIR/protected.txt)
   --no-protected     allow --apply without a protected list (dangerous)
   --force-scored     allow changes to accounts on the protected list
   --batch            never ask questions: take every default (like sqlmap)
@@ -421,7 +422,11 @@ cc_init() {
     (umask 077; : >>"$CC_LOG") 2>/dev/null || cc_die 3 "cannot write log file: $CC_LOG"
 
     # Protected list.
-    [ -n "$CC_PROTECTED" ] || CC_PROTECTED="$CC_OUT/protected.csv"
+    # protected.txt; an old kit's protected.csv is still found.
+    if [ -z "$CC_PROTECTED" ]; then
+        CC_PROTECTED="$CC_OUT/protected.txt"
+        [ ! -r "$CC_PROTECTED" ] && [ -r "$CC_OUT/protected.csv" ] && CC_PROTECTED="$CC_OUT/protected.csv"
+    fi
     if [ ! -r "$CC_PROTECTED" ]; then
         if [ "$CC_KIND" = changes ] && [ "$CC_APPLY" = 1 ] && [ "$CC_NO_PROTECTED" != 1 ]; then
             cc_die 3 "no protected list at $CC_PROTECTED - refusing to change anything. Build one (SH-09), pass --protected FILE, or pass --no-protected to accept the risk"
@@ -854,12 +859,14 @@ cc_ask_keep() {
 # -----------------------------------------------------------------------------
 # Protected list
 # -----------------------------------------------------------------------------
-# File format (CSV with a header line; see config/protected.example.csv):
-#     type,value,note
-#     port,80/tcp,scored web site
-#     service,apache2,scored web site
-#     account,svc-web,used by the scoring engine
-#     path,/var/www/html,scored content
+# File format (protected.txt; see config/protected.example.txt), one entry a
+# line, the parts split by spaces:
+#     port     80/tcp          scored web site
+#     service  apache2         scored web site
+#     account  svc-web         used by the scoring engine
+#     path     /var/www/html   scored content
+#   An older comma-separated line (port,80/tcp,note) still works: a line whose
+#   first word is followed by a comma is split on commas.
 #   type   one of: port service account path host process
 #   value  compared without regard to upper/lower case.  A port may be written
 #          '80' (both protocols) or '80/tcp'.  Asking about plain '80' matches
@@ -871,7 +878,7 @@ cc_ask_keep() {
 # cc_is_protected TYPE VALUE   -> returns 0 if the pair is on the list.
 cc_is_protected() {
     [ -n "$CC_PROTECTED" ] && [ -r "$CC_PROTECTED" ] || return 1
-    awk -F',' -v want_type="$1" -v want_val="$2" '
+    awk -v want_type="$1" -v want_val="$2" '
         function clean(s) {    # this is awk, not shell: posix-ok
             gsub(/\r/, "", s); gsub(/^[ \t"]+|[ \t"]+$/, "", s)
             return tolower(s)
@@ -879,7 +886,8 @@ cc_is_protected() {
         BEGIN { want_type = clean(want_type); want_val = clean(want_val); hit = 1 }
         /^[ \t]*#/ || /^[ \t\r]*$/ { next }
         {
-            t = clean($1); v = clean($2)
+            if ($0 ~ /^[ \t"]*[^ \t,]+[ \t"]*,/) split($0, f, ","); else split($0, f)
+            t = clean(f[1]); v = clean(f[2])
             if (t == "type" || t != want_type) next
             if (v == want_val) { hit = 0; exit }
             if (t == "port") {
@@ -1249,6 +1257,17 @@ cc_csv_pretty() {
         END { if (FNR <= 1) print "(nothing found)" }' "$1" "$1" >"$2"
 }
 
+# cc_csv_table CSV TXT
+#   Write CSV as a " | " table (the look SH-03 uses): the header as it is, every
+#   value whole, columns padded.  SH-04 compares two runs from these tables.
+#   A "|" inside a value becomes "/".
+cc_csv_table() {
+    [ -f "$1" ] || return 0
+    awk "$CC_AWK_CSV"'{ n = csvsplit($0, f); l = ""
+        for (i = 1; i <= n; i++) { v = f[i]; gsub(/\|/, "/", v); gsub(/[\r\n]/, " ", v); l = l (i > 1 ? " | " : "") v }
+        print l }' "$1" >"$2" && cc_table_align "$2"
+}
+
 # cc_save NAME COMMAND [ARG...]
 #   Run a READ-ONLY command and keep its untouched output in
 #   <run folder>/raw/NAME.txt (or <out>/<ID>_<host>_<time>_NAME.txt without a
@@ -1613,7 +1632,34 @@ cc_finish() {
     [ "$CC_N_WOULD" -gt 0 ] && cc_info "this was a dry run - re-run with --apply to make the $CC_N_WOULD change(s)"
     [ "$CC_N_DONE" -gt 0 ] && cc_info "undo commands for this host are in $CC_UNDO"
     [ -n "$CC_LOG" ] && cc_info "log: $CC_LOG"
+    _cc_csv_cleanup
     exit "$_cc_fin_rc"
+}
+
+# _cc_csv_cleanup -> no CSV files are left in the results.  The CSV files a
+#   script builds while it runs (cc_csv_new, cc_flag, cc_finding) are working
+#   files: at the end each becomes a .txt table, unless the script already
+#   wrote one with that name, and is deleted, with the csv/ folder.
+_cc_csv_cleanup() {
+    [ "${BT_TEST_KEEP_CSV:-0}" = 1 ] && return 0   # tests only: read the rows as written
+    if [ -n "${CC_RUN_DIR:-}" ] && [ -d "$CC_RUN_DIR" ]; then
+        for _cc_cu_f in "$CC_RUN_DIR"/*.csv "$CC_RUN_DIR"/csv/*.csv; do
+            [ -f "$_cc_cu_f" ] || continue
+            _cc_cu_t="$CC_RUN_DIR/$(basename "$_cc_cu_f" .csv).txt"
+            [ -f "$_cc_cu_t" ] || cc_csv_pretty "$_cc_cu_f" "$_cc_cu_t" 200
+            rm -f "$_cc_cu_f"
+        done
+        rmdir "$CC_RUN_DIR/csv" 2>/dev/null
+    fi
+    # Without a run folder they sit in the out folder as <ID>_<host>_<time>_NAME.csv.
+    if [ -n "${CC_OUT:-}" ] && [ -n "${CC_ID:-}" ] && [ -n "${CC_TS:-}" ]; then
+        for _cc_cu_f in "$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_"*.csv; do
+            [ -f "$_cc_cu_f" ] || continue
+            [ -f "${_cc_cu_f%.csv}.txt" ] || cc_csv_pretty "$_cc_cu_f" "${_cc_cu_f%.csv}.txt" 200
+            rm -f "$_cc_cu_f"
+        done
+    fi
+    return 0
 }
 # <<< BT-LIB
 
