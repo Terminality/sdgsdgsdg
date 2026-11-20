@@ -2,6 +2,11 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-20: NW-10 on OpenWRT; questions and the usual look
+
+- **NW-10** (1.1.0): new vendor `openwrt`: the root password through busybox `passwd` in the open session (new password on its input; `printf` is a shell built-in, so it is on no command line); the same password is the web (LuCI) login. The new login is tested from a second session; a failure gets the old password back through the first. Asks when no flag says: which devices (the library question), the CURRENT password (hidden), "New passwords?" `[t]`ype one for all (the default, so the team can be told one password; hidden, typed twice) / `[r]`andom per device (new `--random` answers it); before changing, it says that everyone using the current password (teammates, a scoring engine, the OpenWRT web page) needs the new one, and with `--apply` one "Change the password on N device(s) now?" before anything is sent. Title line, legend, numbered sections, one line per device (`[+]`, `[~]`, `[-]`, `[x]`), `--no-color`. Old commands work the same. Library: `cc_net_ask_password` takes the question's wording.
+- Tested: nw10 and lib under dash, bash, ksh93, mksh, yash and busybox sh; gawk, mawk and busybox awk; the built copy. OpenWRT with a stand-in device (changed, a change that does not take and is put back, the questions). Not yet on a real OpenWRT router.
+
 ## 2026-11-20: NW-12 on OpenWRT; the device questions in the library (library 0.5.0)
 
 - **Library 0.5.0** (`lib/lib.sh`; `lib/lib.ps1` version only): `cc_net_hostfile`, `cc_net_ask_devices` (the host list `config/hosts.txt` if there is one, else each device: address, what it is with OpenWRT first, a short name, the login; root for OpenWRT, pfSense, OPNsense) and `cc_net_ask_password` (`BT_NET_PASS` as it is when set, else typed hidden). The network scripts ask these the same way.
