@@ -1,0 +1,26 @@
+# Flókið (WCComps 2026 Invitational 3): the boxes from the team packet.
+# Copy to hosts.txt (or config/hosts.txt) in the folder you run the scripts
+# from:   cp config/hosts.flokid.txt hosts.txt
+# Then:
+#   - SH-03 --hosts hosts.txt flags any machine that is up but NOT in this
+#     list (the packet says there may be servers it does not list).
+#   - the network scripts (NW-01, NW-07, NW-10, NW-12, NW-20, NW-21, NW-30)
+#     use the router line without typing it.
+# At 9 AM: fill in the scored services from the scoring engine (column
+# scored_services, like http:80;https:443) and the logins (column user).
+# Addresses are the inside ones.  From outside (the VPN, the scoring engine)
+# each box is 10.100.1XX.<last octet>, XX = team number (team 2: 10.100.102.10).
+# Columns are separated by spaces; "-" is an empty column; notes are the rest
+# of the line.  Format: config/hosts.example.txt.
+#
+# name      ip               os       role          connect  port  user  scored_services  notes
+vigra       192.168.220.2    openwrt  router        ssh      22    root  -                OpenWRT router: a reset costs -100 points
+kolla       192.168.220.30   linux    fileshare     ssh      22    -     -                Alpine Linux: file share
+borgar      192.168.220.10   windows  food-ordering winrm    5985  -     -                Windows Server 2022: food ordering service
+gufu        192.168.220.100  linux    gitea         ssh      22    -     -                Rocky Linux: Gitea
+vattar      192.168.220.79   windows  domain-ctrl   winrm    5985  -     -                Windows Server 2019: Active Directory
+haf         192.168.220.67   linux    wabbit        ssh      22    -     -                Lubuntu 22: "Wabbit" (RabbitMQ?)
+kvigindis   192.168.220.44   linux    help-site     ssh      22    -     -                Ubuntu 24.04: furniture help site
+skerja      192.168.220.97   linux    tickets       ssh      22    -     -                Alpine 3.23: employee and customer tickets
+thorska     192.168.220.231  linux    home-manager  ssh      22    -     -                Fedora 44: Home Manager
+djupi       192.168.220.222  linux    pos           ssh      22    -     -                Linux Mint 22.3: point of sale

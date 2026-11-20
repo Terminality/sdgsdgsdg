@@ -8,6 +8,8 @@ config/*.csv
 config/*.txt
 !config/*.example.csv
 !config/*.example.txt
+# The Flokid host list: addresses from the team packet, no passwords.
+!config/hosts.flokid.txt
 # Editor and OS clutter
 *.swp
 *~
