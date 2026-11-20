@@ -31,7 +31,7 @@ function T-HasNot($text, $needle, $label) { T-True (-not "$text".Contains($needl
 
 # Mk name body -> write a script with the standard parameters that loads the lib.
 $head = @'
-param([switch]$Apply,[string]$Out,[string]$Protected,[switch]$NoProtected,[switch]$ForceScored,[switch]$Quiet,[switch]$DebugLog,[string]$Mine)
+param([switch]$Apply,[string]$Out,[string]$Protected,[switch]$NoProtected,[switch]$ForceScored,[switch]$Quiet,[switch]$DebugLog,[switch]$Batch,[switch]$NoColor,[string]$Mine)
 . 'LIBPATH'
 '@.Replace('LIBPATH', $lib.Replace("'", "''"))
 function Mk($name, $body) {
@@ -254,11 +254,99 @@ $r = Run $w @('-Out', $out); T-Eq $r.Code 3 'and an edited one is refused'
 $env:BT_SKIP_VERIFY = '1'
 
 T-Start 'the PowerShell template runs as a dry run and writes its files'
-$r = Run (Join-Path (Join-Path $root 'templates') 'script-template.ps1') @('-Out', $out, '-Example', 'hello')
+$r = Run (Join-Path (Join-Path $root 'templates') 'script-template.ps1') @('-Out', $out, '-Example', 'hello', '-Batch')
 T-Eq $r.Code 0 'template exits 0'
 T-Has $r.Text 'READ-ONLY' 'the template starts as a read-only script'
-$tcsv = @(Get-ChildItem -LiteralPath $out -Filter 'XX-00_*_example.csv')
-T-True ($tcsv.Count -ge 1 -and ([IO.File]::ReadAllText($tcsv[0].FullName)).Contains('"example option","hello"')) 'template csv has the option value'
+T-Has $r.Text '==========[ 1/2  questions ]==========' 'the template has the numbered headers'
+$td = @(Get-ChildItem -LiteralPath $out | Where-Object { $_.PSIsContainer -and $_.Name -like 'example-*' })
+T-True ($td.Count -ge 1 -and ([IO.File]::ReadAllText((Join-Path $td[0].FullName 'example.txt'))) -match 'example option \| +hello') 'template table has the option value'
+T-True (@(Get-ChildItem -LiteralPath $out -Recurse -Filter '*.csv').Count -eq 0) 'the template leaves no CSV'
+
+T-Start 'the look and the questions (the same as lib.sh)'
+$o2 = Join-Path $tmp 'out2'
+$env:BT_TEST_BOX_GUESS = '-'   # no guess from this machine
+$s = Mk 'look' @'
+Initialize-Cc -Id 'T-20' -Name 'look test' -Kind readonly -Bound $PSBoundParameters
+Use-CcNumberedDir 'look'
+Write-CcLegend
+Write-CcHeader '1/2  questions'
+$c1 = Read-CcChoice -Question 'Pick one?' -Default o -Options @('a=apples', 'o=oranges')
+$y = Read-CcAsk -Question 'Go on?' -Default Y -Yes 'yes, go' -No 'no, stop'
+$t = Read-CcText -Question 'A word?' -Default 'none-given' -Hint 'any word'
+$b = Read-CcBox
+Write-Host ('RESULT c={0} y={1} t={2} b={3}' -f $c1, $y, $t, $b)
+$tb = New-CcTable -Name things -Columns @('name', 'note')
+Add-CcTableRow -File $tb -Values @('a|b', 'two words')
+Add-CcTableRow -File $tb -Values @('longer name', 'x')
+Format-CcTable -File $tb
+$csv = New-CcCsv -Name leftover -Header @('k', 'v')
+Add-CcCsvRow -File $csv -Values @('key1', 'value, with comma')
+Write-Host ('DIR ' + $Cc.RunDir)
+Complete-Cc
+'@
+$r = Run $s @('-Out', $o2, '-Batch')
+T-Eq $r.Code 0 'exits 0'
+T-Has $r.Text '[?] Pick one? [a/O] o (default): oranges' '-Batch: the default is taken and shown'
+T-Has $r.Text '[?] Go on? [Y/n] y (default): yes, go' 'a yes/no question shows what yes means'
+T-Has $r.Text '[?] A word? none-given (default)' 'a text question shows its default'
+T-Has $r.Text 'RESULT c=o y=True t=none-given b=other' 'the defaults are returned'
+$d = Join-Path $o2 'look-1'
+T-True (Test-Path -LiteralPath (Join-Path $d 'run.txt')) 'a numbered run folder look-1 with run.txt'
+$ot = [IO.File]::ReadAllText((Join-Path $d 'output.txt'))
+T-Has $ot '==========[ 1/2  questions ]==========' 'output.txt has the header'
+T-Has $ot 'Legend: [!] HIGH' 'and the legend'
+T-Has $ot '[INFO] T-20: start:' 'and the start line'
+$tt = @(Get-Content -LiteralPath (Join-Path $d 'things.txt'))
+T-Eq $tt[0] 'name        | note' 'a table: header padded'
+T-Eq $tt[1] 'a/b         | two words' 'a "|" in a value becomes "/"'
+T-Has ([IO.File]::ReadAllText((Join-Path $d 'leftover.txt'))) 'value, with comma' 'a CSV working file becomes a .txt table'
+T-True (@(Get-ChildItem -LiteralPath $d -Recurse -Filter '*.csv').Count -eq 0) 'no CSV is left'
+T-True (-not (Test-Path -LiteralPath (Join-Path $d '.work'))) 'the work folder is gone'
+$r = Run $s @('-Out', $o2); T-True (Test-Path -LiteralPath (Join-Path $o2 'look-2')) 'the next run is look-2'
+# Typed answers (a test hook stands in for the keyboard).
+$env:BT_TEST_ANSWERS = 'x;a;n;hello;d'
+$r = Run $s @('-Out', $o2)
+Remove-Item Env:\BT_TEST_ANSWERS
+T-Has $r.Text '      [a] apples' 'each answer is listed under the question'
+T-Has $r.Text 'Type one of: a, o' 'a wrong answer is asked again'
+T-Has $r.Text 'RESULT c=a y=False t=hello b=dc' 'the typed answers are returned'
+# The box guess.
+$env:BT_TEST_BOX_GUESS = 'web|IIS is installed (W3SVC)'
+$r = Run $s @('-Out', $o2, '-Batch')
+Remove-Item Env:\BT_TEST_BOX_GUESS
+T-Has $r.Text 'This box looks like: web (IIS is installed (W3SVC))' 'the guess is shown'
+T-Has $r.Text 'b=web' 'and is the answer for Enter'
+
+T-Start 'the revert timer'
+$o3 = Join-Path $tmp 'out3'; $sch = Join-Path $tmp 'schtasks.log'; $mk = Join-Path $tmp 'timer-marker.txt'
+$s = Mk 'timer' @'
+Initialize-Cc -Id 'T-21' -Name 'timer test' -Kind changes -Bound $PSBoundParameters
+Use-CcNumberedDir 'timer'
+Start-CcTimer -Seconds 120
+Invoke-CcChange -Description 'make marker' -Action { Set-Content -LiteralPath $Mine -Value x } -Undo ('Remove-Item -LiteralPath ' + (ConvertTo-CcQuoted $Mine)) | Out-Null
+$k = Complete-CcTimer
+Write-Host ('KEPT=' + $k)
+Complete-Cc
+'@
+$env:BT_TEST_SCHTASKS = $sch
+$env:BT_TEST_ANSWERS = 'n'
+$r = Run $s @('-Out', $o3, '-Apply', '-NoProtected', '-Mine', $mk)
+T-Has ([IO.File]::ReadAllText($sch)) '/SC ONCE' 'a one-time scheduled task is set'
+T-Has ([IO.File]::ReadAllText($sch)) '/RU SYSTEM' 'running as SYSTEM'
+T-Has $r.Text 'Revert timer: everything is undone at' 'the time is shown'
+T-Has $r.Text '==========[ KEEP OR REVERT ]==========' 'the keep question has its header'
+T-Has $r.Text 'KEPT=False' 'no: not kept'
+T-True (-not (Test-Path -LiteralPath $mk)) 'no: the change is undone at once'
+T-Has ([IO.File]::ReadAllText($sch)) '/Delete' 'and the scheduled task removed'
+$env:BT_TEST_ANSWERS = 'y'
+$r = Run $s @('-Out', $o3, '-Apply', '-NoProtected', '-Mine', $mk)
+T-Has $r.Text 'KEPT=True' 'yes: kept'
+T-True (Test-Path -LiteralPath $mk) 'yes: the change stays'
+T-True (Test-Path -LiteralPath (Join-Path (Join-Path $o3 'timer-2') 'KEEP')) 'and KEEP is made, so the task does nothing'
+Remove-Item Env:\BT_TEST_ANSWERS
+$r = Run $s @('-Out', $o3, '-Apply', '-NoProtected', '-Mine', $mk, '-Batch')
+T-Has $r.Text 'Changes kept (-Batch)' '-Batch keeps the changes'
+Remove-Item Env:\BT_TEST_SCHTASKS
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ("  {0} passed, {1} failed" -f $script:pass, $script:fail)
