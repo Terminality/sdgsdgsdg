@@ -77,6 +77,7 @@ T-Start 'apply with exclusions, a password sheet and the protected list'
 $sheet = Join-Path $tmp 'sheet.csv'
 [IO.File]::WriteAllLines($sheet, [string[]]@('# account,password', 'account,password', ' alice ,  Team-Alice-Pass-26  ', 'olduser,Should-Not-Be-Set-1', 'ghost,Nobody-Home-12345', 'bob,Has,Comma"Quote-99', 'svc_sql,Sql-Service-Pass-26', 'mark.jacobs,Excluded-Anyway-26'))
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-Exclude', 'mark.jacobs,Administrator', '-Passwords', $sheet)
+T-Has $r.Text 'SCORED ACCOUNTS: submit each new password in the scoring engine' 'the summary says to submit scored passwords to the scoring engine'
 $d = $r.Dir
 T-Eq $r.Code 5 'exits 5 because one change failed'
 T-Eq (SetPw 'mark.jacobs') '' 'mark.jacobs (excluded) untouched'

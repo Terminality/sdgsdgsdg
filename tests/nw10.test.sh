@@ -112,6 +112,7 @@ devices
 out=$(run --out "$O" $DEVS --apply --no-protected --wait 1 --commit-wait 1 2>&1); rc=$?
 t_eq "$rc" 0 "exit 0"
 P=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')/passwords.txt
+t_has "$(cat "${P%/passwords.txt}/summary.txt")" "[!] SCORED ACCOUNTS: submit each new password in the scoring engine" "the summary says to submit scored passwords to the scoring engine"
 t_eq "$(ls -l "$P" | cut -c1-10)" "-rw-------" "passwords file is mode 600"
 for pair in r1:ios a1:asa f1:fg v1:vyos m1:mt l1:lnx; do
     d=${pair%:*}; h=${pair#*:}

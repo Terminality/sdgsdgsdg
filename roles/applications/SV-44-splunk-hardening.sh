@@ -509,14 +509,14 @@ CC_N_FAIL=$NBAD
     [ "$APPLIED" = 1 ] && printf 'Changed: %d   Failed: %d\n' "$NOK" "$NBAD"
     printf 'Found: %d high, %d to look at\n' "$(grep -c '^HIGH' "$W/find")" "$(grep -c '^MED' "$W/find")"
     awk -F'|' '$1 != "OK" { printf "  %-5s %-16s %s\n", $1, $2, $3 }' "$W/find"
-    [ -f "$PWOUT" ] && [ "$BROKE" = 0 ] && printf '\nNew passwords: %s (mode 600)\n  Give them to the captain (and the scoring portal for the splunk-query user), then: rm %s\n' "$PWOUT" "$PWOUT"
+    [ -f "$PWOUT" ] && [ "$BROKE" = 0 ] && printf '\nNew passwords: %s (mode 600)\n  Give them to the captain, then: rm %s\n%s\n' "$PWOUT" "$PWOUT" '[!] SCORED ACCOUNTS: submit each new password in the scoring engine (Quotient: password change request) NOW - until then its checks use the old one and fail.'
     [ "$APPLIED" = 1 ] && [ -f "$CC_RUN_DIR/revert.sh" ] && printf 'Undo this run: sh %s/revert.sh --force\n' "$CC_RUN_DIR"
     printf 'Splunk down? sh SV-50-service-recovery.sh --services splunk\n'
 } >"$CC_RUN_DIR/summary.txt"
 awk -F'|' '{ printf "%-5s %-16s %s\n", $1, $2, $3 }' "$W/find" >"$CC_RUN_DIR/findings.txt"
 cc_show "" ""
 while IFS= read -r _l; do
-    case "$_l" in ==*|SV-44*) cc_show "$C_CYN" "$_l" ;; *HIGH*|*'PUT BACK'*|*'Failed: '[1-9]*) cc_show "$C_RED" "$_l" ;; *MED*|*'New passwords'*|*'Give them'*) cc_show "$C_YEL" "$_l" ;; *) cc_show "" "$_l" ;; esac
+    case "$_l" in ==*|SV-44*) cc_show "$C_CYN" "$_l" ;; *HIGH*|*'PUT BACK'*|*'Failed: '[1-9]*|'[!] SCORED'*) cc_show "$C_RED" "$_l" ;; *MED*|*'New passwords'*|*'Give them'*) cc_show "$C_YEL" "$_l" ;; *) cc_show "" "$_l" ;; esac
 done <"$CC_RUN_DIR/summary.txt"
 rm -rf "$W"
 if [ "$TIMER_ON" = 1 ]; then

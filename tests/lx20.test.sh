@@ -102,6 +102,7 @@ out=$(run --out "$O" --root "$R" --keep "$T_TMP/keep.txt" --protected "$T_TMP/pr
 t_eq "$rc" 0 "exit 0"
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
 P="$d/passwords.txt"
+t_has "$(cat "$d/summary.txt")" "[!] SCORED ACCOUNTS: submit each new password in the scoring engine" "the summary says to submit scored passwords to the scoring engine"
 t_file "$P" "passwords file written"
 t_eq "$(ls -l "$P" | cut -c1-10)" "-rw-------" "passwords file is mode 600"
 pw_alice=$(awk '$2 == "alice" { print $3 }' "$P")

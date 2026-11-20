@@ -2226,8 +2226,8 @@ fi
     printf '\n'
     if [ -f "$PWOUT" ]; then
         printf 'New passwords: %s (mode 600)\n' "$PWOUT"
-        printf '  Give them to the captain (and the scoring portal if a scored account changed),\n'
-        printf '  then remove the file from this box:  rm %s\n' "$PWOUT"
+        printf '  Give them to the captain, then remove the file from this box:  rm %s\n' "$PWOUT"
+        printf '%s\n' '[!] SCORED ACCOUNTS: submit each new password in the scoring engine (Quotient: password change request) NOW - until then its checks use the old one and fail.'
     elif [ "$CC_APPLY" != 1 ]; then
         printf 'Nothing was changed.\n'
     fi
@@ -2238,7 +2238,7 @@ cc_csv_pretty "$CSV" "$CC_RUN_DIR/accounts.txt" 80
 header "SUMMARY"
 awk -v R="$C_RED" -v Y="$C_YEL" -v G="$C_GRN" -v C="$C_CYN" -v D="$C_GRY" -v O="$C_OFF" '
     NR == 1                        { print C $0 O; next }
-    /^  HIGH/ || / failed / || /Failed: [1-9]/ { print R $0 O; next }
+    /^  HIGH/ || / failed / || /Failed: [1-9]/ || /^\[!\] SCORED/ { print R $0 O; next }
     / rotated / || / locked /      { print G $0 O; next }
     /^  NOTE/ || /would/ || /^New passwords/ || /^  Give/ || /^  then remove/ { print Y $0 O; next }
     /^$/                           { print; next }

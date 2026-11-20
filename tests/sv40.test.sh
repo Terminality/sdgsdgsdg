@@ -100,6 +100,7 @@ else
 fi
 d=$(ls -d "$O"/mail-passwords-* | sort -t- -k3 -n | tail -n 1)
 t_eq "$(ls -l "$d/passwords.txt" | cut -c1-10)" "-rw-------" "passwords.txt is root only"
+t_has "$(cat "$d/summary.txt")" "[!] SCORED ACCOUNTS: submit each new password in the scoring engine" "the summary says to submit scored passwords to the scoring engine"
 t_hasnt "$(awk -F: '$1 == "alice"' "$F/etc/shadow")" '$6$a$alice' "alice has a new hash"
 t_has "$(awk -F: '$1 == "vuser"' "$F/etc/dovecot/users")" "{SHA512-CRYPT}\$6\$" "vuser has a SHA512-CRYPT hash"
 t_hasnt "$(cat "$F/etc/dovecot/users")" "OldVirt40x" "the old plain password is gone"

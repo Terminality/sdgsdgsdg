@@ -104,6 +104,7 @@ t_has "$out" "[+] admin: new password, login tested" "the admin too (with its ol
 t_hasnt "$(cat "$S/etc/passwd")" "plainOldAdmin44x" "the admin's old password is gone"
 t_has "$(cat "$S/etc/passwd")" "plainScore44x" "--exclude keeps the scoring user"
 _np=$(awk '$1 == "admin" { print $2 }' "$d/passwords.txt")
+t_has "$(cat "$d/summary.txt")" "[!] SCORED ACCOUNTS: submit each new password in the scoring engine" "the summary says to submit scored passwords to the scoring engine"
 t_has "$(cat "$S/etc/passwd")" "plain$_np" "the new admin password is the one in passwords.txt"
 t_eq "$(ls -l "$d/passwords.txt" | cut -c1-10)" "-rw-------" "passwords.txt is root only"
 t_fail "the planted app is out of etc/apps" test -d "$S/etc/apps/evilapp"
