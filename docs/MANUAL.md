@@ -3508,10 +3508,11 @@ Replies to allowed connections always pass, so a scored service still answers wh
 | FortiGate | address objects `bt-a-ADDR`, services, policies 9101 and up, moved before the first other policy | the policies, then the services, then the addresses deleted |
 | MikroTik | forward-chain rules with comments `bt-...`, placed on top | `/ip firewall filter remove [find comment~"^bt-"]` |
 | Linux router | its own nftables table `inet bt_fw` (forward hook, runs before the others), checked with `nft -c` first | `nft delete table inet bt_fw` |
+| OpenWRT | the same `inet bt_fw` table, kept in `/etc/bt_fw.nft` and loaded by fw4 at every reload and boot (a uci `include`); the router's enabled port forwards are kept open (asked, `--no-forwards` to drop them), each to its inside address and port | `nft delete table inet bt_fw`, the uci include removed, the file deleted |
 | pfSense / OPNsense | the plan as web GUI steps in `plan.txt` | by hand |
 | Cisco IOS / VyOS | the plan in `plan.txt`, not applied | by hand |
 
-NAT: Palo Alto and FortiGate match the OUTSIDE address of a box. Their NAT rules and virtual IPs that lead to a scored box are read, and those names are added to its rules (shown, and listed in `plan.txt`). ASA, MikroTik and Linux match the inside address.
+NAT: Palo Alto and FortiGate match the OUTSIDE address of a box. Their NAT rules and virtual IPs that lead to a scored box are read, and those names are added to its rules (shown, and listed in `plan.txt`). ASA, MikroTik, Linux and OpenWRT match the inside address (on OpenWRT the forward chain sees a port forward after it was turned into the inside address and port).
 
 ### How the firewall is changed
 
