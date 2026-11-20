@@ -89,7 +89,6 @@
 #   summary.txt         what stays open and why, what is dropped, timer status
 #   ports.txt           every listening port: program, account, command, what
 #                       it is, and what was decided
-#   csv/ports.csv       the same as CSV
 #   ruleset.nft / ruleset.iptables.sh   the exact rules
 #   rollback.sh         removes the rules (also in the undo log)
 #   keep-firewall.sh    run from a NEW session to cancel the rollback timer

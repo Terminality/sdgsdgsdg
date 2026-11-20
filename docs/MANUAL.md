@@ -119,8 +119,8 @@ Scripts never write next to themselves. Everything goes under the folder given b
 ```
 <out>/
   <ID>_<host>_<UTC time>.log               one per run: everything printed, plus command output
-  <ID>_<host>_<UTC time>_<name>.csv        data a script produced
-  <ID>_<host>_<UTC time>_findings.csv      weaknesses found by a detection script
+  <ID>_<host>_<UTC time>_<name>.txt        data a script produced (a table)
+  <ID>_<host>_<UTC time>_findings.txt      weaknesses found by a detection script
   undo-<host>.log                          one per host, shared by every script
   protected.txt                            the protected list, if you keep it here
   backup/<host>/<UTC time>_<ID>/...        files as they were before a change, full path kept
@@ -253,9 +253,9 @@ cc_finish
 | `cc_finding WEAKNESS FIX_ID CLASS DETAIL [DEP]` | Write a finding. `CLASS` is `safe`, `service` or `protected` |
 | `cc_use_run_dir` | Inventory scripts: put this run's CSV files in one folder, `<out>/<ID>_<host>_<time>/` |
 | `cc_save NAME CMD...` | Keep a read-only command's untouched output in `raw/NAME.txt` |
-| `cc_flag SEV SECTION ITEM DETAIL` | Record something unusual. `SEV` is `HIGH`, `MED` or `LOW`. Goes to `flags.csv` and the log, not the screen |
+| `cc_flag SEV SECTION ITEM DETAIL` | Record something unusual. `SEV` is `HIGH`, `MED` or `LOW`. Goes to `flags.txt` and the log, not the screen |
 | `cc_flag_report [MAX]` | Print HIGH then MED flags, at most MAX lines (default 30), then counts. LOW flags are counted, never listed |
-| `CC_AWK_CSV` | An awk `csvsplit()` function for reading the kit's CSV files correctly |
+| `CC_AWK_CSV` | An awk `csvsplit()` function for reading CSV (the working files scripts build, and older runs) |
 | `cc_shquote STR` / `cc_abspath PATH` | Quote for a shell; make a path absolute |
 | `cc_verify_self` | Check the running script against `SCRIPT.sha256` next to it (or an older `MANIFEST.sha256`; called by `cc_init`) |
 | `cc_finish [CODE]` | Print the summary and exit |
@@ -507,31 +507,30 @@ Each run gets a numbered folder: `<out>/linux-enum-1`, `linux-enum-2`, ... Highe
 | File | Contents |
 | --- | --- |
 | `output.txt` | Everything shown while it ran, without colours |
-| `<section>.txt` | Each section as a readable table (`users.txt`, `ports.txt`, ...) |
+| `<section>.txt` | Each section as a ` | ` table (`users.txt`, `ports.txt`, ...); SH-04 compares two runs from these |
 | `flags.txt` | Every flag including LOW, HIGH first |
-| `csv/` | The same data as CSV, for SH-04 |
 | `summary.txt` | The end summary: key facts, a row per section, the HIGH and MED flags |
 | `run.txt` | Script ID, host and start time (SH-04 uses it) |
 | `privesc.txt` | Ways to become root, like linpeas checks: files root runs (cron, services, start-up) that others can change, writable key files (`/etc/passwd`, sudoers, root's files), a readable shadow file, risky PATH folders or `.` on the PATH, sudo rules for shell-escape programs (vim, less, find ...) or keeping LD_PRELOAD, and old sudo, pkexec or kernel versions with known root bugs (Baron Samedit, PwnKit, Dirty COW, Dirty Pipe) unless the package changelog shows the fix |
 
-The tables below are named by their CSV file; each one is also a readable `.txt` in the run folder.
+The section tables:
 
 | File | Contents |
 | --- | --- |
-| `facts.csv`, `addresses.csv` | Host name, OS, kernel, init system, uptime, IPv6 on or off, addresses, DNS |
-| `users.csv` | Every account: UID, shell, whether it can log in, password state (`set`, `EMPTY`, `locked`; never the hash), groups |
-| `ports.csv` | Listening ports: protocol, address, port, `any` or `local`, pid, process, user, program file |
-| `services.csv` | Services with enabled and running state |
-| `autostart.csv` | cron, at, timers, rc.local, and suspicious lines from startup files, motd scripts and udev rules |
-| `ssh_config.csv`, `ssh_keys.csv` | Effective sshd settings; every authorized key with its account, file, fingerprint and options |
-| `sudo.csv` | sudoers, doas and polkit rules |
-| `processes.csv`, `connections.csv`, `sessions.csv` | Every process with its program file; live connections; who is logged in |
-| `packages.csv` | Installed packages and versions |
-| `suid.csv`, `capabilities.csv`, `world_writable.csv`, `immutable.csv` | Risky file permissions |
-| `firewall.csv`, `pam.csv`, `mac.csv`, `trust.csv`, `modules.csv`, `containers.csv` | One per section |
-| `creds.csv`, `private_keys.csv`, `history.csv` | Files holding password-like settings (file, line and setting name only), private key files, shell history sizes |
+| `facts.txt`, `addresses.txt` | Host name, OS, kernel, init system, uptime, IPv6 on or off, addresses, DNS |
+| `users.txt` | Every account: UID, shell, whether it can log in, password state (`set`, `EMPTY`, `locked`; never the hash), groups |
+| `ports.txt` | Listening ports: protocol, address, port, `any` or `local`, pid, process, user, program file |
+| `services.txt` | Services with enabled and running state |
+| `autostart.txt` | cron, at, timers, rc.local, and suspicious lines from startup files, motd scripts and udev rules |
+| `ssh_config.txt`, `ssh_keys.txt` | Effective sshd settings; every authorized key with its account, file, fingerprint and options |
+| `sudo.txt` | sudoers, doas and polkit rules |
+| `processes.txt`, `connections.txt`, `sessions.txt` | Every process with its program file; live connections; who is logged in |
+| `packages.txt` | Installed packages and versions |
+| `suid.txt`, `capabilities.txt`, `world_writable.txt`, `immutable.txt` | Risky file permissions |
+| `firewall.txt`, `pam.txt`, `mac.txt`, `trust.txt`, `modules.txt`, `containers.txt` | One per section |
+| `creds.txt`, `private_keys.txt`, `history.txt` | Files holding password-like settings (file, line and setting name only), private key files, shell history sizes |
 | `raw/*.txt` | Untouched tool output: `iptables-save`, `sshd -T`, `ss`, `last` and others |
-| `logs/` | Triage only: copies of auth, syslog, web and audit logs, with SHA-256 in `logs.csv` |
+| `logs/` | Triage only: copies of auth, syslog, web and audit logs, with SHA-256 in `logs.txt` |
 
 ### Reading the summary
 
@@ -547,7 +546,7 @@ ports             9     1     1     0  partial: process shown only for your own 
 - **high / med / low** are the flags from that section.
 - **note** says when a section is incomplete and why.
 
-Only HIGH and MED flags are printed. LOW flags are in `flags.csv`.
+Only HIGH and MED flags are printed. LOW flags are in `flags.txt`.
 
 | Severity | Meaning | Examples |
 | --- | --- | --- |
@@ -561,7 +560,7 @@ Only HIGH and MED flags are printed. LOW flags are in `flags.csv`.
 - **Run it again after you change things.** Two runs compared side by side show what changed. The scan diff and change watch will automate this later.
 - **It sees what the operating system reports.** A kernel rootkit can hide processes, files and ports from every tool it uses.
 - **Accounts come from `/etc/passwd`.** LDAP or FreeIPA users are not listed.
-- **Passwords are never recorded.** `users.csv` shows only whether a password is set; `creds.csv` shows only the file, line and setting name.
+- **Passwords are never recorded.** `users.txt` shows only whether a password is set; `creds.txt` shows only the file, line and setting name.
 - **Triage copies logs into the output folder.** Copy that folder off the host; a red team that owns the box can delete it.
 - **Time.** About a minute for `full` on a normal server. The files and creds sections walk the disk and take most of that. Use `--fast` or `card` under time pressure.
 
@@ -811,23 +810,23 @@ Run it as root. As a normal user it still runs, but it cannot read most configs,
 
 ### What it produces
 
-In `<out>/web-enum-N/`: `output.txt` (the screen without colour), `summary.txt`, `run.txt`, and a readable `.txt` table for each of these (the CSVs are in `csv/`):
+In `<out>/web-enum-N/`: `output.txt` (the screen without colour), `summary.txt`, `run.txt`, and a readable `.txt` table for each of these:
 
 | File | Contents |
 | --- | --- |
 | `summary.txt` | Web servers, sites, web roots, apps, databases; a section table; HIGH and MED flags |
-| `servers.csv`, `fpm_pools.csv` | Each web server and PHP-FPM pool: version, running or not, the account it runs as |
-| `sites.csv` | Each Apache virtual host and nginx server block: name, listen address, TLS, web root, config file and line |
+| `servers.txt`, `fpm_pools.txt` | Each web server and PHP-FPM pool: version, running or not, the account it runs as |
+| `sites.txt` | Each Apache virtual host and nginx server block: name, listen address, TLS, web root, config file and line |
 | `paths.csv` | Each URL path and what serves it: web roots, aliases, CGI folders, proxies to an app (`ProxyPass`, `proxy_pass`), PHP and uWSGI handlers, status pages |
 | `runtimes.csv` | Languages installed (with version), app servers running (gunicorn, uwsgi, Node, Java/Tomcat, puma, dotnet ...), app folders (`package.json`, `manage.py`, `Gemfile`, `.war` ...), and unknown programs on web ports |
-| `webroots.csv` | Each web root: owner, mode, file counts, files owned by the web account, world-writable files |
-| `files.csv` | Every file that should not be in a web root, with its kind (`webshell`, `upload_code`, `dump`, `env`, `vcs`, `phpinfo`, `config_readable`, `backup`) |
+| `webroots.txt` | Each web root: owner, mode, file counts, files owned by the web account, world-writable files |
+| `files.txt` | Every file that should not be in a web root, with its kind (`webshell`, `upload_code`, `dump`, `env`, `vcs`, `phpinfo`, `config_readable`, `backup`) |
 | `php.csv` | The risky settings of each `php.ini`, after its `conf.d` overrides |
 | `apps.csv` | Each web app found: version, folder, config file, database name, user and host (never the password) |
-| `db_users.csv` | MySQL and PostgreSQL accounts: how they log in, empty password, superuser, file access, grant rights |
-| `db_settings.csv`, `db_databases.csv`, `db_objects.csv` | Server settings; databases with size; triggers, events, routines and user-defined functions |
-| `pg_hba.csv` | PostgreSQL login rules |
-| `datastores.csv` | Redis, memcached, MongoDB, Elasticsearch and CouchDB: where they listen and whether they answer without a password |
+| `db_users.txt` | MySQL and PostgreSQL accounts: how they log in, empty password, superuser, file access, grant rights |
+| `db_settings.txt`, `db_databases.txt`, `db_objects.txt` | Server settings; databases with size; triggers, events, routines and user-defined functions |
+| `pg_hba.txt` | PostgreSQL login rules |
+| `datastores.txt` | Redis, memcached, MongoDB, Elasticsearch and CouchDB: where they listen and whether they answer without a password |
 
 ### What it flags
 
@@ -841,7 +840,7 @@ In `<out>/web-enum-N/`: `output.txt` (the screen without colour), `summary.txt`,
 
 - **Read before you delete.** A web shell flag means the file matched a known pattern. Read it, copy it for the incident report, then quarantine it. A security plugin's signature list can also match.
 - **"Owned by the web account" is common and still worth fixing.** Many WordPress installs are owned by `www-data` so plugins can update. It is also how one flaw becomes a defaced site. Changing owners can break uploads and updates, so it is a fix for later, not the first 15 minutes.
-- **Database accounts the apps use are listed in `apps.csv`.** Before changing a database password, find which app uses that account and update its config at the same time, or the site goes down.
+- **Database accounts the apps use are listed in `apps.txt`.** Before changing a database password, find which app uses that account and update its config at the same time, or the site goes down.
 - **Triggers, events and user-defined functions are rare in competition apps.** One that the app did not create is a strong sign of red team persistence.
 - **Some checks need tools.** Without a MySQL client or `psql` the database accounts are not listed; without `redis-cli` or `curl` the "answers without a password" column says `not checked`.
 
@@ -854,7 +853,7 @@ In `<out>/web-enum-N/`: `output.txt` (the screen without colour), `summary.txt`,
 | `PostgreSQL: found, but could not log in` | Not root, or the `postgres` account cannot log in through the socket | Run as root; check `pg_hba.conf` has a `local ... peer` line for postgres |
 | A site is missing from `sites.csv` | Its config is in a file Apache or nginx loads in an unusual way | Compare with `raw/apache_S.txt` or `raw/nginx_T.txt`; add its folder with `--webroot` |
 | The run is slow on a large site | The content search reads every PHP file under 2 MB | `--fast`, or `--skip webroots` and run that section on its own later |
-| `sites.csv` empty, but a web server is running | `apachectl` or `nginx` missing or not in PATH | Point at the configs with `--apache-conf` / `--nginx-conf` |
+| `sites.txt` empty, but a web server is running | `apachectl` or `nginx` missing or not in PATH | Point at the configs with `--apache-conf` / `--nginx-conf` |
 
 ---
 
@@ -920,7 +919,7 @@ In a numbered folder: `<out>/backup-1`, `backup-2`, ...
 | File | Contents |
 | --- | --- |
 | `output.txt` | Everything shown on screen, without colours |
-| `included.txt` | Every path asked for, its size, and whether it was read fully (CSV copy in `csv/`) |
+| `included.txt` | Every path asked for, its size, and whether it was read fully |
 | `backup.tar.gz` | The archive. Paths inside are relative to `/` (`etc/passwd`). Mode 600 |
 | `backup.tar.gz.sha256` | Hash of the archive, to check a copy is intact |
 | `files.sha256` | SHA-256 of every file in the archive |
@@ -1040,7 +1039,6 @@ In a numbered folder: `<out>/safe-fixes-1`, `safe-fixes-2`, ...
 | `fixes.txt` | What it did: fix, item, before, after, status |
 | `revert.sh` | Undoes this run: `sh revert.sh --force` |
 | `revert.log`, `KEEP`, `REVERTED` | The revert timer's record |
-| `csv/` | `plan.csv`, `fixes.csv` |
 
 Every change adds an undo command to `<out>/undo-<host>.log`. Changed files are copied to `<out>/backup/<host>/` first; quarantined files go to `<out>/quarantine/<host>/`.
 
@@ -1159,7 +1157,7 @@ In a numbered folder: `<out>/passwords-1`, `passwords-2`, ...
 | File | Contents |
 | --- | --- |
 | `output.txt` | Everything shown on screen. Never a password |
-| `accounts.txt` | Every account and what was done, as a table (CSV copy in `csv/`). No passwords |
+| `accounts.txt` | Every account and what was done, as a table. No passwords |
 | `revert.sh` | Undoes this run: old passwords back, locks removed (`sh revert.sh --force`) |
 | `summary.txt` | Counts, every account and what happened, warnings (empty passwords, extra UID 0, Samba accounts). No passwords |
 | `passwords.txt` | `HOST USER PASSWORD TIME` in columns, mode 600, written only when changes are applied. If the run is undone it is renamed `passwords-UNDONE-not-valid.txt`, so nobody hands out passwords that no longer work |
@@ -1246,7 +1244,7 @@ Each question shows the current value and one line on what it does. A setting th
 
 ### What it produces
 
-In `ssh-hardening-N/`: `output.txt`, `summary.txt`, `keys.txt`, `settings.txt`, `csv/`, `quarantine/`, `revert.sh` (after a live apply).
+In `ssh-hardening-N/`: `output.txt`, `summary.txt`, `keys.txt`, `settings.txt`, `quarantine/`, `revert.sh` (after a live apply).
 
 ### Problems and fixes
 
@@ -1347,7 +1345,6 @@ In `<out>/firewall-N/` (next free number):
 | `output.txt` | Everything shown on screen, without colour |
 | `summary.txt` | State (live, rolled back, dry run), what is open and why, what is dropped, the confirm command |
 | `ports.txt` | Every listening port: where it is bound, program, pid, account, what it is, the decision and why, the command line |
-| `csv/ports.csv` | The same as CSV |
 | `ruleset.nft` or `ruleset.iptables.sh` | The exact rules |
 | `rollback.sh` | Removes the rules (also in the undo log) |
 | `keep-firewall.sh` | Cancels the rollback timer |
@@ -1432,7 +1429,7 @@ Other options: `--count N` (stop after N checks), `--suid-every N` (in a loop, t
 
 ### What it produces
 
-Each run gets `<out>/changewatch-N/`: `output.txt` (the screen without colour), `alerts.txt` and `connections.txt` (tables; CSVs in `csv/`), `summary.txt`, `run.txt`.
+Each run gets `<out>/changewatch-N/`: `output.txt` (the screen without colour), `alerts.txt` and `connections.txt` (tables), `summary.txt`, `run.txt`.
 
 The state stays in `<out>/watch-<host>/`: `baseline/` and `last/` snapshots, `alerts.log` (every alert ever, one line each), `changes-since-baseline.txt`, `conns-seen`, `settings`.
 
@@ -1521,7 +1518,7 @@ Your team answer, protected hosts, this box, loopback and the **default gateway*
 
 ### What it produces
 
-Each run gets `<out>/banning-N/`: `output.txt` (the screen without colour), `bans.txt`, `offenders.txt` (every address with failures, per check, and the verdict; CSVs in `csv/`), `summary.txt` and `run.txt`.
+Each run gets `<out>/banning-N/`: `output.txt` (the screen without colour), `bans.txt`, `offenders.txt` (every address with failures, per check, and the verdict), `summary.txt` and `run.txt`.
 
 These are kept in `<out>/ban-<host>/`: `bans.csv` (every ban ever), `events.log`, `hits`, `offsets`, `settings`. A dry run keeps its counts in the run folder only, so it never touches the real state, and a dry loop still reads each line once.
 
@@ -1582,7 +1579,7 @@ Login for MySQL follows SV-01: `--mysql-cnf`, then root through the socket, then
 
 ### What it produces
 
-In `<out>/SV-14_<host>_<UTC time>/` (mode 700, files 600): the dumps, `SHA256SUMS`, `dumps.csv` (`engine,database,file,size_kb,status`), `RESTORE.txt` with the commands for each dump, and `summary.txt`.
+In `<out>/SV-14_<host>_<UTC time>/` (mode 700, files 600): the dumps, `SHA256SUMS`, `dumps.txt` (engine, database, file, size, status), `RESTORE.txt` with the commands for each dump, and `summary.txt`.
 
 ### Restoring
 
@@ -2263,7 +2260,7 @@ vsftpd config is edited in full. pure-ftpd: anonymous off is written (`conf/NoAn
 
 ### Outputs
 
-In `service-hardening-N/`: `output.txt`, `plan.txt`, `changes.txt`, `summary.txt`, `csv/`, and `revert.sh` (when a live apply changed something). Same look and undo as LX-39.
+In `service-hardening-N/`: `output.txt`, `plan.txt`, `changes.txt`, `summary.txt` and `revert.sh` (when a live apply changed something). Same look and undo as LX-39.
 
 ### What to watch for
 
@@ -2332,7 +2329,7 @@ With `--apply` it asks about each HIGH and MED finding that can be removed. File
 
 ### Outputs
 
-In `persistence-N/`: `output.txt`, `summary.txt` (counts per area, HIGH and MED list), `findings.txt` (every finding, numbered), `csv/`, `quarantine/`, `revert.sh`. No password hash is ever written.
+In `persistence-N/`: `output.txt`, `summary.txt` (counts per area, HIGH and MED list), `findings.txt` (every finding, numbered), `quarantine/`, `revert.sh`. No password hash is ever written.
 
 ---
 

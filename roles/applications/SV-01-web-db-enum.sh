@@ -28,7 +28,7 @@
 #   the plan: one script per job keeps the kit small.
 #
 #   Output is layered like the Linux collector (SH-05): one page on screen,
-#   everything in CSV files, every flag in flags.csv.
+#   everything in .txt tables, every flag in flags.txt.
 #
 # USAGE
 #   sudo sh SV-01-web-db-inventory.sh [options]
@@ -57,20 +57,20 @@
 #
 # OUTPUTS  (under --out, in SV-01_<host>_<UTC time>/)
 #   summary.txt        one page: what was found, counts, HIGH and MED flags
-#   servers.csv        server,version,running,run_as,program,config
-#   fpm_pools.csv      file,pool,user,group,listen
-#   sites.csv          server,site,listen,tls,web_root,config
-#   webroots.csv       path,owner,mode,files,code_files,owned_by_web_account,world_writable
-#   files.csv          web_root,kind,path    (the files that should not be there)
-#   php.csv            ini,sapi,setting,value
-#   apps.csv           web_root,app,version,path,config,db_name,db_user,db_host
-#   db_users.csv       engine,user,host,auth,empty_password,superuser,file_access,can_grant,notes
-#   db_settings.csv    engine,setting,value
-#   db_databases.csv   engine,database,tables,size_mb
-#   db_objects.csv     engine,schema,kind,name,detail   (triggers, events, UDFs ...)
-#   pg_hba.csv         line,type,database,user,address,method
-#   datastores.csv     service,address,port,process,answers_without_password
-#   flags.csv          severity,section,item,detail,time
+#   servers.txt        server,version,running,run_as,program,config
+#   fpm_pools.txt      file,pool,user,group,listen
+#   sites.txt          server,site,listen,tls,web_root,config
+#   webroots.txt       path,owner,mode,files,code_files,owned_by_web_account,world_writable
+#   files.txt          web_root,kind,path    (the files that should not be there)
+#   php.txt            ini,sapi,setting,value
+#   apps.txt           web_root,app,version,path,config,db_name,db_user,db_host
+#   db_users.txt       engine,user,host,auth,empty_password,superuser,file_access,can_grant,notes
+#   db_settings.txt    engine,setting,value
+#   db_databases.txt   engine,database,tables,size_mb
+#   db_objects.txt     engine,schema,kind,name,detail   (triggers, events, UDFs ...)
+#   pg_hba.txt         line,type,database,user,address,method
+#   datastores.txt     service,address,port,process,answers_without_password
+#   flags.txt          severity,section,item,detail,time
 #   raw/               apache -S and -M, nginx -T, server version output
 #
 # WHAT IT CHANGES
@@ -98,7 +98,7 @@
 #     slip past it, and a security plugin's signature file can match it.
 #   - Config parsing follows the usual layouts.  Unusual Include lines,
 #     variables in paths or configs generated at run time can be missed: check
-#     raw/apache_S.txt and raw/nginx_T.txt against sites.csv.
+#     raw/apache_S.txt and raw/nginx_T.txt against sites.txt.
 #   - Database accounts are only listed when the script can log in.  If it
 #     cannot, the summary says so; give --mysql-cnf or run as root.
 #

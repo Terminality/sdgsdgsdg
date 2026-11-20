@@ -69,7 +69,7 @@ http {
 CONF
 
 t_start "web sections on the fake site"
-out=$(run --out "$O" --batch --only sites,paths,webroots,apps --apache-conf "$T_TMP/apache.conf" --nginx-conf "$T_TMP/nginx.conf" 2>&1); rc=$?
+out=$(export BT_TEST_KEEP_CSV=1; run --out "$O" --batch --only sites,paths,webroots,apps --apache-conf "$T_TMP/apache.conf" --nginx-conf "$T_TMP/nginx.conf" 2>&1); rc=$?
 t_eq "$rc" 0 "exit 0"
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
 t_file "$d/summary.txt" "summary written"
@@ -119,7 +119,7 @@ if command -v script >/dev/null 2>&1; then
 fi
 
 t_start "--fast skips the content search"
-out=$(run --out "$O" --batch --only webroots --fast --webroot "$S" 2>&1)
+out=$(export BT_TEST_KEEP_CSV=1; run --out "$O" --batch --only webroots --fast --webroot "$S" 2>&1)
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p'); flags=$(cat "$d/csv/flags.csv")
 t_hasnt "$flags" "looks like a web shell" "no content search"
 t_has "$flags" "program file in an upload" "name-based checks still run"
@@ -128,5 +128,8 @@ t_has "$out" "fast: no web shell search" "summary says the search was skipped"
 t_start "every section runs on this machine"
 out=$(run --out "$O" --batch --webroot "$S" 2>&1); rc=$?
 t_eq "$rc" 0 "full run exits 0"
+_fd=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
+t_fail "no CSV files are left" sh -c "find '$_fd' -name '*.csv' | grep -q ."
+t_ok "each section is a .txt table" test -f "$_fd/sites.txt"
 t_has "$out" "datastores" "all sections listed in the summary"
 t_done

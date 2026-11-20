@@ -134,7 +134,7 @@ t_has "$out" "[*] MED  connections in      203.0.113.66 -> port 22" "new address
 t_hasnt "$out" "198.51.100.8" "web visitors are not alerted"
 t_hasnt "$out" "127.0.0.1" "loopback not alerted"
 t_hasnt "$out" "198.51.100.7" "connections open at the baseline are not alerted"
-t_ok "connections.csv written" grep -q '203.0.113.9' "$O/changewatch-3/csv/connections.csv"
+t_ok "connections.txt written" grep -q '203.0.113.9' "$O/changewatch-3/connections.txt"
 t_ok "alerts.txt table" grep -q 'SEVERITY' "$O/changewatch-3/alerts.txt"
 t_ok "summary.txt" grep -q 'This run: ' "$O/changewatch-3/summary.txt"
 t_has "$(cat "$O/changewatch-3/summary.txt")" "connections" "summary counts by section"

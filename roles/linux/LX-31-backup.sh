@@ -60,7 +60,6 @@
 # OUTPUTS  (under --out, one numbered folder per run: backup-1, backup-2, ...)
 #   output.txt         everything shown on screen, without colours
 #   included.txt       what was asked for and what happened, as a table
-#   csv/included.csv   the same as CSV
 #   backup.tar.gz      the archive; paths inside are relative to / (etc/passwd)
 #   backup.tar.gz.sha256  hash of the archive, to check a copy is intact
 #   files.sha256       sha256 of every file in the archive ("hash  /path")

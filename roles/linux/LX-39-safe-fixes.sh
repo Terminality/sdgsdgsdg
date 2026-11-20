@@ -90,7 +90,6 @@
 #   fixes.txt     what it did: fix, item, before, after, status
 #                 (status: changed | would change | already ok | failed |
 #                  refused | skipped | check by hand)
-#   csv/          plan.csv and fixes.csv
 #   revert.sh     undoes this run (sh revert.sh --force); undo.txt, revert.log,
 #                 KEEP and REVERTED belong to the revert timer
 #   The undo log (<out>/undo-<host>.log) gets one line per change; run its

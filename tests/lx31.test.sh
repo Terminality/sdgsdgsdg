@@ -31,7 +31,7 @@ c=$(cat "$d/contents.txt")
 t_has "$c" "etc/passwd" "/etc is in the archive"
 t_has "$c" "${D#/}/conf/app.conf" "the --add folder is in the archive"
 t_has "$c" "${D#/}/conf/.hidden" "hidden files are included"
-t_has "$(cat "$d/csv/included.csv")" "\"$D\",\"added\"" "included.csv lists the extra folder"
+t_has "$(grep -F "$D" "$d/included.txt")" "added" "included.txt lists the extra folder"
 t_has "$(cat "$d/included.txt")" "PATH" "included.txt is a readable table"
 t_eq "$d" "$O/backup-1" "the first run is backup-1"
 t_file "$d/output.txt" "output.txt written"

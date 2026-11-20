@@ -40,7 +40,7 @@
 # OUTPUTS  (under --out, in SV-14_<host>_<UTC time>/, mode 700)
 #   mysql_<db>.sql.gz, pg_globals.sql.gz, pg_<db>.dump, sqlite_<name>.db
 #   SHA256SUMS        hashes of every dump
-#   dumps.csv         engine,database,file,size_kb,status
+#   dumps.txt         engine, database, file, size_kb, status
 #   RESTORE.txt       restore commands for each dump
 #   summary.txt       what was dumped and what failed
 #

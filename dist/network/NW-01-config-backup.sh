@@ -253,6 +253,7 @@ cc_die() {
     _cc_die_code=$1
     shift
     cc_log ERROR "$*"
+    _cc_csv_cleanup 2>/dev/null
     exit "$_cc_die_code"
 }
 
@@ -1287,6 +1288,17 @@ cc_csv_pretty() {
         END { if (FNR <= 1) print "(nothing found)" }' "$1" "$1" >"$2"
 }
 
+# cc_csv_table CSV TXT
+#   Write CSV as a " | " table (the look SH-03 uses): the header as it is, every
+#   value whole, columns padded.  SH-04 compares two runs from these tables.
+#   A "|" inside a value becomes "/".
+cc_csv_table() {
+    [ -f "$1" ] || return 0
+    awk "$CC_AWK_CSV"'{ n = csvsplit($0, f); l = ""
+        for (i = 1; i <= n; i++) { v = f[i]; gsub(/\|/, "/", v); gsub(/[\r\n]/, " ", v); l = l (i > 1 ? " | " : "") v }
+        print l }' "$1" >"$2" && cc_table_align "$2"
+}
+
 # cc_save NAME COMMAND [ARG...]
 #   Run a READ-ONLY command and keep its untouched output in
 #   <run folder>/raw/NAME.txt (or <out>/<ID>_<host>_<time>_NAME.txt without a
@@ -1651,7 +1663,34 @@ cc_finish() {
     [ "$CC_N_WOULD" -gt 0 ] && cc_info "this was a dry run - re-run with --apply to make the $CC_N_WOULD change(s)"
     [ "$CC_N_DONE" -gt 0 ] && cc_info "undo commands for this host are in $CC_UNDO"
     [ -n "$CC_LOG" ] && cc_info "log: $CC_LOG"
+    _cc_csv_cleanup
     exit "$_cc_fin_rc"
+}
+
+# _cc_csv_cleanup -> no CSV files are left in the results.  The CSV files a
+#   script builds while it runs (cc_csv_new, cc_flag, cc_finding) are working
+#   files: at the end each becomes a .txt table, unless the script already
+#   wrote one with that name, and is deleted, with the csv/ folder.
+_cc_csv_cleanup() {
+    [ "${BT_TEST_KEEP_CSV:-0}" = 1 ] && return 0   # tests only: read the rows as written
+    if [ -n "${CC_RUN_DIR:-}" ] && [ -d "$CC_RUN_DIR" ]; then
+        for _cc_cu_f in "$CC_RUN_DIR"/*.csv "$CC_RUN_DIR"/csv/*.csv; do
+            [ -f "$_cc_cu_f" ] || continue
+            _cc_cu_t="$CC_RUN_DIR/$(basename "$_cc_cu_f" .csv).txt"
+            [ -f "$_cc_cu_t" ] || cc_csv_pretty "$_cc_cu_f" "$_cc_cu_t" 200
+            rm -f "$_cc_cu_f"
+        done
+        rmdir "$CC_RUN_DIR/csv" 2>/dev/null
+    fi
+    # Without a run folder they sit in the out folder as <ID>_<host>_<time>_NAME.csv.
+    if [ -n "${CC_OUT:-}" ] && [ -n "${CC_ID:-}" ] && [ -n "${CC_TS:-}" ]; then
+        for _cc_cu_f in "$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_"*.csv; do
+            [ -f "$_cc_cu_f" ] || continue
+            [ -f "${_cc_cu_f%.csv}.txt" ] || cc_csv_pretty "$_cc_cu_f" "${_cc_cu_f%.csv}.txt" 200
+            rm -f "$_cc_cu_f"
+        done
+    fi
+    return 0
 }
 # <<< BT-LIB
 

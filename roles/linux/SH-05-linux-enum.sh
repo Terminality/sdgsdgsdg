@@ -23,7 +23,6 @@
 #                            section, and the HIGH and MED flags, worst first
 #     <section>.txt          everything collected, one readable table per section
 #     flags.txt              every flag including LOW, with the reason
-#     csv/                   the same data as CSV, for SH-04 and other tools
 #     raw/*.txt              untouched tool output (iptables-save, sshd -T ...)
 #
 # USAGE
@@ -58,8 +57,8 @@
 #   linux-enum-N/output.txt          everything shown live, without colour
 #   linux-enum-N/summary.txt         the one-page summary
 #   linux-enum-N/flags.txt           every flag, as a readable table
-#   linux-enum-N/<section>.txt       each section as a readable table
-#   linux-enum-N/csv/*.csv           the same as CSV (used by SH-04)
+#   linux-enum-N/<section>.txt       each section as a " | " table (SH-04
+#                                    compares two runs from these)
 #   linux-enum-N/raw/*.txt           raw tool output
 #   linux-enum-N/logs/               copied logs (triage only)
 #   linux-enum-N/run.txt             id, host and start time (read by SH-04)
@@ -224,13 +223,13 @@ fi
 # ---- Start ------------------------------------------------------------------
 cc_init "SH-05" "Linux enum" readonly
 cc_use_numbered_dir linux-enum
-# CSV files (for SH-04 and other tools) go in csv/; the run folder itself
-# gets a readable .txt table per file at the end.
-CC_CSV_DIR="$CC_RUN_DIR/csv"
-mkdir -p "$CC_CSV_DIR" || cc_die 3 "cannot create $CC_CSV_DIR"
 cc_detect_os
 W="$CC_RUN_DIR/.work"          # scratch files; removed at the end
 mkdir -p "$W" || cc_die 3 "cannot create $W"
+# Each section is built as CSV in the work folder; the run folder gets a
+# " | " table per section at the end (no CSV is kept).
+CC_CSV_DIR="$W/csv"
+mkdir -p "$CC_CSV_DIR" || cc_die 3 "cannot create $CC_CSV_DIR"
 
 # ---- Live output (linpeas style) ---------------------------------------------
 # Printed to file descriptor 3, a copy of the real stdout taken here, so a
@@ -1763,7 +1762,7 @@ _flagsf="$CC_CSV_DIR/flags.csv"
 CC_FLAGS=$_flagsf
 # shellcheck disable=SC2034
 CC_FLAGS_SHOW="$CC_RUN_DIR/flags.txt"
-# A readable table for every CSV file: <run>/users.txt, ports.txt, ...
+# A " | " table for every section: <run>/users.txt, ports.txt, ...
 # flags.txt lists HIGH first, then MED, then LOW, with the detail kept whole.
 for _c in "$CC_CSV_DIR"/*.csv; do
     [ -f "$_c" ] || continue
@@ -1772,7 +1771,7 @@ for _c in "$CC_CSV_DIR"/*.csv; do
         { head -n 1 "$_c"; for _sv in HIGH MED LOW; do grep "^\"$_sv\"" "$_c"; done; } >"$W/flags_sorted.csv"
         cc_csv_pretty "$W/flags_sorted.csv" "$CC_RUN_DIR/flags.txt" 200
     else
-        cc_csv_pretty "$_c" "$CC_RUN_DIR/$_b.txt"
+        cc_csv_table "$_c" "$CC_RUN_DIR/$_b.txt"
     fi
 done
 {
