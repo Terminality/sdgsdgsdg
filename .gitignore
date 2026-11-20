@@ -13,3 +13,6 @@ config/*.txt
 *~
 .DS_Store
 Thumbs.db
+
+# Temporary copies the test runs make of a test, pointed at dist/
+tests/.d-*.test.sh
