@@ -1928,6 +1928,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\bt-
 | `-MaxMB N` | Skip any single folder bigger than N MB (default 500). It is listed as not saved |
 | `-AdDatabase` | Domain controller: also save the AD database (ntdsutil IFM). It holds every domain password hash: copy it off and delete it from the DC |
 | `-Only a,b` / `-List` | Run only some items |
+| `-Box NAME`, `-Batch`, `-NoColor` | Answer the box question; take every default; no colours |
+
+### The questions
+
+| Question | Answers | Parameter |
+| --- | --- | --- |
+| Which box is this? | `[d]` domain controller `[b]` web (IIS) `[e]` ecomm `[f]` fileshare `[s]` database `[o]` other (guessed) | `-Box` |
+| Back up the website files too? | `[Y]` / `[n]` | `-NoWebRoots` answers no |
+| Other folders to back up? | folders separated by commas (Enter = none) | `-Path` |
+| Also save the AD database? (domain controller only; it holds every password hash) | `[y]` / `[N]` | `-AdDatabase` answers yes |
+| Copy the backup off the box? | a share or folder (Enter = no) | `-CopyTo` |
+
+It looks like the Linux scripts: a title line, the legend, `==========[ 1/3  questions ]==========`, then each item as it is saved (`[+]` saved, `[x]` failed, `[-]` skipped) and the summary. Results go in `<out>\backup-N\` with `output.txt`, `items.txt` and `run.txt`.
 
 ### What it saves
 
@@ -1939,7 +1952,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\bt-
 | auditpol | always | every audit subcategory | `auditpol /restore` |
 | tasks | always | every scheduled task's XML | `schtasks /create /xml` |
 | hosts | always | `drivers\etc` | copy back |
-| users, services | always | lists (no passwords) for comparison | recreate by hand |
+| users, services | always | lists as `.txt` tables (no passwords) for comparison | recreate by hand |
 | iis, web | IIS installed | settings folder; every site's folder from `applicationHost.config` | copy back between `iisreset /stop` and `/start` |
 | dns | DNS server | every zone (dnscmd export), server settings | `dnscmd /zoneadd ... /load` |
 | dhcp | DHCP server | scopes, options, reservations, leases | `netsh dhcp server import` |

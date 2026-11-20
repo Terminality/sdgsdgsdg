@@ -3,7 +3,7 @@
 # NAME:     Windows backup
 # ROLE:     Windows / AD  (wave 1, first 15 minutes)
 # KIND:     readonly - writes only into the output folder
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Run right after the collector (SH-06) and BEFORE any script that changes
@@ -19,6 +19,15 @@
 #   It writes RESTORE.txt (what to run to put each item back), hashes every
 #   saved file, and can copy the whole backup to another machine (-CopyTo),
 #   because a red team with admin rights can delete a backup kept on the box.
+#
+#   The look and the questions are the same as the Linux scripts (LX-31).
+#   QUESTIONS (Enter takes the default in capitals; a parameter answers each):
+#     which box                       -Box NAME (guessed: dc, web, ...)
+#     back up the website files?      -NoWebRoots answers no (Enter = yes)
+#     other folders to back up        -Path a,b (Enter = none)
+#     domain controller: the AD database (holds every password hash)?
+#                                     -AdDatabase answers yes (Enter = no)
+#     copy the backup off the box     -CopyTo DEST (Enter = no)
 #
 # USAGE
 #   powershell -NoProfile -ExecutionPolicy Bypass -File WN-35-backup.ps1 -Out C:\bt-out [options]
@@ -40,11 +49,16 @@
 #                     here, or do not make it at all
 #   -Only a,b         run only these items (names from -List)
 #   -List             list the items and exit
+#   -Box NAME         dc | web | ecomm | fileshare | db | other (asked, guessed)
+#   -Batch            no questions: take the defaults
+#   -NoColor          no colours
 #   Common options (-Out, -DebugLog, -Quiet ...) come from the library.
 #
-# OUTPUTS  (under -Out, in WN-35_<host>_<UTC time>\)
-#   items.csv         item,status,files,size_kb,detail - what was asked for
-#                     and what happened
+# OUTPUTS  (under -Out, one numbered folder per run: backup-1, backup-2, ...)
+#   output.txt        everything shown on screen, without colour
+#   items.txt         item, status, files, size_kb, detail - what was asked
+#                     for and what happened
+#   run.txt           id, host, time
 #   RESTORE.txt       the command to put back each item
 #   SHA256SUMS.txt    hash of every saved file, to check a copy is intact
 #   summary.txt       the same summary that is printed
@@ -83,7 +97,7 @@
 #
 # DEBUGGING
 #   -DebugLog          each command and its exit code
-#   items.csv          why an item failed (the program's own message)
+#   items.txt          why an item failed (the program's own message)
 #   -Only NAME         rerun one item
 # =============================================================================
 param(
@@ -96,7 +110,10 @@ param(
     [switch]$AdDatabase,
     [string]$Only = '',
     [switch]$List,
-    [switch]$Help
+    [switch]$Help,
+    [string]$Box = '',
+    [switch]$Batch,
+    [switch]$NoColor
 )
 
 $ItemHelp = @(
@@ -128,6 +145,9 @@ if ($Help) {
     Write-Host '  -CopyTo DEST    copy the backup to a share or folder'
     Write-Host '  -AdDatabase     DC: also save the AD database (holds every password hash)'
     Write-Host '  -Only a,b       run only these items (-List shows them)'
+    Write-Host '  -Box NAME       dc web ecomm fileshare db other (asked, guessed)'
+    Write-Host '  -Batch          no questions: the defaults'
+    Write-Host '  -NoColor        no colours'
     Write-Host '  -Out DIR -Quiet -DebugLog  common options'
     exit 0
 }
@@ -368,7 +388,8 @@ function Get-CcOsInfo {
 #   output.txt.
 function Write-CcShow {
     param([string]$Color = '', [string]$Text = '')
-    if ($Color -and -not $script:Cc.NoColor) { Write-Host $Text -ForegroundColor $Color } else { Write-Host $Text }
+    # -Quiet: only warnings and errors on screen (output.txt still gets it all).
+    if (-not $script:Cc.Quiet) { if ($Color -and -not $script:Cc.NoColor) { Write-Host $Text -ForegroundColor $Color } else { Write-Host $Text } }
     if ($script:Cc.Tee) { try { [IO.File]::AppendAllText($script:Cc.Tee, $Text + "`r`n") } catch { } }
 }
 
@@ -383,14 +404,15 @@ function Write-CcHeader {
 #   -Marks takes other pairs: @('Red=[!] DOWN','Green=[ok] up').
 function Write-CcLegend {
     param([string[]]$Marks = @('Red=[!] HIGH', 'Yellow=[*] MED', 'Green=[ok] fine', 'Yellow=[~] would change', 'Green=[+] changed', 'Red=[x] failed'))
-    Write-Host 'Legend: ' -NoNewline
+    $q = $script:Cc.Quiet
+    if (-not $q) { Write-Host 'Legend: ' -NoNewline }
     $plain = 'Legend:'
     foreach ($m in $Marks) {
         $p = $m -split '=', 2
-        if ($script:Cc.NoColor) { Write-Host ($p[1] + '   ') -NoNewline } else { Write-Host ($p[1] + '   ') -ForegroundColor $p[0] -NoNewline }
+        if (-not $q) { if ($script:Cc.NoColor) { Write-Host ($p[1] + '   ') -NoNewline } else { Write-Host ($p[1] + '   ') -ForegroundColor $p[0] -NoNewline } }
         $plain = $plain + ' ' + $p[1] + '  '
     }
-    Write-Host ''
+    if (-not $q) { Write-Host '' }
     if ($script:Cc.Tee) { try { [IO.File]::AppendAllText($script:Cc.Tee, $plain.TrimEnd() + "`r`n") } catch { } }
 }
 
@@ -1399,6 +1421,7 @@ function Complete-Cc {
 $onlyList = @($Only -split '[,\s]+' | Where-Object { $_ -ne '' } | ForEach-Object { $_.ToLower() })
 foreach ($n in $onlyList) { if (-not ($AllItems -contains $n)) { Write-Host "unknown item '$n' (see -List)"; exit 2 } }
 if ($MaxMB -lt 1) { Write-Host '-MaxMB must be 1 or more'; exit 2 }
+if (-not (Test-CcBox $Box)) { Write-Host ('-Box must be one of: ' + ($script:CcBoxes -join ' ')); exit 2 }
 $Path = @($Path | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
 
 # Jp base 'a\b' -> base\a\b.  Join-Path refuses a drive that does not exist
@@ -1407,8 +1430,10 @@ function Jp([string]$a, [string]$b) { foreach ($part in @($b -split '[\\/]' | Wh
 
 # ---- Start ------------------------------------------------------------------
 Initialize-Cc -Id 'WN-35' -Name 'Windows backup' -Kind readonly -Bound $PSBoundParameters
-Use-CcRunDir
+Use-CcNumberedDir 'backup'
 $B = $Cc.RunDir
+Write-CcShow -Color Cyan -Text ('WN-35 Windows backup | host {0} | results in {1}' -f $Cc.Host, $B)
+Write-CcLegend -Marks @('Green=[+] saved', 'Red=[x] failed', 'DarkGray=[-] skipped', 'Yellow=[*] look at it')
 $IsAdmin = Test-CcAdmin
 if (-not $IsAdmin) { Write-CcLog -Level WARN -Message 'not elevated: most items need an administrator window and will fail' }
 $Win = $env:SystemRoot
@@ -1425,7 +1450,27 @@ if ($IsAdmin -or -not (Test-CcWindows)) { if (Test-CcCommand 'icacls.exe') {
     if ($LASTEXITCODE -ne 0) { Write-CcLog -Level WARN -Message ('could not limit access to the backup folder: ' + ($o -join ' ')) }
 } }
 
-$ItemsCsv = New-CcCsv -Name items -Header @('item', 'status', 'files', 'size_kb', 'detail')
+$IsDC = $os.IsDC -or (Test-Path -LiteralPath (Jp $Win 'SYSVOL'))
+
+# ---- Questions (each answered in advance by its parameter) ------------------
+Write-CcHeader '1/3  questions'
+if (-not $Box) { $Box = Read-CcBox }
+if (-not $PSBoundParameters.ContainsKey('NoWebRoots') -and -not ($onlyList.Count -gt 0 -and -not ($onlyList -contains 'web'))) {
+    $NoWebRoots = -not (Read-CcAsk -Question 'Back up the website files too? (IIS sites; can take minutes on a big site)' -Default Y -Yes 'yes, copy them' -No 'no, settings only')
+}
+if (-not $PSBoundParameters.ContainsKey('Path') -and $onlyList.Count -eq 0) {
+    $pa = Read-CcText -Question 'Other folders to back up (an application, XAMPP, a config folder)?' -Default '' -Hint 'folders separated by commas, like C:\xampp\htdocs,C:\App'
+    $Path = @($pa -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+}
+if ($IsDC -and -not $PSBoundParameters.ContainsKey('AdDatabase') -and -not ($onlyList.Count -gt 0 -and -not ($onlyList -contains 'addb'))) {
+    $AdDatabase = Read-CcAsk -Question 'Also save the AD database? It holds EVERY domain password hash' -Default N -Yes 'yes (then copy it off the box and delete it here)' -No 'no, the lists of users, groups and OUs are enough'
+}
+if (-not $PSBoundParameters.ContainsKey('CopyTo')) {
+    $CopyTo = Read-CcText -Question 'Copy the backup off the box? (a red team with admin rights can delete it here)' -Default '' -Hint 'a share or folder, like \\10.0.0.5\backups (Enter = no)'
+}
+Write-CcHeader '2/3  saving'
+
+$ItemsTab = New-CcTable -Name items -Columns @('item', 'status', 'files', 'size_kb', 'detail')
 $script:Restore = @()
 $script:Count = @{ ok = 0; failed = 0; skipped = 0 }
 $script:Lines = @()
@@ -1448,10 +1493,12 @@ function Files([string]$p) { if (-not (Test-Path -LiteralPath $p)) { return 0 };
 function Done([string]$item, [string]$status, [string]$where = '', [string]$detail = '', [string[]]$restore = @()) {
     $n = 0; $kb = 0
     if ($where -and (Test-Path -LiteralPath $where)) { $n = Files $where; $kb = [int]((Size $where) / 1024) }
-    Add-CcCsvRow -File $ItemsCsv -Values @($item, $status, $n, $kb, $detail)
+    Add-CcTableRow -File $ItemsTab -Values @($item, $status, $n, $kb, $detail)
     $script:Count[$status]++
     $mark = @{ ok = 'saved  '; failed = 'FAILED '; skipped = 'skipped' }[$status]
     $script:Lines += ('  {0} {1,-10} {2}' -f $mark, $item, $detail)
+    $live = @{ ok = '  [+] '; failed = '  [x] '; skipped = '  [-] ' }[$status]
+    Write-CcShow -Color (@{ ok = 'Green'; failed = 'Red'; skipped = 'DarkGray' }[$status]) -Text ('{0}{1,-10} {2}' -f $live, $item, $detail)
     $lvl = 'INFO'; if ($status -eq 'failed') { $lvl = 'WARN' }
     Write-CcLog -Level $lvl -Message ('{0}: {1} {2}' -f $item, $status, $detail)
     if ($status -eq 'ok' -and $restore.Count -gt 0) {
@@ -1476,6 +1523,12 @@ function Get-Wmi([string]$Class, [string]$Filter = '') {
     }
     if ($Filter) { return Get-CimInstance -ClassName $Class -Filter $Filter -ErrorAction Stop }  # ps2-ok
     return Get-CimInstance -ClassName $Class -ErrorAction Stop  # ps2-ok
+}
+# AsTable csv -> the list as a " | " table (.txt) instead of CSV; returns the .txt path.
+function AsTable([string]$csv) {
+    $t = [IO.Path]::ChangeExtension($csv, '.txt')
+    if (Test-Path -LiteralPath $csv) { ConvertTo-CcTableFile -Csv $csv -Txt $t; Remove-Item -LiteralPath $csv -Force }
+    return $t
 }
 function Short([string]$s) { if ($s.Length -gt 160) { return $s.Substring(0, 157) + '...' }; return $s }
 function Q([string]$p) { return '"' + $p + '"' }
@@ -1598,6 +1651,7 @@ function I-users {
             } catch { }
         }
         [IO.File]::WriteAllLines($g, [string[]]$lines)
+        AsTable $u | Out-Null; AsTable $g | Out-Null
         $ok = $true
     } catch { $err = $_.Exception.Message }
     if (-not $ok) { Done users failed $d (Short $err); return }
@@ -1610,6 +1664,7 @@ function I-services {
     try {
         $rows = @(Get-Wmi Win32_Service | Select-Object Name, DisplayName, State, StartMode, PathName, StartName)
         [IO.File]::WriteAllLines($f, [string[]]@($rows | ConvertTo-Csv -NoTypeInformation))
+        $f = AsTable $f
     } catch { Done services failed '' (Short $_.Exception.Message); return }
     Done services ok $f ('{0} services' -f $rows.Count) @('# Service settings are in registry\services.reg.  To set one start mode back:', 'sc.exe config NAME start= auto      # or demand / disabled')
 }
@@ -1707,7 +1762,6 @@ function I-dhcp {
     Done dhcp ok $d 'scopes, options, reservations, leases' @('# Import into the DHCP server (stop and restart the DHCP service around it if it complains):', ('netsh dhcp server import ' + (Q $f) + ' all'))
 }
 
-$IsDC = $os.IsDC -or (Test-Path -LiteralPath (Jp $Win 'SYSVOL'))
 function I-gpo {
     if (-not $IsDC) { Done gpo skipped '' 'not a domain controller'; return }
     $d = Sub 'gpo'
@@ -1755,6 +1809,7 @@ function I-ad {
                 $lines += ($vals -join ','); $n++
             }
             [IO.File]::WriteAllLines((Jp $d ($kind[0] + '.csv')), [string[]]$lines)
+            AsTable (Jp $d ($kind[0] + '.csv')) | Out-Null
         }
     } catch { Done ad failed $d (Short $_.Exception.Message); return }
     # The Recycle Bin decides whether a deleted user can be brought back.
@@ -1808,6 +1863,9 @@ foreach ($i in $AllItems) {
 }
 
 # RESTORE.txt, hashes, summary.
+Format-CcTable -File $ItemsTab
+# The work folder (flags) is not part of the backup: it goes before hashing and copying.
+$wk = Join-Path $B '.work'
 $rf = Jp $B 'RESTORE.txt'
 $head = @('WN-35 backup of ' + $Cc.Host + ', ' + [DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm 'UTC'"),
           'Run these in an elevated PowerShell window, one item at a time, and check the',
@@ -1818,7 +1876,7 @@ $head = @('WN-35 backup of ' + $Cc.Host + ', ' + [DateTime]::UtcNow.ToString("yy
 $sums = Jp $B 'SHA256SUMS.txt'
 $hl = @()
 $bl = $B.Length + 1
-foreach ($f in @(Get-ChildItem -LiteralPath $B -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer -and $_.Name -ne 'SHA256SUMS.txt' })) {
+foreach ($f in @(Get-ChildItem -LiteralPath $B -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer -and $_.Name -ne 'SHA256SUMS.txt' -and $_.Name -ne 'output.txt' -and -not $_.FullName.StartsWith($wk) })) {
     $h = Get-CcSha256 -Path $f.FullName
     if ($h) { $hl += ($h + '  ' + $f.FullName.Substring($bl)) }
 }
@@ -1854,7 +1912,14 @@ if ($AdDatabase -and $script:Count.ok -gt 0 -and (Test-Path -LiteralPath (Jp $B 
 
 [IO.File]::WriteAllLines((Jp $B 'summary.txt'), [string[]]$sum)
 if ($CopyTo -and (Test-Path -LiteralPath (Jp $CopyTo (Split-Path -Leaf $B)))) { Copy-Item -LiteralPath (Jp $B 'summary.txt') -Destination (Jp (Jp $CopyTo (Split-Path -Leaf $B)) 'summary.txt') -Force -ErrorAction SilentlyContinue }
-if (-not $Quiet) { foreach ($l in $sum) { Write-Host $l } }
-Write-Host ('All results: ' + $B)
+Write-CcHeader '3/3  summary'
+if (-not $Quiet) {
+    foreach ($l in $sum) {
+        $col = ''
+        if ($l -like '  FAILED*' -or $l -like 'COPY *' -or $l -like 'WARNING*') { $col = 'Red' } elseif ($l -like 'Not copied*') { $col = 'Yellow' } elseif ($l -like 'WN-35 *') { $col = 'Cyan' }
+        Write-CcShow -Color $col -Text $l
+    }
+}
+Write-Host ('All results: ' + $B)   # always shown, even with -Quiet
 if ($script:Count.failed -gt 0) { Complete-Cc -ExitCode 5 }
 Complete-Cc

@@ -1432,5 +1432,5 @@ if (-not $Quiet) {
         if ($l -like 'SH-06 *') { Write-CcShow -Color Cyan -Text $l } else { Write-CcShow -Color $col -Text $l }
     }
 }
-Write-CcShow -Text ('All results: ' + $Cc.RunDir)
+Write-Host ('All results: ' + $Cc.RunDir)   # always shown, even with -Quiet
 Complete-Cc
