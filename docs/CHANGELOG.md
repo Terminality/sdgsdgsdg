@@ -2,6 +2,12 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-20: NW-30 watches OpenWRT routers
+
+- **NW-30** (1.1.0): new brand `openwrt`, read like NW-01 (uci export, fw4 nft, accounts, root keys, cron, boot scripts); counters and DHCP lease times dropped before comparing. Each change shows its uci section and what it may mean: a new `config redirect` is NAT (HIGH), a new UID 0 line an account, a root key a key, a cron line a scheduled job; `dropbear`, `uhttpd`, `rpcd` are management access; `config zone`/`forwarding` firewall rules; `log_ip` logging. The undo hint is uci (`uci delete`, `uci commit`, `fw4 reload` or the service reload), or the file to edit for accounts, keys, cron and boot scripts. Never sent.
+- Test fixes (already failing on main): the loop test passed `BT_TEST_FAST` as a prefix to a function (lost under ksh93), and the Ctrl-C test sent its signal after a fixed 3 seconds; now exported, and the signal waits for round 1. Under yash, a background yash does not take TERM from a yash parent the way a terminal Ctrl-C reaches it (a three-line script shows the same), so that one check is skipped under yash.
+- Tested: nw30 under dash, bash, ksh93, mksh, yash and busybox sh; gawk, mawk and busybox awk; the built copy. OpenWRT with a stand-in router (noise, then a planted port forward, UID 0 account, root key and cron job).
+
 ## 2026-11-20: SV-50 for Samba, NFS, Gitea, firewalld, ufw and OpenRC
 
 - **SV-50** (1.1.0): also checks Samba (`testparm`, `smbclient -L`), NFS (`showmount -e`) and Gitea or Forgejo (HTTP on `HTTP_PORT` from `app.ini`, else 3000), and Alpine's `php-fpm83`-style names. A port that firewalld (Rocky, Fedora) or ufw (Ubuntu, Mint) does not allow is a problem, with a `firewall` fix that opens it (firewalld now and permanent) and an undo line. OpenRC: "starts at boot" read from the runlevels, the enable fix through `rc-update`, start through `rc-service`, logs from `/var/log/messages`. Changed program files on Rocky/Fedora with `rpm -V`. Recently changed configs in `/etc/samba`, `/etc/exports`, `/etc/gitea`. busybox `netstat` when there is no `ss`. **Fixed under ksh93:** the HTTP, IMAP, SMTP and Samba checks lost their answer (every one showed as not answering); the check now writes its answer to a file. The box question has `fileshare` (scored: smb, nfs, ssh), `gitea` (gitea, web, ssh, databases) and `web` too; old answers unchanged.

