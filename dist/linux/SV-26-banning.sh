@@ -78,11 +78,12 @@
 #     output.txt         everything shown on screen, no colour
 #     bans.txt           bans made (or that would be made) this run
 #     offenders.txt      every address with failures, per check, and why it
-#                        was or was not banned (csv/ has both as CSV)
+#                        was or was not banned
 #     summary.txt, run.txt
 #   <out>/ban-<host>/      kept between runs:
-#     bans.csv           every ban ever: time,address,services,failures,
-#                        accounts_tried,until,action
+#     bans.txt           every ban ever, a " | " table: time, address,
+#                        services, failures, accounts_tried, until, action
+#                        (an older bans.csv is turned into it once)
 #     events.log         one line per check
 #     hits, offsets      counts for the window, how far each log was read
 #     settings           your answers, used as the next defaults
@@ -269,6 +270,7 @@ cc_die() {
     _cc_die_code=$1
     shift
     cc_log ERROR "$*"
+    _cc_csv_cleanup 2>/dev/null
     exit "$_cc_die_code"
 }
 
@@ -1303,6 +1305,17 @@ cc_csv_pretty() {
         END { if (FNR <= 1) print "(nothing found)" }' "$1" "$1" >"$2"
 }
 
+# cc_csv_table CSV TXT
+#   Write CSV as a " | " table (the look SH-03 uses): the header as it is, every
+#   value whole, columns padded.  SH-04 compares two runs from these tables.
+#   A "|" inside a value becomes "/".
+cc_csv_table() {
+    [ -f "$1" ] || return 0
+    awk "$CC_AWK_CSV"'{ n = csvsplit($0, f); l = ""
+        for (i = 1; i <= n; i++) { v = f[i]; gsub(/\|/, "/", v); gsub(/[\r\n]/, " ", v); l = l (i > 1 ? " | " : "") v }
+        print l }' "$1" >"$2" && cc_table_align "$2"
+}
+
 # cc_save NAME COMMAND [ARG...]
 #   Run a READ-ONLY command and keep its untouched output in
 #   <run folder>/raw/NAME.txt (or <out>/<ID>_<host>_<time>_NAME.txt without a
@@ -1667,7 +1680,34 @@ cc_finish() {
     [ "$CC_N_WOULD" -gt 0 ] && cc_info "this was a dry run - re-run with --apply to make the $CC_N_WOULD change(s)"
     [ "$CC_N_DONE" -gt 0 ] && cc_info "undo commands for this host are in $CC_UNDO"
     [ -n "$CC_LOG" ] && cc_info "log: $CC_LOG"
+    _cc_csv_cleanup
     exit "$_cc_fin_rc"
+}
+
+# _cc_csv_cleanup -> no CSV files are left in the results.  The CSV files a
+#   script builds while it runs (cc_csv_new, cc_flag, cc_finding) are working
+#   files: at the end each becomes a .txt table, unless the script already
+#   wrote one with that name, and is deleted, with the csv/ folder.
+_cc_csv_cleanup() {
+    [ "${BT_TEST_KEEP_CSV:-0}" = 1 ] && return 0   # tests only: read the rows as written
+    if [ -n "${CC_RUN_DIR:-}" ] && [ -d "$CC_RUN_DIR" ]; then
+        for _cc_cu_f in "$CC_RUN_DIR"/*.csv "$CC_RUN_DIR"/csv/*.csv; do
+            [ -f "$_cc_cu_f" ] || continue
+            _cc_cu_t="$CC_RUN_DIR/$(basename "$_cc_cu_f" .csv).txt"
+            [ -f "$_cc_cu_t" ] || cc_csv_pretty "$_cc_cu_f" "$_cc_cu_t" 200
+            rm -f "$_cc_cu_f"
+        done
+        rmdir "$CC_RUN_DIR/csv" 2>/dev/null
+    fi
+    # Without a run folder they sit in the out folder as <ID>_<host>_<time>_NAME.csv.
+    if [ -n "${CC_OUT:-}" ] && [ -n "${CC_ID:-}" ] && [ -n "${CC_TS:-}" ]; then
+        for _cc_cu_f in "$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_"*.csv; do
+            [ -f "$_cc_cu_f" ] || continue
+            [ -f "${_cc_cu_f%.csv}.txt" ] || cc_csv_pretty "$_cc_cu_f" "${_cc_cu_f%.csv}.txt" 200
+            rm -f "$_cc_cu_f"
+        done
+    fi
+    return 0
 }
 # <<< BT-LIB
 
@@ -1768,8 +1808,10 @@ cc_color_init
 [ -n "$STATE" ] || STATE="$CC_OUT/ban-$CC_HOST"
 (umask 077; mkdir -p "$STATE") || cc_die 3 "cannot create $STATE"
 STATE=$(cc_abspath "$STATE")
-BANS="$STATE/bans.csv"
-[ -f "$BANS" ] || printf 'time,address,services,failures,accounts_tried,until,action\n' >"$BANS"
+BANS="$STATE/bans.txt"
+# An older run kept the history as bans.csv: turn it into the table once.
+if [ ! -f "$BANS" ] && [ -f "$STATE/bans.csv" ]; then cc_csv_table "$STATE/bans.csv" "$BANS" && rm -f "$STATE/bans.csv"; fi
+[ -f "$BANS" ] || cc_table_line time address services failures accounts_tried until action >"$BANS"
 header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
 setting() { [ -f "$STATE/settings" ] && sed -n "s/^$1=//p" "$STATE/settings" | tail -n 1; }
 
@@ -1856,7 +1898,7 @@ if [ "$MODE" != run ]; then
             fw_list >"$W/now"
             if [ -s "$W/now" ]; then
                 while IFS= read -r _a; do
-                    _why=$(awk -F, -v a="$_a" '$2 == a && $7 == "banned" { w = $3 ", " $4 " failures at " $1 } END { print w }' "$BANS")
+                    _why=$(awk -v a="$_a" "$CC_AWK_TABLE"'{ tsplit($0, f) } f[2] == a && f[7] == "banned" { w = f[3] ", " f[4] " failures at " f[1] } END { print w }' "$BANS")
                     cc_show "$C_RED" "  [!] $(printf '%-39s' "$_a") ${_why:-}"
                 done <"$W/now"
             else
@@ -1866,7 +1908,7 @@ if [ "$MODE" != run ]; then
         unban)
             valid_addr "$UNBAN" || cc_die 2 "--unban: not an address: $UNBAN"
             fw_unban "$UNBAN"
-            [ "$CC_APPLY" = 1 ] && printf '%s,%s,,,,,unbanned by hand\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$UNBAN" >>"$BANS" ;;
+            [ "$CC_APPLY" = 1 ] && cc_table_line "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$UNBAN" "" "" "" "" "unbanned by hand" >>"$BANS" ;;
         unbanall)
             fw_list >"$W/now"
             cc_show "" "Lifting $(grep -c . "$W/now") ban(s):"
@@ -1878,7 +1920,7 @@ if [ "$MODE" != run ]; then
                 iptables) while IFS= read -r _a; do fw_unban "$_a"; done <"$W/now"
                           [ "$CC_APPLY" = 1 ] && rm -f "$STATE/iptables-expiry" ;;
             esac
-            [ "$CC_APPLY" = 1 ] && printf '%s,ALL,,,,,unbanned by hand (--unban-all)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$BANS" ;;
+            [ "$CC_APPLY" = 1 ] && cc_table_line "$(date -u +%Y-%m-%dT%H:%M:%SZ)" ALL "" "" "" "" "unbanned by hand (--unban-all)" >>"$BANS" ;;
     esac
     [ "$CC_APPLY" = 1 ] || [ "$MODE" = list ] || cc_show "$C_YEL" "Dry run: nothing changed. Add --apply."
     rm -rf "$W"
@@ -2152,7 +2194,7 @@ one_run() {
             _nb=$((_nb + 1))
             printf 'new|%s|%s|%s|%s|%s\n' "$_a" "$_svc" "$_f" "$_w" "$_acc" >>"$W/shown"
             if [ "$CC_APPLY" = 1 ]; then
-                printf '%s,%s,%s,%s,"%s",+%smin,banned\n' "$_ts" "$_a" "$_svc" "$((_f + _w))" "$_acc" "$BANTIME" >>"$BANS"
+                cc_table_line "$_ts" "$_a" "$_svc" "$((_f + _w))" "$_acc" "+${BANTIME}min" banned >>"$BANS"
                 [ "$BACKEND" = iptables ] && printf '%s|%s\n' "$((_now + BANTIME * 60))" "$_a" >>"$STATE/iptables-expiry"
             else
                 printf '%s\n' "$_a" >>"$W/wouldban"
@@ -2250,7 +2292,7 @@ fw_list >"$W/active" 2>/dev/null
         awk 'NR > 1' "$BANCSV" | tr -d '"' | cut -d, -f2,3,4 | awk -F, '{ printf "  %-17s %-18s %s failures\n", $1, $2, $3 }'
     fi
     printf '\nFiles:\n'
-    printf '  %s/bans.txt        bans this run (csv/bans.csv)\n' "$CC_RUN_DIR"
+    printf '  %s/bans.txt        bans this run\n' "$CC_RUN_DIR"
     printf '  %s/offenders.txt   every address with failures, per check\n' "$CC_RUN_DIR"
     printf '  %s   every ban ever\n' "$BANS"
     printf '\n'

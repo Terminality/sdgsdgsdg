@@ -73,7 +73,6 @@
 #   plan.txt       what it would change (dry-run pass)
 #   changes.txt    what it changed (with --apply)
 #   summary.txt    the summary page
-#   csv/           plan.csv and changes.csv
 #   revert.sh      undo this run at any time (written when --apply changed something)
 #   run.txt        id, host, time
 #

@@ -25,8 +25,9 @@ printf 'not a database' >"$T_TMP/fake.db"
 out=$(run --out "$O" --only sqlite --sqlite "$T_TMP/app.db" --sqlite "$T_TMP/fake.db" 2>&1); rc=$?
 t_eq "$rc" 0 "exit 0"
 d=$(rundir "$out")
-t_has "$(cat "$d/dumps.csv")" "\"sqlite\",\"$T_TMP/app.db\"" "SQLite file backed up"
-t_hasnt "$(cat "$d/dumps.csv")" "fake.db" "file without the SQLite header skipped"
+t_has "$(grep '^sqlite' "$d/dumps.txt")" "$T_TMP/app.db" "SQLite file backed up (dumps.txt)"
+t_hasnt "$(cat "$d/dumps.txt")" "fake.db" "file without the SQLite header skipped"
+t_fail "no CSV files are left" sh -c "find '$d' -name '*.csv' | grep -q ."
 t_ok "hash list checks out" sh -c "cd '$d' && sha256sum -c SHA256SUMS >/dev/null 2>&1"
 t_file "$d/RESTORE.txt" "restore notes written"
 

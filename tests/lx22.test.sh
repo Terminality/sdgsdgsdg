@@ -70,7 +70,7 @@ t_has "$out" "/home/alice/.ssh/rc runs at every SSH login" "rc file reported"
 t_has "$out" "key #1  alice" "keys are numbered and named"
 t_has "$out" "$(ssh-keygen -l -f "$K/team.pub" | awk '{ print $2 }')" "with their fingerprint"
 t_has "$out" "has a forced command or environment" "forced-command key called out"
-t_ok "the www-data key is marked planted" grep -q '"www-data",.*"planted"' "$d/csv/keys.csv"
+t_ok "the www-data key is marked planted" grep -q 'www-data.*planted' "$d/keys.txt"
 t_has "$out" "Keep key #4 (www-data" "asks about each key"
 t_has "$out" "Turn OFF X11 forwarding? (now: yes)" "asks about each setting, showing the current value"
 t_has "$out" "Graphical forwarding: not needed on a server" "with a plain explanation"
@@ -82,7 +82,8 @@ t_has "$out" "Turn OFF password logins (key only)? (now: yes)" "asks about passw
 t_has "$out" "[~] X11Forwarding: yes -> no" "the plan shows each change"
 t_has "$out" "the new config passed sshd -t" "the config is tested first"
 t_has "$out" "Dry run: nothing was changed" "and says nothing was changed"
-for f in output.txt summary.txt keys.txt settings.txt csv/keys.csv csv/settings.csv run.txt; do t_file "$d/$f" "$f written"; done
+for f in output.txt summary.txt keys.txt settings.txt run.txt; do t_file "$d/$f" "$f written"; done
+t_fail "no CSV files are left" sh -c "find '$d' -name '*.csv' | grep -q ."
 t_has "$d" "ssh-hardening-" "numbered run folder"
 t_fail "output.txt has no colour codes" grep -q "$(printf '\033')" "$d/output.txt"
 

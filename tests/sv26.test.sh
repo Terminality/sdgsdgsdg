@@ -86,7 +86,7 @@ t_has "$out" "10.7.7.0/24              your team / scoring" "never-ban list show
 t_ok "run folder with output.txt" test -s "$O/banning-1/output.txt"
 t_hasnt "$(cat "$O/banning-1/output.txt")" "$(printf '\033')" "output.txt has no colour codes"
 t_ok "bans.txt table" grep -q 10.6.6.66 "$O/banning-1/bans.txt"
-t_ok "offenders.csv lists the watched address too" grep -q '10.4.4.44.*watch' "$O/banning-1/csv/offenders.csv"
+t_ok "offenders.txt lists the watched address too" grep -q '10.4.4.44.*watch' "$O/banning-1/offenders.txt"
 t_has "$(cat "$ST/settings")" "never=10.7.7.0/24" "answers saved for next time"
 t_eq "$(grep -c . "$BANNED")" 0 "dry run bans nothing"
 t_fail "dry run keeps no offsets" test -s "$ST/offsets"
@@ -99,7 +99,8 @@ t_has "$b" "10.6.6.66" "SSH attacker banned"
 t_has "$b" "10.8.8.88" "mail/FTP attacker banned"
 t_has "$b" "10.5.5.55" "web attacker banned"
 t_hasnt "$b" "10.9.9.99" "scoring host not banned"
-t_has "$(cat "$ST/bans.csv")" "10.6.6.66,ssh,13,\"admin0 admin1 admin2 admin3 admin4 +8 more\",+30min,banned" "bans.csv records services, count and accounts tried"
+t_has "$(cat "$ST/bans.txt")" "10.6.6.66 | ssh | 13 | admin0 admin1 admin2 admin3 admin4 +8 more | +30min | banned" "bans.txt records services, count and accounts tried"
+t_fail "no CSV in the history folder" test -f "$ST/bans.csv"
 # shellcheck disable=SC2086
 out=$(run --out "$O" --state "$ST" --protected "$T_TMP/protected.csv" --apply $LOGARGS 2>&1)
 t_has "$out" "Mode: BANNING" "says it is banning"
@@ -168,7 +169,7 @@ t_has "$out" "check 2: 0 new failed login(s)" "a dry loop reads each line once"
 t_eq "$(printf '%s\n' "$out" | grep -c 'WOULD BAN')" 1 "and reports the would-ban once"
 t_fail "a dry loop keeps no offsets" test -s "$T_TMP/state-loop/offsets"
 : >"$BANNED"; touch "$BANNED.table"; echo 10.6.6.66 >"$BANNED"
-printf '2026-11-11T10:00:00Z,10.6.6.66,ssh,13,"root",+30min,banned\n' >>"$ST/bans.csv"
+printf '2026-11-11T10:00:00Z | 10.6.6.66 | ssh | 13 | root | +30min | banned\n' >>"$ST/bans.txt"
 out=$(run --out "$O" --state "$ST" --list 2>&1)
 t_has "$out" "10.6.6.66" "--list shows the ban"
 t_has "$out" "ssh" "--list says why"
@@ -180,7 +181,12 @@ STUB
 chmod +x "$B/nft2"; : >"$FW_LOG"
 BT_NFT="$B/nft2" run --out "$O" --state "$ST" --apply --no-protected --unban-all >/dev/null 2>&1
 t_has "$(cat "$FW_LOG")" "nft delete table inet bt_ban" "--unban-all removes the ban table"
-t_has "$(cat "$ST/bans.csv")" "--unban-all" "and records it"
+t_has "$(cat "$ST/bans.txt")" "--unban-all" "and records it"
+mkdir -p "$T_TMP/state-old"
+printf 'time,address,services,failures,accounts_tried,until,action\n2026-11-11T09:00:00Z,10.7.7.7,ftp,11,"a b",+30min,banned\n' >"$T_TMP/state-old/bans.csv"
+out=$(run --out "$O" --state "$T_TMP/state-old" --list 2>&1)
+t_has "$(cat "$T_TMP/state-old/bans.txt" | tr -s ' ')" "10.7.7.7 | ftp | 11 | a b | +30min | banned" "an older bans.csv is turned into bans.txt"
+t_fail "and the CSV is gone" test -f "$T_TMP/state-old/bans.csv"
 if command -v script >/dev/null 2>&1; then
     # fails: 5 | web: Enter | ban: 60 | services: ssh | never: 10.0.0.9 | seconds: 0
     printf '5\n\n60\nssh\n10.0.0.9\n0\n' >"$T_TMP/answers"

@@ -95,6 +95,20 @@ d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
 t_has "$(t_quoted "$d/flags.txt")" '"HIGH","users","evil"' "a new root account between numbered runs is HIGH"
 out=$(run --old "$R/linux-enum-1" --new "$R/linux-enum-2" --out "$O" 2>&1); t_eq "$?" 0 "--old/--new with numbered folders works"
 out=$(run --old "$R/$A" --new "$R/linux-enum-2" --out "$O" 2>&1); t_eq "$?" 0 "an old-style and a numbered run can be compared"
+t_start "SH-05 runs with \" | \" tables (no CSV kept)"
+mkt() { _d="$R/$1"; _f=$2; shift 2; mkdir -p "$_d"; : >"$_d/$_f"; for _l in "$@"; do printf '%s\n' "$_l" >>"$_d/$_f"; done; : >"$_d/summary.txt"; }
+mkt linux-enum-7 users.txt 'user | uid | gid | home  | shell     | can_login | password | groups' 'root | 0   | 0   | /root | /bin/bash | yes       | set      | root'
+mkt linux-enum-8 users.txt 'user  | uid | gid | home  | shell     | can_login | password | groups' 'root  | 0   | 0   | /root | /bin/bash | yes       | set      | root' 'evil2 | 0   | 0   | /tmp  | /bin/sh   | yes       | set      | root'
+for _n in 7 8; do printf 'id=SH-05\nhost=web01\ntime=20261111T18%s000Z\n' "$_n" >"$R/linux-enum-$_n/run.txt"; done
+out=$(run --old "$R/linux-enum-7" --new "$R/linux-enum-8" --out "$O" 2>&1); t_eq "$?" 0 "two table runs: exit 0"
+d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
+t_has "$(t_quoted "$d/flags.txt")" '"HIGH","users","evil2"' "a new root account between two table runs is HIGH"
+t_hasnt "$(t_quoted "$d/changes.txt")" '"users","changed","root"' "padding does not make a change"
+out=$(run --old "$R/linux-enum-1" --new "$R/linux-enum-8" --out "$O" 2>&1); t_eq "$?" 0 "an older CSV run and a table run: exit 0"
+d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
+t_has "$(t_quoted "$d/flags.txt")" '"HIGH","users","evil2"' "and compare"
+t_hasnt "$(t_quoted "$d/changes.txt")" '"users","changed","root"' "the unchanged account is the same in both forms"
+t_fail "SH-04 leaves no CSV" sh -c "find '$O' -name '*.csv' | grep -q ."
 mkdir -p "$R/LX-39_web01_20261111T170000Z"
 out=$(run --old "$R/$A" --new "$R/LX-39_web01_20261111T170000Z" --out "$O" 2>&1); t_eq "$?" 2 "a fix script's run folder exits 2"
 t_has "$out" "run the enum again" "and says to run the enum again"

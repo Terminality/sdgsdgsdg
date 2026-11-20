@@ -92,10 +92,11 @@ t_has "$out" "Keep tcp/9001 open? (unknown, program python3" "asks about each po
 t_hasnt "$out" "Keep tcp/3306 open?" "no question for a loopback-only port"
 t_hasnt "$out" "Keep tcp/22 open?" "no question for SSH"
 d=$(rundir "$out")
-for f in output.txt summary.txt ports.txt csv/ports.csv ruleset.nft rollback.sh run.txt; do t_file "$d/$f" "$f written"; done
+for f in output.txt summary.txt ports.txt ruleset.nft rollback.sh run.txt; do t_file "$d/$f" "$f written"; done
+t_fail "no CSV files are left" sh -c "find '$d' -name '*.csv' | grep -q ."
 t_has "$d" "firewall-" "numbered run folder"
-t_ok "ports.csv has the program, account and command" grep -q '"tcp","9001","all","python3","6",".*","unknown","KEEP",".*","python3 /opt/app/server.py"' "$d/csv/ports.csv"
-t_ok "and the dropped ones" grep -q '"tcp","4444",.*"DROP"' "$d/csv/ports.csv"
+t_ok "ports.txt has the program, account and command" grep -Eq '^tcp +9001 +all +python3 .*KEEP.*python3 /opt/app/server.py' "$d/ports.txt"
+t_ok "and the dropped ones" grep -Eq '^tcp +4444 .*DROP' "$d/ports.txt"
 t_has "$(cat "$d/summary.txt")" "kept open, 3 dropped, 1 local only" "summary counts"
 t_fail "output.txt has no colour codes" grep -q "$(printf '\033')" "$d/output.txt"
 

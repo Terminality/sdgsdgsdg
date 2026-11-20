@@ -154,7 +154,7 @@ cc_finding "telnet running" FIX-TELNET safe "port 23 open"
 cc_finding "smbv1 on" FIX-SMB1 service "scored share uses it" "port 445"
 echo "csv=$f"; echo "find=$CC_FINDINGS"
 cc_finish'
-r=$(run "$S/csv.sh" --out "$OUT" 2>/dev/null)
+r=$(export BT_TEST_KEEP_CSV=1; run "$S/csv.sh" --out "$OUT" 2>/dev/null)
 F=$(printf '%s\n' "$r" | sed -n 's/^csv=//p'); FF=$(printf '%s\n' "$r" | sed -n 's/^find=//p')
 t_eq "$(sed -n 2p "$F")" '"plain","has ""quotes"", and comma",""' "quotes doubled, empty last field kept"
 t_eq "$(sed -n 3p "$F")" '"","two lines","x"' "line break flattened, empty first field kept"
@@ -165,6 +165,13 @@ mk badclass 'while [ $# -gt 0 ]; do cc_common_flag "$@" && { shift "$CC_SHIFT"; 
 cc_init T-08 "bad class test" readonly
 cc_finding w f wrongclass d'
 run "$S/badclass.sh" --out "$OUT" >/dev/null 2>&1; t_eq "$?" 1 "bad finding class is rejected"
+# Without the test hook: each CSV becomes a .txt table and is deleted.
+r=$(run "$S/csv.sh" --out "$OUT" 2>/dev/null)
+F=$(printf '%s\n' "$r" | sed -n 's/^csv=//p'); FF=$(printf '%s\n' "$r" | sed -n 's/^find=//p')
+t_fail "the CSV is gone at the end" test -f "$F"
+t_fail "the findings CSV too" test -f "$FF"
+t_has "$(cat "${F%.csv}.txt")" "has \"quotes\", and comma" "its rows are in a .txt table"
+t_has "$(cat "${FF%.csv}.txt")" "FIX-SMB1" "and the findings"
 
 t_start "helpers"
 mk help 'cc_detect_os
@@ -198,7 +205,7 @@ cc_flag_report 2
 cc_flag_report 30 >"$CC_RUN_DIR/report30.txt"
 _first=$CC_RUN_DIR; cc_use_run_dir; echo "second=$CC_RUN_DIR"; CC_RUN_DIR=$_first; CC_CSV_DIR=$_first
 cc_finish'
-r=$(run "$S/flags.sh" --out "$OUT" 2>/dev/null)
+r=$(export BT_TEST_KEEP_CSV=1; run "$S/flags.sh" --out "$OUT" 2>/dev/null)
 RUN=$(printf '%s\n' "$r" | sed -n 's/^run=//p')
 t_eq "$(printf '%s\n' "$r" | sed -n 's/^second=//p')" "$RUN-2" "a second run folder in the same second gets -2"
 t_eq "$(printf '%s\n' "$r" | sed -n 's/^csv=//p')" "$RUN/things.csv" "CSV goes into the run folder"
@@ -210,6 +217,9 @@ t_has "$r" "[ports] 4444/tcp: nc listening, \"quoted\", with comma" "report keep
 t_hasnt "$r" "flag written from a subshell" "MAX=2 cuts the list after two lines"
 t_has "$r" "1 more high/medium not shown" "report says how many were cut"
 t_has "$(cat "$RUN/report30.txt")" "MED - look soon" "with room, MED lines are shown"
+r2=$(run "$S/flags.sh" --out "$OUT" 2>/dev/null); RUN2=$(printf '%s\n' "$r2" | sed -n 's/^run=//p')
+t_fail "without the test hook no CSV is left in the run folder" sh -c "ls '$RUN2' | grep -q 'csv'"
+t_ok "flags.txt and things.txt are there instead" test -f "$RUN2/flags.txt" -a -f "$RUN2/things.txt"
 t_hasnt "$(cat "$RUN/report30.txt")" "low one" "LOW lines are never printed"
 t_ok "summary line in the log names the run folder" grep -q "results: $RUN" "$OUT/$(basename "$RUN").log"
 mk noflags 'while [ $# -gt 0 ]; do cc_common_flag "$@" && { shift "$CC_SHIFT"; continue; }; shift; done

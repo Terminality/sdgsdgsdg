@@ -70,8 +70,8 @@
 # OUTPUTS
 #   <out>/changewatch-N/   this run:
 #     output.txt                everything shown on screen, no colour
-#     alerts.txt                this run's alerts as a table (csv/alerts.csv)
-#     connections.txt           new connections seen (csv/connections.csv)
+#     alerts.txt                this run's alerts as a table
+#     connections.txt           new connections seen
 #     summary.txt               counts by severity and section
 #     run.txt                   id, host, start time
 #   <out>/watch-<host>/    the state, kept between runs:
@@ -772,8 +772,8 @@ NDIFF=$(grep -c . "$STATE/changes-since-baseline.txt" 2>/dev/null)
         [ "$(grep -cE '^(HIGH|MED)' "$STATE/changes-since-baseline.txt")" -gt 15 ] && printf '  ...\n'
     fi
     printf '\nFiles:\n'
-    printf '  %s/alerts.txt        this run'"'"'s alerts (csv/alerts.csv)\n' "$CC_RUN_DIR"
-    [ "$CONNS" = 1 ] && printf '  %s/connections.txt   new connections seen (csv/connections.csv)\n' "$CC_RUN_DIR"
+    printf '  %s/alerts.txt        this run'"'"'s alerts\n' "$CC_RUN_DIR"
+    [ "$CONNS" = 1 ] && printf '  %s/connections.txt   new connections seen\n' "$CC_RUN_DIR"
     printf '  %s   every alert ever\n' "$ALERTS"
     printf '\nNext: if the changes are your own, run with --accept so they stop showing.\n'
 } >"$CC_RUN_DIR/summary.txt"

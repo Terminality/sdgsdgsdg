@@ -125,8 +125,12 @@ t_start "a box with planted persistence: full scan"
 build_root "$T_TMP/bad"; plant
 r=$(BT_PROC=$PR; export BT_PROC; run --root "$R" --out "$O" --batch --no-color --max 200 2>&1); t_eq "$?" 0 "exit 0"
 D=$(printf '%s\n' "$r" | sed -n 's/^All results: //p' | tail -n 1)
+for f in output.txt summary.txt findings.txt run.txt; do t_file "$D/$f" "$f written"; done
+t_fail "no CSV files are left" sh -c "find '$D' -name '*.csv' | grep -q ."
+# The same run with the CSV kept (a test-only hook), to check each row whole.
+r=$(BT_PROC=$PR BT_TEST_KEEP_CSV=1; export BT_PROC BT_TEST_KEEP_CSV; run --root "$R" --out "$O" --batch --no-color --max 200 2>&1)
+D=$(printf '%s\n' "$r" | sed -n 's/^All results: //p' | tail -n 1)
 F="$D/csv/findings.csv"
-for f in output.txt summary.txt findings.txt csv/findings.csv csv/flags.csv run.txt; do t_file "$D/$f" "$f written"; done
 # has SEV AREA ITEM-REGEX DETAIL-REGEX MESSAGE
 has() { t_ok "$5" grep -Eq "^\"[0-9]+\",\"$1\",\"$2\",\"$3\",\"[^\"]*$4" "$F"; }
 hasnt() { t_fail "$2" grep -Eq "$1" "$F"; }

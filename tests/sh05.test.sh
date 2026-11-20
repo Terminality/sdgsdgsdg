@@ -21,9 +21,9 @@ t_start "card profile runs and writes its files"
 r=$(run --out "$T_TMP/o1" --profile card 2>"$T_TMP/err1"); t_eq "$?" 0 "exits 0"
 RUN=$(ls -d "$T_TMP"/o1/linux-enum-*/ 2>/dev/null | head -n 1)
 for f in summary.txt flags.txt facts.txt users.txt ports.txt services.txt autostart.txt sudo.txt; do t_file "$RUN/$f" "$f written"; done
-for f in flags.csv facts.csv users.csv ports.csv; do t_file "$RUN/csv/$f" "csv/$f written"; done
-t_has "$(sed -n 1,2p "$RUN/users.txt")" "USER " "users.txt is a readable table with a header"
-t_has "$(sed -n 2p "$RUN/users.txt")" "----" "and a dashed line under it"
+t_fail "no CSV files are left" sh -c "find '$RUN' -name '*.csv' | grep -q ."
+t_has "$(sed -n 1p "$RUN/users.txt")" "user " "users.txt is a table with a header"
+t_has "$(sed -n 1p "$RUN/users.txt")" " | " "split by | (SH-04 reads it)"
 t_hasnt "$(cat "$RUN/users.txt")" '","' "users.txt is not CSV"
 t_has "$r" "section        rows" "summary table printed"
 t_has "$r" "==========[ 1/8  system ]==========" "a header per section, printed live"
@@ -39,12 +39,12 @@ t_has "$(cat "$RUN/output.txt")" "==========[ SUMMARY ]==========" "output.txt h
 run --out "$T_TMP/o1" --only system >/dev/null 2>&1
 t_file "$T_TMP/o1/linux-enum-2/summary.txt" "the next run is linux-enum-2"
 t_has "$r" "Accounts that can log in:" "users summary line printed"
-t_fail "card does not run the slow sections" test -f "$RUN/csv/suid.csv"
+t_fail "card does not run the slow sections" test -f "$RUN/suid.txt"
 t_fail "work folder removed" test -d "$RUN/.work"
-t_ok "facts.csv has the hostname key (ksh and mksh once lost every key)" grep -q '^"hostname",' "$RUN/csv/facts.csv"
-t_eq "$(head -n 1 "$RUN/csv/users.csv")" "user,uid,gid,home,shell,can_login,password,groups" "users.csv header"
-t_ok "root is listed in users.csv" grep -q '^"root","0"' "$RUN/csv/users.csv"
-t_hasnt "$(cat "$RUN"/csv/*.csv "$RUN"/*.txt "$T_TMP"/o1/*.log)" '$6$' "no password hash anywhere in the output"
+t_ok "facts.txt has the hostname key (ksh and mksh once lost every key)" grep -q '^hostname *|' "$RUN/facts.txt"
+t_eq "$(head -n 1 "$RUN/users.txt" | tr -s ' ')" "user | uid | gid | home | shell | can_login | password | groups" "users.txt header"
+t_ok "root is listed in users.txt" grep -q '^root *| 0 ' "$RUN/users.txt"
+t_hasnt "$(cat "$RUN"/*.txt "$T_TMP"/o1/*.log)" '$6$' "no password hash anywhere in the output"
 
 t_start "--only and --skip"
 run --out "$T_TMP/o2" --only system,users >/dev/null 2>&1; t_eq "$?" 0 "--only exits 0"
@@ -64,8 +64,8 @@ if [ "$(id -u)" = 0 ]; then
     printf 'type,value,note\n' >"$P/dummy"
     run --out "$T_TMP/o4" --only files >/dev/null 2>&1; t_eq "$?" 0 "files section exits 0"
     R4=$(ls -d "$T_TMP"/o4/linux-enum-*/ | head -n 1)
-    t_ok "planted SUID copy of find is in suid.csv" grep -q "$P/find" "$R4/csv/suid.csv"
-    t_ok "planted SUID copy of find is flagged HIGH" grep -q "\"HIGH\",\"files\",\"$P/find\"" "$R4/csv/flags.csv"
+    t_ok "planted SUID copy of find is in suid.txt" grep -q "$P/find" "$R4/suid.txt"
+    t_ok "planted SUID copy of find is flagged HIGH" grep -q "^HIGH  *files  *$P/find" "$R4/flags.txt"
     rm -f "$P/find"
 else
     t_start "(skipped: not root)"
@@ -97,7 +97,7 @@ t_has "$r" "bob: may run /usr/bin/vim with sudo" "sudo rule for a shell-escape p
 t_hasnt "$r" "/usr/bin/id with sudo" "a harmless sudo program is not flagged"
 t_has "$r" "sudo keeps LD_PRELOAD" "env_keep LD_PRELOAD is a FIX"
 t_has "$r" "anyone can read the password hashes" "readable shadow file is a FIX"
-t_has "$(cat "$R6/privesc.txt")" "CHECK" "privesc.txt is a readable table"
+t_has "$(head -n 1 "$R6/privesc.txt")" " | " "privesc.txt is a table"
 r=$(PATH=".:$PATH"; export PATH; run --out "$T_TMP/o7" --only privesc 2>&1)
 t_has "$r" "the PATH includes the current folder" "'.' on the PATH is a FIX"
 

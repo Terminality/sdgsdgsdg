@@ -87,7 +87,6 @@
 #   output.txt      everything shown on screen, without colour
 #   summary.txt     counts per area and the HIGH and MED findings
 #   findings.txt    every finding, HIGH first, with its number
-#   csv/findings.csv, csv/flags.csv   the same as CSV
 #   quarantine/     removed files, at their full path (with --apply)
 #   revert.sh       puts back everything this run removed (with --apply)
 #
@@ -122,7 +121,7 @@
 #
 # DEBUGGING
 #   --debug          shows each area's file list and timing
-#   findings.txt     the numbered list; csv/findings.csv has the fix column
+#   findings.txt     the numbered list
 # =============================================================================
 
 # >>> BT-LIB

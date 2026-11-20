@@ -79,7 +79,6 @@
 #   keys.txt        every key: account, file, type, fingerprint, comment,
 #                   options, verdict, action
 #   settings.txt    every setting: before, after, status
-#   csv/            the same as CSV
 #   revert.sh       undo this run (with --apply)
 #
 # WHAT IT CHANGES  (only with --apply)
