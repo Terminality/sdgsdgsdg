@@ -102,12 +102,12 @@
 #   The raw output of a failed device is in the log.
 # =============================================================================
 
-# >>> BT-LIB  (lib/lib.sh 0.4.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.5.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.4.0
+# VERSION:  0.5.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -178,7 +178,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.4.0"
+CC_LIB_VERSION="0.5.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -1501,6 +1501,64 @@ cc_hosts_rows() {
 }
 
 # -----------------------------------------------------------------------------
+# Network devices: the questions every NW script asks when no flag names them
+# -----------------------------------------------------------------------------
+# cc_net_hostfile -> the first host list lying around (config/hosts.txt,
+#   hosts.txt in the current folder), or nothing.
+cc_net_hostfile() {
+    for _cc_nh in config/hosts.txt hosts.txt; do [ -r "$_cc_nh" ] && { printf '%s' "$_cc_nh"; return 0; }; done
+    return 1
+}
+# cc_net_ask_devices DEFAULT-USER USER-GIVEN(0|1)
+#   Asks which devices to work on, in the password-rotation style:
+#     the host list, when one is found:   "Use the host list config/hosts.txt?"
+#     else device by device:              address, what it is ([o] OpenWRT
+#                                         first), a short name, the login
+#                                         (root for OpenWRT, pfSense, OPNsense
+#                                         unless --user was given)
+#   Sets CC_NET_HOSTS (the list chosen) or appends "NAME,ADDRESS,VENDOR,USER"
+#   lines to CC_NET_DEVICES.  Returns 1 when nothing was chosen.  With nobody
+#   to ask, only a host list found lying around is taken.
+cc_net_ask_devices() {
+    CC_NET_HOSTS=""; CC_NET_DEVICES=""
+    if _cc_nf=$(cc_net_hostfile); then
+        if cc_ask "Use the host list $_cc_nf (the network devices in it)?" Y "yes, use every network device in it" "no, I will type the devices"; then
+            CC_NET_HOSTS=$_cc_nf; return 0
+        fi
+    fi
+    _cc_can_ask || return 1
+    while :; do
+        cc_ask_text "Device address (IP or name)? Enter when done" "" "like 192.168.220.2"
+        _cc_na=$CC_ANSWER; [ -n "$_cc_na" ] || break
+        case "$_cc_na" in *[!A-Za-z0-9._:-]*) cc_show "${C_YEL:-}" "  [*] '$_cc_na' is not an address: skipped"; continue ;; esac
+        cc_choose "What is $_cc_na?" o "o=OpenWRT router" "l=Linux router" "m=MikroTik" "p=pfSense" "n=OPNsense" \
+            "c=Cisco router or switch (IOS)" "a=Cisco ASA" "x=Palo Alto" "f=FortiGate" "v=VyOS"
+        case "$CC_CHOICE" in o) _cc_nv=openwrt ;; l) _cc_nv=linux ;; m) _cc_nv=mikrotik ;; p) _cc_nv=pfsense ;; n) _cc_nv=opnsense ;;
+            c) _cc_nv=cisco-ios ;; a) _cc_nv=cisco-asa ;; x) _cc_nv=paloalto ;; f) _cc_nv=fortigate ;; *) _cc_nv=vyos ;; esac
+        # OpenWRT, pfSense and OPNsense: root runs the commands.
+        _cc_nu=$1; [ "${2:-0}" = 0 ] && case "$_cc_nv" in openwrt|pfsense|opnsense) _cc_nu=root ;; esac
+        _cc_nd=router; case "$_cc_nv" in cisco-asa|paloalto|fortigate|pfsense|opnsense) _cc_nd=firewall ;; esac
+        cc_ask_text "A short name for it (letters, digits, - and _)?" "$_cc_nd"; _cc_nn=$CC_ANSWER
+        case "$_cc_nn" in ''|*[!A-Za-z0-9_.-]*) _cc_nn=$_cc_nd ;; esac
+        cc_ask_text "Log in to $_cc_nn as?" "$_cc_nu"; _cc_nu=${CC_ANSWER:-$_cc_nu}
+        CC_NET_DEVICES="$CC_NET_DEVICES$_cc_nn,$_cc_na,$_cc_nv,$_cc_nu
+"
+        cc_ask "Another device?" N "yes, add one more" "no, that is all" || break
+    done
+    [ -n "$CC_NET_DEVICES" ]
+}
+# cc_net_ask_password -> BT_NET_PASS: used as it is when already set (setting
+#   it is the answer), else typed now, hidden, never logged.  Returns 1 when
+#   there is no password and nobody to ask.
+cc_net_ask_password() {
+    [ -n "${BT_NET_PASS:-}" ] && return 0
+    _cc_can_ask || return 1
+    printf '%s[?]%s Device password (hidden, never saved): ' "${C_CYN:-}" "${C_OFF:-}" >/dev/tty
+    stty -echo </dev/tty 2>/dev/null; read -r BT_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
+    [ -n "$BT_NET_PASS" ]
+}
+
+# -----------------------------------------------------------------------------
 # Kit integrity and finish
 # -----------------------------------------------------------------------------
 
@@ -1604,9 +1662,8 @@ cc_init "NW-01" "Network config backup" readonly
 [ "$COLOR" = 1 ] || CC_NOCOLOR=1
 cc_color_init
 # Nothing to read and nobody to ask: stop before making a run folder.
-if [ -z "$HOSTS$DEVICES" ] && ! _cc_can_ask; then
-    _hf=""; for _f in config/hosts.txt hosts.txt; do [ -r "$_f" ] && { _hf=$_f; break; }; done
-    [ -n "$_hf" ] || cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
+if [ -z "$HOSTS$DEVICES" ] && ! _cc_can_ask && ! cc_net_hostfile >/dev/null; then
+    cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
 fi
 cc_use_run_dir
 W="$CC_RUN_DIR/.work"
@@ -1617,34 +1674,10 @@ cc_show "" "Legend: ${C_GRN}[ok]${C_OFF} saved   ${C_YEL}[*]${C_OFF} saved, some
 
 # ---- 1/3  Which devices, and how to log in --------------------------------------
 header "1/3  devices and login"
-# The host list, when one is lying around and no flag named the devices.
+# No flag named the devices: the host list if there is one, else typed in.
 if [ -z "$HOSTS$DEVICES" ]; then
-    for _f in config/hosts.txt hosts.txt; do
-        [ -r "$_f" ] || continue
-        if cc_ask "Use the host list $_f (the network devices in it)?" Y "yes, read every network device in it" "no, I will type the devices"; then HOSTS=$_f; fi
-        break
-    done
-fi
-# Otherwise ask device by device.
-if [ -z "$HOSTS$DEVICES" ]; then
-    while :; do
-        cc_ask_text "Device address (IP or name)? Enter when done" "" "like 192.168.220.2"
-        _da=$CC_ANSWER; [ -n "$_da" ] || break
-        case "$_da" in *[!A-Za-z0-9._:-]*) cc_show "$C_YEL" "  [*] '$_da' is not an address: skipped"; continue ;; esac
-        cc_choose "What is $_da?" o "o=OpenWRT router" "l=Linux router" "m=MikroTik" "p=pfSense" "n=OPNsense" \
-            "c=Cisco router or switch (IOS)" "a=Cisco ASA" "x=Palo Alto" "f=FortiGate" "v=VyOS"
-        case "$CC_CHOICE" in o) _dv=openwrt ;; l) _dv=linux ;; m) _dv=mikrotik ;; p) _dv=pfsense ;; n) _dv=opnsense ;;
-            c) _dv=cisco-ios ;; a) _dv=cisco-asa ;; x) _dv=paloalto ;; f) _dv=fortigate ;; *) _dv=vyos ;; esac
-        # OpenWRT, pfSense and OPNsense: root runs the commands.
-        _du=$DEFUSER; [ "$USERSET" = 0 ] && case "$_dv" in openwrt|pfsense|opnsense) _du=root ;; esac
-        _dd=router; case "$_dv" in cisco-asa|paloalto|fortigate|pfsense|opnsense) _dd=firewall ;; esac
-        cc_ask_text "A short name for it (letters, digits, - and _)?" "$_dd"; _dn=$CC_ANSWER
-        case "$_dn" in ''|*[!A-Za-z0-9_.-]*) _dn=$_dd ;; esac
-        cc_ask_text "Log in to $_dn as?" "$_du"; _du=${CC_ANSWER:-$_du}
-        DEVICES="$DEVICES$_dn,$_da,$_dv,$_du$NL"
-        cc_ask "Another device?" N "yes, add one more" "no, that is all" || break
-    done
-    [ -n "$DEVICES" ] || cc_die 2 "no devices given (or use --hosts FILE / --device NAME,ADDRESS,VENDOR)"
+    cc_net_ask_devices "$DEFUSER" "$USERSET" || cc_die 2 "no devices given (or use --hosts FILE / --device NAME,ADDRESS,VENDOR)"
+    HOSTS=$CC_NET_HOSTS; DEVICES=$CC_NET_DEVICES
 fi
 # How to log in, when no flag said.
 if [ "$PWSET" = 0 ] && _cc_can_ask; then

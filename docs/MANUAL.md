@@ -3314,6 +3314,7 @@ A red team's first move on a firewall or router is to log in with an extra admin
 ```sh
 BT_NET_PASS='pw' sh NW-12-device-sessions.sh --hosts config/hosts.txt --team 10.0.0.0/24            # look, dry run
 BT_NET_PASS='pw' sh NW-12-device-sessions.sh --hosts config/hosts.txt --team 10.0.0.0/24 --apply    # asks each
+sh NW-12-device-sessions.sh --apply      # asks which devices, the password (hidden) and your team
 ```
 
 Run it **once early**: that run saves the account names as the baseline (`net-accounts-baseline.txt` in `--out`). Later runs flag an account added since. Then run NW-10: a kicked session can log in again until the password changes.
@@ -3330,6 +3331,9 @@ Run it **once early**: that run saves the account names as the baseline (`net-ac
 
 | Question | Answers | Flag |
 | --- | --- | --- |
+| Use the host list `config/hosts.txt`? (when there is one) / else each device: address, what it is (`[o]` OpenWRT first), name, login | | `--hosts`, `--device` |
+| Device password (hidden, never saved) | typed | `BT_NET_PASS` (used as it is), `--ask-password` |
+| Your team's addresses? (their sessions are left alone) | addresses or networks, or Enter for none | `--team` |
 | Each session not yours | `[k]ick` (default when not from `--team`) / `[l]eave` / `[a]ll the rest default` | `--batch` |
 | Each account to look at | `[d]isable` (default when new since the first run) / `[k]eep` / `[a]ll the rest default` | `--batch`, `--known` |
 | Do these? | `[y]` / `[n]` | `--apply` |
@@ -3346,7 +3350,10 @@ An account you keep (with `--apply`) joins the baseline and is not asked about a
 | VyOS | `delete system login user`, `commit`, `save` | `pkill -t pts/N` | from NW-01's saved copy |
 | MikroTik | `/user disable` | `/user active request-logout` | `/user enable` |
 | Linux | `usermod -L -e 1` | `pkill -t pts/N` | `usermod -U` |
+| OpenWRT | `!` before the hash in `/etc/shadow`, shell set to `/bin/false` (no `usermod` there) | SSH: `kill` its dropbear process; web (LuCI): `ubus call session destroy` | the `!` comes off, the old shell goes back |
 | pfSense / OPNsense | web GUI only: listed | | |
+
+**OpenWRT:** accounts come from `/etc/passwd` and `/etc/shadow` (every UID 0 account, every account with a shell; `NO PASSWORD` is shown); SSH sessions are dropbear's connections (`netstat -tnp`), with their owner; web (LuCI) sessions come from `ubus` and do not say where they come from, so they default to **leave**. Two UID 0 accounts share one uid: a session of uid 0 is shown as root, and this script's own login is never kicked.
 
 The undo reads the account's lines from NW-01's copy **when it runs**, so no password hash is copied into the results. Without an NW-01 copy there is no undo for that account, and the question says so. An undo script needs `BT_NET_PASS` set.
 
