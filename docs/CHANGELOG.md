@@ -2,6 +2,15 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-19: Network scripts, review fixes
+
+- **NW-01**: FortiGate shows its encrypted secrets (`ENC ...`) differently on every read, so every backup showed them as HIGH changes: hidden before comparing (the saved `.cfg` keeps them). Header lines `#config-version`, `#buildno`, `#global_vdom` dropped too. MikroTik's wrapped export lines (ending in `\`) are joined, so a re-wrap is no change. Linux routers: `iptables-save` and `nft` run with `sudo -n` when the login is not root (they showed nothing).
+- **NW-07**: MikroTik wrapped lines joined before the rules: a `disabled=yes` on the second half was missed (a false "www on").
+- **NW-10**: device names checked like the other scripts (they are used in paths to NW-01's copies).
+- **NW-01, NW-10, NW-12, NW-20, NW-21**: the SSH port is checked (1-65535), from `--device` and the host list.
+- **SH-03**: the host list is read by column name, so a list with an added column (like `vendor`) still finds the scored services. The port list for the details scan is in number order (it differed between awks).
+- Tested: the network tests (nw01, nw07, nw10, nw12, nw21, sh03, sh04) under seven shells and three awks.
+
 ## 2026-11-19: Device change watch (NW-30, new)
 
 - **NW-30** reads every firewall, router and switch every few minutes (the same read-only show commands as NW-01) and compares it with a trusted baseline: NW-01's copy, the earlier watch's, or read now (asked per device).

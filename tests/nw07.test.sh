@@ -209,7 +209,8 @@ cat >"$F/pf-bad.cfg" <<'CFG'
 CFG
 printf '<?xml version="1.0"?>\n<pfsense>\n<system><webgui><protocol>https</protocol></webgui></system>\n<filter><rule><type>pass</type><interface>lan</interface><source><any/></source><destination><any/></destination></rule></filter>\n</pfsense>\n' >"$F/pf-clean.cfg"
 printf '# nov/11/2026 10:00:00 by RouterOS 6.49\n/ip service\nset www disabled=no\n/snmp community\nset [ find default=yes ] name=public\n/user\nadd name=backdoor group=full\n' >"$F/mt-bad.cfg"
-printf '# nov/11/2026 10:00:00 by RouterOS 6.49\n/ip service\nset telnet disabled=yes\nset www disabled=yes\nset ftp disabled=yes\nset api disabled=yes\n' >"$F/mt-clean.cfg"
+# (the export wraps long lines with a backslash: the www line's disabled=yes is on the second half)
+printf '# nov/11/2026 10:00:00 by RouterOS 6.49\n/ip service\nset telnet disabled=yes\nset www address=10.0.0.0/24,10.0.1.0/24 \\\n    disabled=yes\nset ftp disabled=yes\nset api disabled=yes\n' >"$F/mt-clean.cfg"
 
 t_start "options"
 run --file "$T_TMP/none.cfg" >/dev/null 2>&1; t_eq "$?" 2 "missing file exits 2"

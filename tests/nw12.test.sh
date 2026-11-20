@@ -154,6 +154,7 @@ run() { $SH "$C" --out "$O" --no-color --me "$ME" $DEVS "$@"; }
 
 t_start "options"
 $SH "$C" --device r1,ios,junos >/dev/null 2>&1; t_eq "$?" 2 "an unknown vendor exits 2"
+$SH "$C" --device r1,ios,cisco-ios,admin,22x >/dev/null 2>&1; t_eq "$?" 2 "a port that is not a number exits 2"
 $SH "$C" --device r1,ios,cisco-ios --team moon >/dev/null 2>&1; t_eq "$?" 2 "a bad --team exits 2"
 (unset BT_NET_PASS; $SH "$C" --out "$O" --device r1,ios,cisco-ios >/dev/null 2>&1); t_eq "$?" 3 "no password exits 3"
 out=$($SH "$C" --help 2>&1); t_has "$out" "--known NAME" "--help"

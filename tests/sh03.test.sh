@@ -232,7 +232,8 @@ until python3 -c 'import socket,sys
 for p in (18181, 31337): socket.create_connection(("127.0.0.1", p), 1).close()' 2>/dev/null || [ "$_i" -ge 20 ]; do
     sleep 0.5 2>/dev/null || sleep 1; _i=$((_i + 1))
 done
-printf 'host,ip,os,role,connect,port,user,scored_services,notes\nself,127.0.0.1,linux,test,ssh,22,u,http:18181;smtp:2526,\nghost,127.0.0.9,linux,gone,ssh,22,u,,\n' >"$T_TMP/hosts.csv"
+# (a "vendor" column in the middle: the columns are found by name)
+printf 'host,ip,vendor,os,role,connect,port,user,scored_services,notes\nself,127.0.0.1,,linux,test,ssh,22,u,http:18181;smtp:2526,\nghost,127.0.0.9,,linux,gone,ssh,22,u,,\n' >"$T_TMP/hosts.csv"
 
 for engine in python nmap; do
     if [ "$engine" = nmap ] && ! command -v nmap >/dev/null 2>&1; then t_start "(skipped: nmap not installed)"; continue; fi

@@ -1497,6 +1497,9 @@ printf '%s' "$DEVICES" | grep . | while IFS=',' read -r _n _a _v _u _p; do
 done >>"$W/devices"
 grep -q '^BAD' "$W/devices" && cc_die 2 "--device needs NAME,ADDRESS,VENDOR with a known vendor ($VENDORS)"
 [ -s "$W/devices" ] || cc_die 3 "no network devices found"
+# The name is used in file paths (NW-01's saved configs): no "/" or "..".
+for _n in $(cut -d'|' -f1 "$W/devices"); do case "$_n" in *[!A-Za-z0-9_.-]*) rm -rf "$W"; cc_die 2 "device name '$_n' may only use letters, digits, '.', '_' and '-'" ;; esac; done
+_bp=$(awk -F'|' '$5 !~ /^[0-9]+$/ || $5 < 1 || $5 > 65535 { print $1; exit }' "$W/devices"); [ -z "$_bp" ] || { rm -rf "$W"; cc_die 2 "device $_bp: the SSH port must be a number from 1 to 65535"; }
 
 # ---- Per-vendor command sequences ----------------------------------------------
 # priv DEVICE USER -> the account's privilege level in NW-01's newest copy.

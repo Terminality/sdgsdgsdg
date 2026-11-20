@@ -65,6 +65,8 @@ t_start "options"
 (unset BT_NET_PASS; run --device r1,ios,cisco-ios >/dev/null 2>&1); t_eq "$?" 3 "no current password exits 3"
 (BT_NET_NEWPASS='has space and ?'; export BT_NET_NEWPASS; run --device r1,ios,cisco-ios --new-password-env >/dev/null 2>&1); t_eq "$?" 2 "unsafe new password exits 2"
 run --device r1,ios,junos >/dev/null 2>&1; t_eq "$?" 2 "unknown vendor exits 2"
+run --device '../x,ios,cisco-ios' >/dev/null 2>&1; t_eq "$?" 2 "an unsafe device name exits 2"
+run --device 'r1,ios,cisco-ios,admin,22x' >/dev/null 2>&1; t_eq "$?" 2 "a port that is not a number exits 2"
 
 t_start "dry run"
 devices

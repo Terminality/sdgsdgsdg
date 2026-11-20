@@ -87,7 +87,7 @@ Cryptochecksum:0a1b2c
 : end
 asa1# exit
 CFG
-printf '#config-version=FGT60F-7.2.5\n#conf_file_ver=111\nconfig system global\n    set hostname "fg1"\nend\nconfig system admin\n    edit "admin"\n    next\nend\n' >"$D/10.0.0.4.out"
+printf '#config-version=FGT60F-7.2.5\n#conf_file_ver=111\nconfig system global\n    set hostname "fg1"\nend\nconfig system admin\n    edit "admin"\n        set password ENC SH2aaaa\n    next\nend\n' >"$D/10.0.0.4.out"
 printf "set system host-name 'vyos1'\nset service ssh port '22'\nset system login user vyos authentication encrypted-password 'x'\n" >"$D/10.0.0.5.out"
 printf '<?xml version="1.0"?>\n<pfsense>\n<system><hostname>pf1</hostname>\n<user><name>admin</name><bcrypt-hash>$2y$abc</bcrypt-hash></user>\n</system>\n<snmpd><rocommunity>public</rocommunity></snmpd>\n</pfsense>\n' >"$D/10.0.0.6.out"
 printf 'hostname old\nline1\nline2\nline3\n' >"$D/oldbox.out"
@@ -107,6 +107,7 @@ t_start "options"
 run >/dev/null 2>&1; t_eq "$?" 2 "no devices given exits 2"
 run --device x,1.2.3.4,junos >/dev/null 2>&1; t_eq "$?" 2 "unknown vendor exits 2"
 run --device 'bad/name,1.2.3.4,vyos' >/dev/null 2>&1; t_eq "$?" 2 "unsafe device name exits 2"
+run --device 'r9,1.2.3.4,vyos,admin,22x' >/dev/null 2>&1; t_eq "$?" 2 "a port that is not a number exits 2"
 
 t_start "first backup of six vendors"
 out=$(run --out "$O" --hosts "$T_TMP/hosts.csv" 2>&1); rc=$?
@@ -128,7 +129,8 @@ t_hasnt "$(cat "$O/net-configs/asa1/$(cat "$O/net-configs/asa1/latest").norm")" 
 
 t_start "time-only changes are not reported"
 cisco_cfg 2 "" >"$D/10.0.0.1.out"
-sed 's/conf_file_ver=111/conf_file_ver=222/' "$D/10.0.0.4.out" >"$D/fg.t" && mv "$D/fg.t" "$D/10.0.0.4.out"
+# FortiGate shows its encrypted secrets differently on every read
+sed 's/conf_file_ver=111/conf_file_ver=222/; s/ENC SH2aaaa/ENC SH2bbbb/' "$D/10.0.0.4.out" >"$D/fg.t" && mv "$D/fg.t" "$D/10.0.0.4.out"
 out=$(run --out "$O" --hosts "$T_TMP/hosts.csv" 2>&1)
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
 t_hasnt "$(cat "$d/devices.csv")" '"changed"' "no device reported as changed"

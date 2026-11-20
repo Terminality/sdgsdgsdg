@@ -1842,7 +1842,9 @@ open_list() {
         }
         END {
             for (x in hs) print x > hf
-            s = ""; for (p in ps) s = s (s == "" ? "" : ",") p
+            # in number order ("for in" order differs between awks)
+            n = 0; for (p in ps) { v = p + 0; for (j = n; j > 0 && o[j] > v; j--) o[j + 1] = o[j]; o[j + 1] = v; n++ }
+            s = ""; for (j = 1; j <= n; j++) s = s (s == "" ? "" : ",") o[j]
             print s > pf
         }' "$1"
     touch "$W/hosts_open"
@@ -2172,9 +2174,13 @@ done
 # start with # are comments.  scored_services looks like http:80;dns:53.
 : >"$W/hl"
 if [ -n "$HOSTLIST" ]; then
+    # Columns by their names in the header line (a list with a column added
+    # in the middle still reads right); the usual order if a name is missing.
     awk "$CC_AWK_CSV"'
-        NR == 1 || /^[ \t]*#/ || NF == 0 { next }
-        { csvsplit($0, f); if (f[2] != "") print f[2] "|" f[1] "|" f[8] }' "$HOSTLIST" >"$W/hl"
+        /^[ \t]*#/ || NF == 0 { next }
+        !hdr { n = csvsplit($0, h); for (i = 1; i <= n; i++) c[tolower(h[i])] = i; hdr = 1
+               ch = ("host" in c) ? c["host"] : 1; ci = ("ip" in c) ? c["ip"] : 2; cs = ("scored_services" in c) ? c["scored_services"] : 8; next }
+        { csvsplit($0, f); if (f[ci] != "") print f[ci] "|" f[ch] "|" f[cs] }' "$HOSTLIST" >"$W/hl"
     cc_info "host list: $(wc -l <"$W/hl" | tr -d ' ') host(s) from $HOSTLIST"
 fi
 

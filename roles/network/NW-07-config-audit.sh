@@ -350,6 +350,9 @@ while IFS='|' read -r _n _v _f; do
     # XML configs: one tag per line, whatever the file's own layout, so the
     # line-based rules see every tag.
     case "$_v" in pfsense|opnsense) awk '{ gsub(/></, ">\n<"); print }' "$W/cfg" >"$W/cfg.x" && mv "$W/cfg.x" "$W/cfg" ;; esac
+    # MikroTik wraps long export lines with "\": join them, or a
+    # "disabled=yes" on the second half is not seen.
+    case "$_v" in mikrotik) awk '/\\$/ { sub(/\\$/, ""); h = h $0; next } h != "" { sub(/^[ \t]+/, ""); $0 = h $0; h = "" } { print }' "$W/cfg" >"$W/cfg.x" && mv "$W/cfg.x" "$W/cfg" ;; esac
     awk -v weak="$WEAKSNMP" "$MASK$(rules_for "$_v")" "$W/cfg" >"$W/found"
     cc_debug "$_n ($_v): $(grep -c . "$W/found") findings from $_f"
     while IFS='|' read -r _sev _what _det; do

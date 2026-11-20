@@ -1527,12 +1527,12 @@ fi
 printf '%s' "$DEVICES" | grep . | while IFS=',' read -r _n _a _v _u _p; do
     case " $VENDORS " in *" $_v "*) ;; *) echo "BADV|$_v"; continue ;; esac
     [ -n "$_n" ] && [ -n "$_a" ] || { echo "BAD|$_n"; continue; }
-    case "${_p:-22}" in *[!0-9]*) echo "BAD|$_n"; continue ;; esac
     printf '%s|%s|%s|%s|%s\n' "$_n" "$_a" "$_v" "${_u:-$DEFUSER}" "${_p:-22}"
 done >>"$W/devices"
 grep -q '^BAD' "$W/devices" && cc_die 2 "--device needs NAME,ADDRESS,VENDOR with a known vendor ($VENDORS)"
 [ -s "$W/devices" ] || cc_die 3 "no firewall given"
 for _n in $(cut -d'|' -f1 "$W/devices"); do case "$_n" in *[!A-Za-z0-9_.-]*) cc_die 2 "device name '$_n' may only use letters, digits, '.', '_' and '-'" ;; esac; done
+_bp=$(awk -F'|' '$5 !~ /^[0-9]+$/ || $5 < 1 || $5 > 65535 { print $1; exit }' "$W/devices"); [ -z "$_bp" ] || cc_die 2 "device $_bp: the SSH port must be a number from 1 to 65535"
 
 # ---- Talking to a device ---------------------------------------------------------------
 sshopts() {
