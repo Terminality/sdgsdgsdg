@@ -4,7 +4,7 @@
 # NAME:     Device accounts and sessions
 # ROLE:     Network  (wave 1, first 15 minutes, again every time red team is busy)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.1.0
+# VERSION:  1.2.0
 #
 # PURPOSE
 #   A red team's first move on a firewall or router is to log in with an
@@ -40,10 +40,13 @@
 #     which devices (the host list, or typed)   --hosts FILE / --device SPEC
 #     the device password                       $BT_NET_PASS / --ask-password
 #     your team's addresses                     --team CIDR,...
-#     each session not yours    [k]ick (default when it is from outside
-#                               --team) / [l]eave / [a]ll the rest default
-#     each account to look at   [d]isable (default when new since the first
-#                               run) / [k]eep / [a]ll the rest default
+#     each session not yours    [k]ick / [l]eave (the default: it may be a
+#                               teammate) / [a]ll the rest default
+#     each account to look at   [d]isable / [k]eep (the default: a teammate
+#                               may have made it) / [a]ll the rest default
+#   Never kicks the team off a device: nothing is kicked or disabled unless
+#   you answer k or d for it; --batch kicks and disables nothing (unless
+#   --kick-outside / --disable-new make those the default answers).
 #     apply?                    --apply
 #
 # USAGE
@@ -58,6 +61,11 @@
 #   --enable-env       Cisco: enable with $BT_NET_ENABLE
 #   --team CIDR,...    your team's addresses: their sessions default to leave
 #   --known NAME,...   accounts that are yours: never asked about
+#   --kick-outside     kick is the default for sessions from outside --team
+#                      (default: leave - a teammate may be logged in from
+#                      somewhere else)
+#   --disable-new      disable is the default for accounts new since the
+#                      first run (default: keep)
 #   --me ADDRESS       this box's address as the devices see it (default:
 #                      found with "ip route get")
 #   --configs DIR      NW-01's saved configs (default <out>/net-configs)
@@ -114,6 +122,8 @@ NW-12 Device accounts and sessions - who has an account, who is logged in; kick 
   --enable-env       Cisco: enable with $BT_NET_ENABLE
   --team CIDR,...    your team's addresses (their sessions default to leave)
   --known NAME,...   accounts that are yours (never asked about)
+  --kick-outside     default kick for sessions from outside --team (default leave)
+  --disable-new      default disable for accounts new since the first run (default keep)
   --me ADDRESS       this box's address as the devices see it
   --configs DIR      NW-01's saved configs (for the undo of a removed account)
   --legacy-ssh       allow old SSH algorithms
@@ -125,7 +135,7 @@ USAGE
 
 NL='
 '
-HOSTS=""; DEVICES=""; DEFUSER="admin"; USERSET=0; ASK=0; ENABLE=0; TEAM=""; KNOWN=""; ME=""; CONFIGS=""; LEGACY=0; COLOR=1
+HOSTS=""; DEVICES=""; DEFUSER="admin"; USERSET=0; ASK=0; KICKOUT=0; DISNEW=0; ENABLE=0; TEAM=""; KNOWN=""; ME=""; CONFIGS=""; LEGACY=0; COLOR=1
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
@@ -134,6 +144,8 @@ while [ $# -gt 0 ]; do
         --device)       [ $# -ge 2 ] || cc_die 2 "--device needs NAME,ADDRESS,VENDOR"; DEVICES="$DEVICES$2$NL"; shift 2 ;;
         --user)         [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; USERSET=1; shift 2 ;;
         --ask-password) ASK=1; shift ;;
+        --kick-outside) KICKOUT=1; shift ;;
+        --disable-new)  DISNEW=1; shift ;;
         --enable-env)   ENABLE=1; shift ;;
         --team)         [ $# -ge 2 ] || cc_die 2 "--team needs addresses"; TEAM="$TEAM,$2"; shift 2 ;;
         --known)        [ $# -ge 2 ] || cc_die 2 "--known needs names"; KNOWN="$KNOWN,$2"; shift 2 ;;
@@ -405,7 +417,8 @@ while IFS="$US" read -r _n _a _v _u _p _an _ar _as; do
     elif ! safe "$_an"; then _verd="odd name"; cc_show "$C_RED" "  [!] $_n: an account with an odd name ($(printf '%s' "$_an" | tr -cd 'A-Za-z0-9_.@ -')...): check it in the device's own interface - it is not put into a command"
     elif ! cc_is_protected account "$_an" && [ "$_new" = y ]; then
         _verd="NEW"; cc_show "$C_RED" "  [!] $_n: $_an ($_ar) - NEW since the first run: who made it?"
-        j acc d "$_n" "$_a" "$_v" "$_u" "$_p" "$_an" "$_ar" "NEW since the first run" >>"$W/ask"
+        # Never the default (unless --disable-new): a teammate may have made it.
+        j acc "$([ "$DISNEW" = 1 ] && echo d || echo k)" "$_n" "$_a" "$_v" "$_u" "$_p" "$_an" "$_ar" "NEW since the first run" >>"$W/ask"
     elif cc_is_protected account "$_an"; then _verd="protected"; cc_show "$C_GRN" "  [ok] $_n: $_an ($_ar) - on the protected list"
     else
         _verd="look at it"; cc_show "$C_YEL" "  [*] $_n: $_an ($_ar) - $([ "$FIRST" = 1 ] && echo 'first run: is it yours? (--known NAME stops this question)' || echo 'there at the first run')"
@@ -439,7 +452,9 @@ while IFS="$US" read -r _n _a _v _u _p _si _su _sf _sw _me; do
         _verd="NOT your team"
         if [ -n "$TEAM" ]; then cc_show "$C_RED" "  [!] $_n: $_su from $_sf ($_sw) - not from your team"
         else cc_show "$C_YEL" "  [*] $_n: $_su from $_sf ($_sw) - yours? (--team CIDR tells your addresses apart)"; _verd="unknown"; fi
-        j ses "$([ -n "$TEAM" ] && echo k || echo l)" "$_n" "$_a" "$_v" "$_u" "$_p" "$_id" "$_su" "$_sf" "$_sw" >>"$W/ask"
+        # Never the default (unless --kick-outside with --team): a teammate
+        # logged in from somewhere else would be kicked.
+        j ses "$([ "$KICKOUT" = 1 ] && [ -n "$TEAM" ] && echo k || echo l)" "$_n" "$_a" "$_v" "$_u" "$_p" "$_id" "$_su" "$_sf" "$_sw" >>"$W/ask"
     fi
     printf '%-14s %-10s %-12s %-16s %-18s %s\n' "$_n" "$_v" "$_id" "$_su" "$_sf" "$_verd" >>"$CC_RUN_DIR/sessions.txt"
 done <"$W/allses"
@@ -460,7 +475,7 @@ while IFS="$US" read -r _k _d _n _a _v _u _p _x1 _x2 _x3 _x4; do
     if [ "$_k" = acc ]; then
         _what="$_n: account $_x1 ($_x2) - $_x3"
         if [ "$_all" = 0 ]; then
-            cc_choose "$_what: what now?" "$_d" "d=disable it ($(how_off "$_v" "$_n" "$_x1"))" "k=keep it" "a=all the rest: take their defaults"
+            cc_choose "$_what: what now?" "$_d" "d=disable it - only if you are SURE no teammate uses it ($(how_off "$_v" "$_n" "$_x1"))" "k=keep it" "a=all the rest: take their defaults"
             case "$CC_CHOICE" in a) _all=1 ;; *) _d=$CC_CHOICE ;; esac
         fi
         [ "$_d" = d ] && j off "$_n" "$_a" "$_v" "$_u" "$_p" "$_x1" >>"$W/plan"
@@ -473,7 +488,7 @@ while IFS="$US" read -r _k _d _n _a _v _u _p _x1 _x2 _x3 _x4; do
             cc_show "$C_YEL" "  [*] $_what: same account as this script (Palo Alto ends every session of an account): change its password with NW-10 instead"; continue
         fi
         if [ "$_all" = 0 ]; then
-            cc_choose "$_what: what now?" "$_d" "k=kick it (ends the session; change the passwords with NW-10 next)" "l=leave it" "a=all the rest: take their defaults"
+            cc_choose "$_what: what now?" "$_d" "k=kick it (ends the session - only if you are SURE it is not a teammate; change the passwords with NW-10 next)" "l=leave it" "a=all the rest: take their defaults"
             case "$CC_CHOICE" in a) _all=1 ;; *) _d=$CC_CHOICE ;; esac
         fi
         [ "$_d" = k ] && j kick "$_n" "$_a" "$_v" "$_u" "$_p" "$_x1" "$_x2" "$_x3" >>"$W/plan"

@@ -3338,11 +3338,13 @@ Run it **once early**: that run saves the account names as the baseline (`net-ac
 | Use the host list `config/hosts.txt`? (when there is one) / else each device: address, what it is (`[o]` OpenWRT first), name, login | | `--hosts`, `--device` |
 | Device password (hidden, never saved) | typed | `BT_NET_PASS` (used as it is), `--ask-password` |
 | Your team's addresses? (their sessions are left alone) | addresses or networks, or Enter for none | `--team` |
-| Each session not yours | `[k]ick` (default when not from `--team`) / `[l]eave` / `[a]ll the rest default` | `--batch` |
-| Each account to look at | `[d]isable` (default when new since the first run) / `[k]eep` / `[a]ll the rest default` | `--batch`, `--known` |
+| Each session not yours | `[k]ick` / `[l]eave` (the default: it may be a teammate) / `[a]ll the rest default` | `--kick-outside` makes kick the default for sessions from outside `--team` |
+| Each account to look at | `[d]isable` / `[k]eep` (the default: a teammate may have made it) / `[a]ll the rest default` | `--disable-new` makes disable the default for accounts new since the first run; `--known` |
 | Do these? | `[y]` / `[n]` | `--apply` |
 
 An account you keep (with `--apply`) joins the baseline and is not asked about again.
+
+**It never kicks the team off a device by itself:** nothing is kicked or disabled unless you answer `k` or `d` for it, so `--batch` kicks and disables nothing (unless `--kick-outside` / `--disable-new` are given).
 
 ### What each brand does
 
@@ -3468,7 +3470,8 @@ Run NW-01 before (backup) and after. The scored boxes come from `--allow ADDR:PO
 
 | Rule | Default | What it does |
 | --- | --- | --- |
-| `bt-team` | on | Your team's addresses (`--team`) may reach anything |
+| `bt-team` | on | Your team's addresses (`--team`, and `--remote`: where you log in from outside) may reach anything |
+| login ports | on | `22,3389` (`--login-ports`) are added to every scored box's rule, from any address, so the team can always log in from outside; `--login-ports none` closes them |
 | `bt-in-ADDR` | on | ANY address to each scored box, its scored ports only (any address, so the scoring engine always gets through) |
 | `bt-ping` | on | Ping in to the scored boxes (every box has a ping check) |
 | `bt-in-block` | on | Everything else coming in from outside: blocked and logged |
@@ -3485,6 +3488,8 @@ Replies to allowed connections always pass, so a scored service still answers wh
 | Each port from the SH-03 scan: reachable from outside? | `[k]eep` open / `[b]lock` (scored-looking ports default keep) | `--allow`, `--file` |
 | Is this list of scored boxes and ports right? | `[Y/n]` | `--batch` |
 | Your team's addresses | typed | `--team` |
+| Addresses you log in to the boxes from outside the firewall (remote teammates, VPN)? | typed, Enter = none | `--remote` |
+| Ports you log in to the boxes on from outside? (kept open to every box from any address) | `22,3389`, or `none` | `--login-ports` |
 | Limit what the scored servers can START out? | `[y/N]`, then DNS, NTP, more places | `--restrict-out`, `--dns`, `--ntp`, `--out-allow` |
 | Threat prevention on the scored rules? | `[y/N]` | `--threat` |
 | Each rule, in plain words | `[K/s]` keep / skip | `--batch` |
