@@ -236,7 +236,7 @@ cc_color_init
 #   Sets CC_NO_PROTECTED=1 on yes; returns 1 on no.
 protected_check() {
     [ "$CC_NO_PROTECTED" = 1 ] && return 0
-    _pc=${CC_PROTECTED:-${CC_OUT:-${BT_OUT:-${HOME:-/root}/bt-out}}/protected.csv}
+    _pc=${CC_PROTECTED:-${CC_OUT:-${BT_OUT:-${HOME:-/root}/bt-out}}/protected.txt}
     [ -r "$_pc" ] && return 0
     cc_show "$C_YEL" "[*] No protected list at $_pc (the list of scored ports, services and accounts no script may touch)."
     if cc_ask "Continue without a protected list? (LX-39 does not touch ports or services anyway)" N "yes, continue" "no, stop"; then CC_NO_PROTECTED=1; return 0; fi

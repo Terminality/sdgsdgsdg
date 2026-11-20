@@ -122,7 +122,7 @@ Scripts never write next to themselves. Everything goes under the folder given b
   <ID>_<host>_<UTC time>_<name>.csv        data a script produced
   <ID>_<host>_<UTC time>_findings.csv      weaknesses found by a detection script
   undo-<host>.log                          one per host, shared by every script
-  protected.csv                            the protected list, if you keep it here
+  protected.txt                            the protected list, if you keep it here
   backup/<host>/<UTC time>_<ID>/...        files as they were before a change, full path kept
   quarantine/<host>/<UTC time>_<ID>/...    suspicious files moved out of the way
 ```
@@ -137,18 +137,18 @@ On Unix the folder and the files the library creates are readable only by the us
 
 ## 3. The protected list
 
-A CSV of things no script may close, stop, block or change. `config/protected.example.csv` is a starting point.
+A text file of things no script may close, stop, block or change: `protected.txt` in the output folder (or `--protected FILE`). `config/protected.example.txt` is a starting point. One entry a line, the parts split by spaces:
 
 ```
-type,value,note
-port,80/tcp,scored web site
-port,53,scored DNS (both protocols)
-service,apache2,serves the scored site
-account,svc-web,the scoring engine logs in as this user
-path,/var/www/html,scored content
-host,10.0.0.5,scoring engine address
+port      80/tcp          scored web site
+port      53              scored DNS (both protocols)
+service   apache2         serves the scored site
+account   svc-web         the scoring engine logs in as this user
+path      /var/www/html   scored content
+host      10.0.0.5        scoring engine address
 ```
 
+- An older list with commas (`port,80/tcp,note`, or a `protected.csv` in the output folder) still works.
 - `type` is one of `port`, `service`, `account`, `path`, `host`, `process`.
 - `value` is not case-sensitive.
 - A port written `80` protects both protocols. `80/tcp` protects TCP only. A script asking about plain `80` is refused if `80/tcp` is listed: when in doubt the answer is "protected".
@@ -1098,9 +1098,9 @@ Run the backup (LX-31) first. **Put every account the scoring engine logs in wit
 Just run it. It asks like sqlmap: Enter takes the default.
 
 ```sh
-sudo sh LX-20-password-rotation.sh --protected /root/protected.csv          # asks about every account
-sudo sh LX-20-password-rotation.sh --apply --batch --protected /root/protected.csv   # defaults, no questions
-sudo sh LX-20-password-rotation.sh --apply --batch --protected /root/protected.csv --keep /root/team.txt --kick
+sudo sh LX-20-password-rotation.sh --protected /root/protected.txt          # asks about every account
+sudo sh LX-20-password-rotation.sh --apply --batch --protected /root/protected.txt   # defaults, no questions
+sudo sh LX-20-password-rotation.sh --apply --batch --protected /root/protected.txt --keep /root/team.txt --kick
 ```
 
 What a run looks like:
@@ -1125,7 +1125,7 @@ What a run looks like:
 | `--users a,b` | Rotate (and lock) only these accounts. Repeatable; the lists add up |
 | `--exclude a,b` | Never touch these accounts. Repeatable; the lists add up. Comma-separated, no spaces |
 | `--ignore-missing` | A name in `--users` or `--exclude` that is not an account on this box normally STOPS the script before anything changes (a misspelled name would otherwise get the account rotated). This option only warns instead, for one list used on many boxes |
-| `--passwords FILE` | Use these passwords instead of random ones: `user,password` lines, for a sheet made in advance. Passwords must be 8+ characters with no `:`; spaces around the name and password are dropped. Names not on this box, and accounts that are locked or have no password (setting one would unlock them), are listed in the summary and not changed |
+| `--passwords FILE` | Use these passwords instead of random ones: `user password` lines (a space between; an older `user,password` file still works), for a sheet made in advance. Passwords must be 8+ characters with no `:`; spaces around the name and password are dropped. Names not on this box, and accounts that are locked or have no password (setting one would unlock them), are listed in the summary and not changed |
 | `--length N` | Random password length (default 16, minimum 12) |
 | `--no-root` | Leave root's password alone |
 | `--include-me` | Also rotate the account that ran `sudo`. Skipped by default so you can still use `sudo` |
@@ -1162,7 +1162,7 @@ In a numbered folder: `<out>/passwords-1`, `passwords-2`, ...
 | `accounts.txt` | Every account and what was done, as a table (CSV copy in `csv/`). No passwords |
 | `revert.sh` | Undoes this run: old passwords back, locks removed (`sh revert.sh --force`) |
 | `summary.txt` | Counts, every account and what happened, warnings (empty passwords, extra UID 0, Samba accounts). No passwords |
-| `passwords.csv` | `host,user,password,time`, mode 600, written only when changes are applied. If the run is undone it is renamed `passwords-UNDONE-not-valid.csv`, so nobody hands out passwords that no longer work |
+| `passwords.txt` | `HOST USER PASSWORD TIME` in columns, mode 600, written only when changes are applied. If the run is undone it is renamed `passwords-UNDONE-not-valid.txt`, so nobody hands out passwords that no longer work |
 
 `/etc/shadow` and `/etc/passwd` are backed up before the first change. The undo log restores them from that backup, which also brings back the OLD passwords: that way no password hash is ever written into a log.
 
@@ -1181,7 +1181,7 @@ In a numbered folder: `<out>/passwords-1`, `passwords-2`, ...
 | `chpasswd not found` (exit 3) | Minimal image without shadow-utils | Install the `passwd` / `shadow` package, or busybox |
 | `cannot read /etc/shadow` (exit 3) | Not root | `sudo` |
 | An account shows `failed` | `chpasswd` refused (PAM password-quality rules can reject some passwords) | Rerun; a new random password is made each time. Check the log for the message |
-| You cannot `sudo` any more | You rotated your own account with `--include-me` | Your new password is in `passwords.csv`; read it from the root shell you still have |
+| You cannot `sudo` any more | You rotated your own account with `--include-me` | Your new password is in `passwords.txt`; read it from the root shell you still have |
 | Scoring broke right after | A scored account was rotated | Put it on the protected list and set the old password back: the undo log restores `/etc/shadow` |
 
 ---
@@ -1194,7 +1194,7 @@ Shows every SSH key on the box and every important sshd setting, asks key by key
 
 ```sh
 sudo sh LX-22-ssh-hardening.sh                        # look and plan: asks, changes nothing
-sudo sh LX-22-ssh-hardening.sh --apply --protected /root/protected.csv
+sudo sh LX-22-ssh-hardening.sh --apply --protected /root/protected.txt
 sudo sh LX-22-ssh-hardening.sh --apply --batch        # recommended answers, no questions
 sudo sh LX-22-ssh-hardening.sh --apply --allow-keys team.pub   # keep only the team's keys
 ```
@@ -1267,7 +1267,7 @@ Shows every open port on the box, says what each one is and which program is beh
 
 ```sh
 sudo sh LX-25-firewall.sh                       # look and plan: asks, changes nothing
-sudo sh LX-25-firewall.sh --apply --protected /root/protected.csv    # ask, then load the rules
+sudo sh LX-25-firewall.sh --apply --protected /root/protected.txt    # ask, then load the rules
 # then, from a NEW ssh session, within 2 minutes:
 sudo sh /root/bt-out/firewall-1/keep-firewall.sh
 # once scoring is green, keep the rules across a reboot:
@@ -1465,8 +1465,8 @@ Reads the login logs, counts failed logins per address, and bans an address that
 
 ```sh
 sudo sh SV-26-banning.sh                                       # asks; dry run (shows who would be banned)
-sudo sh SV-26-banning.sh --protected /root/protected.csv --apply          # asks, then bans
-sudo sh SV-26-banning.sh --protected /root/protected.csv --apply --batch --loop 60 --team 10.0.0.0/24
+sudo sh SV-26-banning.sh --protected /root/protected.txt --apply          # asks, then bans
+sudo sh SV-26-banning.sh --protected /root/protected.txt --apply --batch --loop 60 --team 10.0.0.0/24
 sudo sh SV-26-banning.sh --list                                # who is banned and why
 sudo sh SV-26-banning.sh --apply --unban 10.6.6.66             # lift one ban
 sudo sh SV-26-banning.sh --apply --unban-all                   # lift every ban now
@@ -1774,7 +1774,7 @@ If the first session closes early (some devices end the session after a password
 export BT_NET_PASS='current password'
 sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.txt                       # dry run
 sh NW-10-device-passwords.sh --out ~/bt-out --device r1,10.0.0.1,cisco-ios,admin --apply   # ONE device first
-sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.txt --apply --protected protected.csv
+sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.txt --apply --protected protected.txt
 ```
 
 | Option | What it does |
@@ -1992,7 +1992,7 @@ Guest, DefaultAccount, WDAGUtilityAccount and krbtgt (that has its own two-step 
 | `FAILED ... does not meet the password policy requirements` | The domain's policy rejected the password (length, complexity, history) | Use a longer `-Length`, or a different sheet password; the old password still works |
 | A service stopped working after the change | Its account was changed with `-IncludeServices` or runs it from another box | Give the service the new password from `passwords.csv` (`sc.exe config NAME password= ...` or the Services console) |
 | `the new password did not work in a test logon` | A policy, a lockout or replication delay on a DC | Wait a minute and log on by hand; on a DC check replication |
-| Refused: no protected list | `-Apply` needs one | Build `protected.csv` (accounts the scoring engine uses), or pass `-NoProtected` |
+| Refused: no protected list | `-Apply` needs one | Build `protected.txt` (accounts the scoring engine uses), or pass `-NoProtected` |
 
 ---
 
@@ -2284,7 +2284,7 @@ Finds the ways an attacker makes sure they get back in or their code keeps runni
 sudo sh LX-42-persistence-sweep.sh                    # asks what to scan, then looks
 sudo sh LX-42-persistence-sweep.sh --batch            # full scan, no questions
 sudo sh LX-42-persistence-sweep.sh --areas cron,ssh,systemd
-sudo sh LX-42-persistence-sweep.sh --apply --protected /root/protected.csv   # look, then ask what to remove
+sudo sh LX-42-persistence-sweep.sh --apply --protected /root/protected.txt   # look, then ask what to remove
 ```
 
 ### The questions

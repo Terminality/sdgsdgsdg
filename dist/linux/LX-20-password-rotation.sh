@@ -54,8 +54,9 @@
 #                      there would rotate the account you meant to keep
 #   --ignore-missing   only warn about such names (for one list used on
 #                      many boxes)
-#   --passwords FILE   use these passwords instead of random ones: CSV lines
-#                      "user,password" (for a password sheet made in advance).
+#   --passwords FILE   use these passwords instead of random ones: lines
+#                      "user password" (for a password sheet made in advance;
+#                      the old "user,password" lines still work).
 #                      Spaces around the name and the password are dropped.
 #                      Names not on this box are listed in the summary; an
 #                      account that is locked or has no password is NOT
@@ -79,9 +80,8 @@
 #   output.txt      everything shown on screen (never a password)
 #   summary.txt     what was rotated, locked and skipped (no passwords)
 #   accounts.txt    every account: uid, shell, password state, what was done
-#   csv/accounts.csv  the same as CSV
 #   revert.sh       undoes this run (sh revert.sh --force)
-#   passwords.csv   host,user,password,time - ONLY with --apply, mode 600.
+#   passwords.txt   HOST USER PASSWORD TIME - ONLY with --apply, mode 600.
 #                   Give it to the captain, then delete it from this box
 #
 # WHAT IT CHANGES  (only with --apply)
@@ -204,7 +204,7 @@ CC_LIB_VERSION="0.7.0"
 : "${CC_FORCE_SCORED:=0}"   # 1 = allowed to touch a protected *account*
 : "${CC_NO_PROTECTED:=0}"   # 1 = operator accepted running with no list
 : "${CC_OUT:=${BT_OUT:-}}"              # output folder (operator-chosen)
-: "${CC_PROTECTED:=${BT_PROTECTED:-}}"  # protected-list CSV
+: "${CC_PROTECTED:=${BT_PROTECTED:-}}"  # protected-list file (protected.txt)
 CC_ID="${CC_ID:-CC-00}"
 CC_LOG=""                   # set by cc_init; empty means "log file not open"
 CC_N_DONE=0                 # changes made
@@ -376,8 +376,8 @@ Common options (every script in the kit):
   --dry-run          show what would change (the default)
   --out DIR          folder for logs, CSV files, backups and the undo log
                      (default: $BT_OUT, else ~/bt-out)
-  --protected FILE   protected-list CSV (default: $BT_PROTECTED, else
-                     DIR/protected.csv)
+  --protected FILE   the protected list (default: $BT_PROTECTED, else
+                     DIR/protected.txt)
   --no-protected     allow --apply without a protected list (dangerous)
   --force-scored     allow changes to accounts on the protected list
   --batch            never ask questions: take every default (like sqlmap)
@@ -468,7 +468,11 @@ cc_init() {
     (umask 077; : >>"$CC_LOG") 2>/dev/null || cc_die 3 "cannot write log file: $CC_LOG"
 
     # Protected list.
-    [ -n "$CC_PROTECTED" ] || CC_PROTECTED="$CC_OUT/protected.csv"
+    # protected.txt; an old kit's protected.csv is still found.
+    if [ -z "$CC_PROTECTED" ]; then
+        CC_PROTECTED="$CC_OUT/protected.txt"
+        [ ! -r "$CC_PROTECTED" ] && [ -r "$CC_OUT/protected.csv" ] && CC_PROTECTED="$CC_OUT/protected.csv"
+    fi
     if [ ! -r "$CC_PROTECTED" ]; then
         if [ "$CC_KIND" = changes ] && [ "$CC_APPLY" = 1 ] && [ "$CC_NO_PROTECTED" != 1 ]; then
             cc_die 3 "no protected list at $CC_PROTECTED - refusing to change anything. Build one (SH-09), pass --protected FILE, or pass --no-protected to accept the risk"
@@ -901,12 +905,14 @@ cc_ask_keep() {
 # -----------------------------------------------------------------------------
 # Protected list
 # -----------------------------------------------------------------------------
-# File format (CSV with a header line; see config/protected.example.csv):
-#     type,value,note
-#     port,80/tcp,scored web site
-#     service,apache2,scored web site
-#     account,svc-web,used by the scoring engine
-#     path,/var/www/html,scored content
+# File format (protected.txt; see config/protected.example.txt), one entry a
+# line, the parts split by spaces:
+#     port     80/tcp          scored web site
+#     service  apache2         scored web site
+#     account  svc-web         used by the scoring engine
+#     path     /var/www/html   scored content
+#   An older comma-separated line (port,80/tcp,note) still works: a line whose
+#   first word is followed by a comma is split on commas.
 #   type   one of: port service account path host process
 #   value  compared without regard to upper/lower case.  A port may be written
 #          '80' (both protocols) or '80/tcp'.  Asking about plain '80' matches
@@ -918,7 +924,7 @@ cc_ask_keep() {
 # cc_is_protected TYPE VALUE   -> returns 0 if the pair is on the list.
 cc_is_protected() {
     [ -n "$CC_PROTECTED" ] && [ -r "$CC_PROTECTED" ] || return 1
-    awk -F',' -v want_type="$1" -v want_val="$2" '
+    awk -v want_type="$1" -v want_val="$2" '
         function clean(s) {    # this is awk, not shell: posix-ok
             gsub(/\r/, "", s); gsub(/^[ \t"]+|[ \t"]+$/, "", s)
             return tolower(s)
@@ -926,7 +932,8 @@ cc_is_protected() {
         BEGIN { want_type = clean(want_type); want_val = clean(want_val); hit = 1 }
         /^[ \t]*#/ || /^[ \t\r]*$/ { next }
         {
-            t = clean($1); v = clean($2)
+            if ($0 ~ /^[ \t"]*[^ \t,]+[ \t"]*,/) split($0, f, ","); else split($0, f)
+            t = clean(f[1]); v = clean(f[2])
             if (t == "type" || t != want_type) next
             if (v == want_val) { hit = 0; exit }
             if (t == "port") {
@@ -1673,7 +1680,7 @@ LX-20 Linux password rotation - list every account, then rotate, set or disable
   --users a,b        act only on these accounts (repeatable)
   --exclude a,b      never touch these accounts (repeatable)
   --ignore-missing   warn, do not stop, when a name in --users/--exclude is not an account here
-  --passwords FILE   "user,password" lines to set instead of random passwords
+  --passwords FILE   "user password" lines to set instead of random passwords
   --length N         random password length (default 16)
   --no-root          leave root's password alone
   --include-me       also rotate the account that ran sudo
@@ -1726,10 +1733,10 @@ cc_init "LX-20" "Linux password rotation" changes
 cc_detect_os
 [ -z "$R" ] && cc_require_root
 cc_use_numbered_dir passwords
-CC_CSV_DIR="$CC_RUN_DIR/csv"
-(umask 077; mkdir -p "$CC_CSV_DIR") || cc_die 3 "cannot create $CC_CSV_DIR"
 W="$CC_RUN_DIR/.work"
 (umask 077; mkdir -p "$W") || cc_die 3 "cannot create $W"
+# The table is built in the work folder and kept only as accounts.txt.
+CC_CSV_DIR="$W"
 OUTF="$CC_RUN_DIR/output.txt"
 grep -v '\[NOTE\]\|\[DEBUG\]' "$CC_LOG" >"$OUTF" 2>/dev/null || : >"$OUTF"
 # shellcheck disable=SC2034  # read by cc_show and cc_log in the library
@@ -1807,7 +1814,13 @@ onkeep() { grep -qx "$1" "$W/keep"; }
 # that would break chpasswd's "user:password" input.
 : >"$W/given"
 if [ -n "$PWFILE" ]; then
-    awk -F',' '/^[ \t]*#/ || NF < 2 { next } { u = $1; p = substr($0, length($1) + 2); gsub(/\r/, "", p); gsub(/^[ \t]+|[ \t]+$/, "", u); gsub(/^[ \t]+|[ \t]+$/, "", p); print u "\t" p }' "$PWFILE" >"$W/given"
+    # "user password", or the old "user,password" (name, then a comma).
+    awk '/^[ \t]*#/ { next } { l = $0; gsub(/\r/, "", l); sub(/^[ \t]+/, "", l); if (l == "") next
+        w = l; sub(/[ \t].*/, "", w)
+        if (l ~ /^[^ \t,]+[ \t]*,/) { u = substr(l, 1, index(l, ",") - 1); p = substr(l, index(l, ",") + 1) }
+        else { u = w; p = substr(l, length(w) + 1) }
+        gsub(/^[ \t]+|[ \t]+$/, "", u); gsub(/^[ \t]+|[ \t]+$/, "", p); if (u == "" || p == "") next
+        print u "\t" p }' "$PWFILE" >"$W/given"
     if awk -F'\t' '$2 ~ /:/ || length($2) < 8 { bad = 1 } END { exit !bad }' "$W/given"; then
         cc_die 2 "--passwords: every password must be 8+ characters and contain no ':'"
     fi
@@ -2054,7 +2067,7 @@ backup_once() {
     _backed=1
 }
 row() { cc_csv_row "$CSV" "$1" "$2" "$3" "$4" "$5" "$6"; }
-PWOUT="$CC_RUN_DIR/passwords.csv"
+PWOUT="$CC_RUN_DIR/passwords.txt"
 N_ROT=0; N_LOCK=0; N_SKIP=0; N_FAIL=0
 : >"$W/show"
 APPLIED=0
@@ -2128,15 +2141,12 @@ while IFS='|' read -r _u _uid _sh _st _a _why _fl; do
         row "$_u" "$_uid" "$_sh" "$_st" failed "$_why"; N_FAIL=$((N_FAIL + 1)); cc_show "$C_RED" "  [x] FAILED to change the password of $_u"
     else
         if [ ! -f "$PWOUT" ]; then
-            (umask 077; printf 'host,user,password,time\n' >"$PWOUT")
+            (umask 077; printf '%-16s %-16s %-24s %s\n' HOST USER PASSWORD TIME >"$PWOUT")
             # If the run is undone, the passwords in this file are no longer
             # the real ones: the undo renames it so nobody hands it out.
-            cc_undo_add "mark the passwords file as no longer valid" "mv $(cc_shquote "$PWOUT") $(cc_shquote "$CC_RUN_DIR/passwords-UNDONE-not-valid.csv")"
+            cc_undo_add "mark the passwords file as no longer valid" "mv $(cc_shquote "$PWOUT") $(cc_shquote "$CC_RUN_DIR/passwords-UNDONE-not-valid.txt")"
         fi
-        # A given password may hold a comma or a quote: quote it the CSV way.
-        _pwq=$_pw
-        case "$_pw" in *,*|*'"'*) _pwq="\"$(printf '%s' "$_pw" | sed 's/"/""/g')\"" ;; esac
-        printf '%s,%s,%s,%s\n' "$CC_HOST" "$_u" "$_pwq" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$PWOUT"; _pwq=""
+        printf '%-16s %-16s %-24s %s\n' "$CC_HOST" "$_u" "$_pw" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$PWOUT"
         [ "$PRINT" = 1 ] && printf '%s:%s\n' "$_u" "$_pw" >>"$W/show"
         row "$_u" "$_uid" "$_sh" "$_st" rotated "$_why"; N_ROT=$((N_ROT + 1))
         cc_show "$C_GRN" "  [+] new password for $_u ($_why)"
