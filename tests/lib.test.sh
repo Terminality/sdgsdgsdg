@@ -86,6 +86,18 @@ echo "a=$(chk port 80/tcp) b=$(chk port 80) c=$(chk port 80/udp) d=$(chk port 53
 PROT="$T_TMP/prot.csv"; export PROT
 r=$(run "$S/prot.sh")
 t_eq "$r" "a=yes b=yes c=no d=yes e=no f=yes g=yes h=yes i=no j=yes" "matching rules (case, quotes, CRLF, port forms)"
+# protected.txt: the same list split by spaces, a note with commas and spaces.
+printf '# comment\nport     80/tcp         scored web, the shop\nport 53 dns\nservice  Apache2\naccount  svc-web   scoring login\npath /var/www/html site\nservice\tsshd\ttab, crlf\r\n' >"$T_TMP/prot.txt"
+PROT="$T_TMP/prot.txt"; export PROT
+r=$(run "$S/prot.sh")
+t_eq "$r" "a=yes b=yes c=no d=yes e=no f=yes g=yes h=yes i=no j=yes" "protected.txt split by spaces: the same answers"
+PROT="$T_TMP/prot.csv"; export PROT
+mkdir -p "$T_TMP/pout"; cp "$T_TMP/prot.txt" "$T_TMP/pout/protected.txt"
+mk pdef 'while [ $# -gt 0 ]; do cc_common_flag "$@" && { shift "$CC_SHIFT"; continue; }; shift; done
+cc_init T-06 "default list" changes; echo "list=$CC_PROTECTED"; cc_finish'
+r=$(run "$S/pdef.sh" --out "$T_TMP/pout" --apply 2>&1); t_has "$r" "list=$T_TMP/pout/protected.txt" "the default list is protected.txt in the out folder"
+rm "$T_TMP/pout/protected.txt"; cp "$T_TMP/prot.csv" "$T_TMP/pout/protected.csv"
+r=$(run "$S/pdef.sh" --out "$T_TMP/pout" --apply 2>&1); t_has "$r" "list=$T_TMP/pout/protected.csv" "an old protected.csv is still found"
 mk guard 'while [ $# -gt 0 ]; do cc_common_flag "$@" && { shift "$CC_SHIFT"; continue; }; shift; done
 cc_init T-05 "guard test" changes
 cc_guard port 80 && echo "port-allowed"

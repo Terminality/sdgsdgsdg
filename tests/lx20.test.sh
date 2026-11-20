@@ -5,7 +5,7 @@
 # chpasswd stores "$test$<password>" so the test can check which password
 # was set.  Checks: dry run changes nothing; --apply rotates usable accounts,
 # skips protected ones, locks accounts not on --keep, fixes a hash hidden in
-# /etc/passwd; passwords never reach the log, summary or accounts.csv; the
+# /etc/passwd; passwords never reach the log, summary or accounts.txt; the
 # undo log restores the old shadow file.
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
@@ -93,7 +93,7 @@ t_has "$out" "would rotate" "lists accounts it would rotate"
 t_has "$out" "would lock" "lists accounts it would lock"
 t_has "$out" "nopass has NO password" "reports the empty password"
 t_has "$out" "toor has UID 0" "reports the extra UID 0 account"
-t_fail "no passwords file in a dry run" sh -c "ls '$O'/passwords-*/passwords.csv >/dev/null 2>&1"
+t_fail "no passwords file in a dry run" sh -c "ls '$O'/passwords-*/passwords.txt >/dev/null 2>&1"
 t_has "$out" "==========[ ACCOUNTS (every account in /etc/passwd) ]==========" "the account table is shown first"
 t_has "$out" "system accounts with no password are kept: daemon" "quiet system accounts are summed up in one line"
 
@@ -101,10 +101,10 @@ t_start "--apply with a team list and a protected account"
 out=$(run --out "$O" --root "$R" --keep "$T_TMP/keep.txt" --protected "$T_TMP/protected.csv" --apply --batch 2>&1); rc=$?
 t_eq "$rc" 0 "exit 0"
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
-P="$d/passwords.csv"
+P="$d/passwords.txt"
 t_file "$P" "passwords file written"
 t_eq "$(ls -l "$P" | cut -c1-10)" "-rw-------" "passwords file is mode 600"
-pw_alice=$(awk -F, '$2 == "alice" { print $3 }' "$P")
+pw_alice=$(awk '$2 == "alice" { print $3 }' "$P")
 t_eq "$(f2 alice)" "\$test\$$pw_alice" "alice has the password written in the file"
 t_eq "${#pw_alice}" 16 "random password is 16 characters"
 t_has "$(f2 root)" "\$test\$" "root rotated"
@@ -117,10 +117,10 @@ t_eq "$(f2 toor)" "!\$6\$a\$toor" "extra UID 0 account locked"
 t_eq "$(f2 daemon)" "*" "system account without a password untouched"
 t_eq "$(awk -F: '$1 == "hidden" { print $2 }' "$R/etc/passwd")" x "hash moved out of /etc/passwd"
 t_has "$(f2 hidden)" "\$test\$" "and that account rotated"
-# No password may appear anywhere but passwords.csv.
+# No password may appear anywhere but passwords.txt.
 leak=0
-for p in $(awk -F, 'NR > 1 { print $3 }' "$P"); do
-    grep -rqF -- "$p" "$d/summary.txt" "$d/csv/accounts.csv" "$d/accounts.txt" "$d/output.txt" "$O"/*.log "$O"/undo-*.log && leak=1
+for p in $(awk 'NR > 1 { print $3 }' "$P"); do
+    grep -rqF -- "$p" "$d/summary.txt" "$d/accounts.txt" "$d/output.txt" "$O"/*.log "$O"/undo-*.log && leak=1
 done
 t_eq "$leak" 0 "no password in the summary, accounts files, output.txt, log or undo log"
 t_eq "$(basename "$d")" "passwords-2" "numbered run folders (passwords-1 was the dry run)"
@@ -148,6 +148,9 @@ plant
 t_eq "$(f2 alice)" "\$6\$a\$alice" "the account that ran sudo is skipped"
 (SUDO_USER=alice; export SUDO_USER; run --out "$O" --root "$R" --users alice --include-me --apply --batch --no-protected >/dev/null 2>&1)
 t_has "$(f2 alice)" "\$test\$" "--include-me rotates it"
+printf 'alice   Spaced-Pw-Format-42\n' >"$T_TMP/pw.txt"
+out=$(run --out "$O" --root "$R" --users alice --passwords "$T_TMP/pw.txt" --apply --batch --no-protected 2>&1)
+t_eq "$(f2 alice)" "\$test\$Spaced-Pw-Format-42" "--passwords: 'user password' lines (split by spaces)"
 printf 'alice,bad:pw:here\n' >"$T_TMP/bad.csv"
 run --out "$O" --root "$R" --passwords "$T_TMP/bad.csv" >/dev/null 2>&1; t_eq "$?" 2 "a password with ':' is refused"
 t_start "names given by hand must exist (a typo must not rotate the account)"
@@ -175,7 +178,7 @@ t_eq "$(f2 alice)" "\$test\$Spaced-Out-Pw-77" "spaces around a sheet password ar
 t_eq "$(f2 mallory)" "!\$6\$a\$mallory" "a locked account is not given the sheet password"
 t_has "$out" "mallory is in --passwords but has no usable password" "and that is reported"
 t_has "$out" "ghost is in --passwords but is not an account here" "a sheet name missing here is reported"
-t_has "$(cat "$d/passwords.csv")" '"""Has,Comma-And-Quote9"' "a password with a comma or quote is quoted in passwords.csv"
+t_has "$(cat "$d/passwords.txt")" ' "Has,Comma-And-Quote9 ' "a password with a comma or quote is written as it is in passwords.txt"
 
 t_start "revert timer: no answer puts the old passwords back"
 plant
@@ -184,7 +187,7 @@ t_has "$(f2 alice)" "\$test\$" "alice changed right after the run"
 t_has "$out" "touch $T_TMP/o3/passwords-1/KEEP" "says how to keep the changes from another session"
 sleep 8
 t_eq "$(f2 alice)" "\$6\$a\$alice" "no answer: the old password is back"
-t_file "$T_TMP/o3/passwords-1/passwords-UNDONE-not-valid.csv" "and the passwords file is marked not valid"
+t_file "$T_TMP/o3/passwords-1/passwords-UNDONE-not-valid.txt" "and the passwords file is marked not valid"
 
 t_start "every account answered at a terminal (needs 'script')"
 if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&1; then

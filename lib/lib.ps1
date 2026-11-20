@@ -271,7 +271,12 @@ function Initialize-Cc {
     $prot = $null
     if ($Bound.ContainsKey('Protected') -and $Bound['Protected']) { $prot = [string]$Bound['Protected'] }
     elseif ($env:BT_PROTECTED) { $prot = $env:BT_PROTECTED }
-    else { $prot = Join-Path $out 'protected.csv' }
+    else {
+        # protected.txt; an old kit's protected.csv is still found.
+        $prot = Join-Path $out 'protected.txt'
+        $old = Join-Path $out 'protected.csv'
+        if (-not (Test-Path -LiteralPath $prot) -and (Test-Path -LiteralPath $old)) { $prot = $old }
+    }
     $c.ProtectedRows = $null
     if (Test-Path -LiteralPath $prot) {
         $c.Protected = Resolve-CcPath $prot
@@ -450,7 +455,8 @@ function Backup-CcRegistryKey {
 # -----------------------------------------------------------------------------
 # Protected list
 # -----------------------------------------------------------------------------
-# File format (CSV with a header line; see config/protected.example.csv):
+# File format (protected.txt, parts split by spaces; old comma lines still
+# work; see config/protected.example.txt):
 #     type,value,note
 #     port,80/tcp,scored web site
 #     service,W3SVC,scored web site
@@ -474,7 +480,8 @@ function Test-CcProtected {
             if ($null -eq $line) { continue }
             $t = $line.Trim()
             if ($t -eq '' -or $t.StartsWith('#')) { continue }
-            $parts = $t -split ','
+            # protected.txt is split by spaces; an old line (first word, then a comma) by commas.
+            if ($t -match '^["\s]*[^\s,]+["\s]*,') { $parts = $t -split ',' } else { $parts = @($t -split '\s+') }
             if (@($parts).Count -lt 2) { continue }
             $ty = $parts[0].Trim().Trim('"').ToLower()
             $va = $parts[1].Trim().Trim('"').ToLower()

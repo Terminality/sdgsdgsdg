@@ -199,7 +199,7 @@ CC_LIB_VERSION="0.7.0"
 : "${CC_FORCE_SCORED:=0}"   # 1 = allowed to touch a protected *account*
 : "${CC_NO_PROTECTED:=0}"   # 1 = operator accepted running with no list
 : "${CC_OUT:=${BT_OUT:-}}"              # output folder (operator-chosen)
-: "${CC_PROTECTED:=${BT_PROTECTED:-}}"  # protected-list CSV
+: "${CC_PROTECTED:=${BT_PROTECTED:-}}"  # protected-list file (protected.txt)
 CC_ID="${CC_ID:-CC-00}"
 CC_LOG=""                   # set by cc_init; empty means "log file not open"
 CC_N_DONE=0                 # changes made
@@ -371,8 +371,8 @@ Common options (every script in the kit):
   --dry-run          show what would change (the default)
   --out DIR          folder for logs, CSV files, backups and the undo log
                      (default: $BT_OUT, else ~/bt-out)
-  --protected FILE   protected-list CSV (default: $BT_PROTECTED, else
-                     DIR/protected.csv)
+  --protected FILE   the protected list (default: $BT_PROTECTED, else
+                     DIR/protected.txt)
   --no-protected     allow --apply without a protected list (dangerous)
   --force-scored     allow changes to accounts on the protected list
   --batch            never ask questions: take every default (like sqlmap)
@@ -463,7 +463,11 @@ cc_init() {
     (umask 077; : >>"$CC_LOG") 2>/dev/null || cc_die 3 "cannot write log file: $CC_LOG"
 
     # Protected list.
-    [ -n "$CC_PROTECTED" ] || CC_PROTECTED="$CC_OUT/protected.csv"
+    # protected.txt; an old kit's protected.csv is still found.
+    if [ -z "$CC_PROTECTED" ]; then
+        CC_PROTECTED="$CC_OUT/protected.txt"
+        [ ! -r "$CC_PROTECTED" ] && [ -r "$CC_OUT/protected.csv" ] && CC_PROTECTED="$CC_OUT/protected.csv"
+    fi
     if [ ! -r "$CC_PROTECTED" ]; then
         if [ "$CC_KIND" = changes ] && [ "$CC_APPLY" = 1 ] && [ "$CC_NO_PROTECTED" != 1 ]; then
             cc_die 3 "no protected list at $CC_PROTECTED - refusing to change anything. Build one (SH-09), pass --protected FILE, or pass --no-protected to accept the risk"
@@ -896,12 +900,14 @@ cc_ask_keep() {
 # -----------------------------------------------------------------------------
 # Protected list
 # -----------------------------------------------------------------------------
-# File format (CSV with a header line; see config/protected.example.csv):
-#     type,value,note
-#     port,80/tcp,scored web site
-#     service,apache2,scored web site
-#     account,svc-web,used by the scoring engine
-#     path,/var/www/html,scored content
+# File format (protected.txt; see config/protected.example.txt), one entry a
+# line, the parts split by spaces:
+#     port     80/tcp          scored web site
+#     service  apache2         scored web site
+#     account  svc-web         used by the scoring engine
+#     path     /var/www/html   scored content
+#   An older comma-separated line (port,80/tcp,note) still works: a line whose
+#   first word is followed by a comma is split on commas.
 #   type   one of: port service account path host process
 #   value  compared without regard to upper/lower case.  A port may be written
 #          '80' (both protocols) or '80/tcp'.  Asking about plain '80' matches
@@ -913,7 +919,7 @@ cc_ask_keep() {
 # cc_is_protected TYPE VALUE   -> returns 0 if the pair is on the list.
 cc_is_protected() {
     [ -n "$CC_PROTECTED" ] && [ -r "$CC_PROTECTED" ] || return 1
-    awk -F',' -v want_type="$1" -v want_val="$2" '
+    awk -v want_type="$1" -v want_val="$2" '
         function clean(s) {    # this is awk, not shell: posix-ok
             gsub(/\r/, "", s); gsub(/^[ \t"]+|[ \t"]+$/, "", s)
             return tolower(s)
@@ -921,7 +927,8 @@ cc_is_protected() {
         BEGIN { want_type = clean(want_type); want_val = clean(want_val); hit = 1 }
         /^[ \t]*#/ || /^[ \t\r]*$/ { next }
         {
-            t = clean($1); v = clean($2)
+            if ($0 ~ /^[ \t"]*[^ \t,]+[ \t"]*,/) split($0, f, ","); else split($0, f)
+            t = clean(f[1]); v = clean(f[2])
             if (t == "type" || t != want_type) next
             if (v == want_val) { hit = 0; exit }
             if (t == "port") {

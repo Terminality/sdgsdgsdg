@@ -1,0 +1,18 @@
+# The protected list: things no script may close, stop, block or change.
+# Copy this file to <out folder>/protected.txt (or pass --protected / -Protected)
+# and fill it in from the team packet BEFORE any hardening script runs.
+#
+# One entry a line:  TYPE  VALUE  NOTE   (split by spaces; NOTE is free text)
+# TYPE   one of: port service account path host process
+# VALUE  not case-sensitive. A port is "80" (both protocols) or "80/tcp".
+#
+# Example entries - replace with your scored services:
+port      80/tcp           scored web site
+port      443/tcp          scored web site
+port      53               scored DNS (both tcp and udp)
+service   apache2          serves the scored web site
+service   W3SVC            IIS on the Windows web server
+account   svc-web          the scoring engine logs in to the site as this user
+account   bt-automation    team automation account used by fan-out (rule 16)
+path      /var/www/html    scored web content
+host      10.0.0.5         scoring engine address - never block it
