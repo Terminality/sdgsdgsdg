@@ -3,7 +3,7 @@
 # NAME:     Windows firewall
 # ROLE:     Windows / AD  (wave 2, first 15 minutes)
 # KIND:     changes - dry run unless -Apply; rolls itself back unless confirmed
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Turns the Windows firewall on for every profile with inbound blocked by
@@ -29,6 +29,18 @@
 #   connection with keep-firewall.ps1 - proof the change did not lock the team
 #   out.  -Undo puts the old firewall back at any time.
 #
+#   The look and the questions are the same as the Linux scripts (LX-25).
+#   QUESTIONS (Enter takes the default in capitals; a parameter answers each):
+#     which box                       -Box NAME (guessed: dc, web, ...; its
+#                                     scored ports stay open)
+#     addresses that may reach everything (team, scoring engine)
+#                                     -AdminFrom a,b (Enter = none)
+#     other ports to keep open        -Allow a,b (Enter = none)
+#     allow ping?                     -NoPing answers no (Enter = yes)
+#     turn off every other allow rule (strict)?
+#                                     -Strict answers yes (Enter = no)
+#     load the firewall now?          -Apply (Enter = no: a dry run)
+#
 # USAGE
 #   powershell -NoProfile -ExecutionPolicy Bypass -File WN-25-firewall.ps1 -Out C:\bt-out                    dry run: shows the plan
 #   powershell ... WN-25-firewall.ps1 -Out C:\bt-out -Apply -AdminFrom 10.0.0.5
@@ -52,13 +64,20 @@
 #   -Undo RUN          put back the firewall from before a run: "latest" or
 #                      a run folder.  Dry run unless -Apply
 #   -Remove            remove only the rules this script added (group "BT")
+#   -Box NAME          dc | web | ecomm | fileshare | db | other (asked, guessed):
+#                      web and ecomm keep 80 and 443, fileshare 139 and 445,
+#                      db 1433 open even if nothing listens on them yet
+#   -Batch             no questions: the defaults (a dry run unless -Apply)
+#   -NoColor           no colours
 #   Common options (-Apply, -Out, -Protected, -NoProtected, -Quiet,
 #   -DebugLog) come from the library.
 #
-# OUTPUTS  (under -Out, in WN-25_<host>_<UTC time>\)
-#   plan.csv              every allow rule it adds and why
-#   disabled.csv          every existing rule it turns off and why
-#   not-allowed.csv       listening ports it did NOT open and why
+# OUTPUTS  (under -Out, one numbered folder per run: firewall-1, -2, ...)
+#   output.txt            everything shown on screen, without colour
+#   plan.txt              every allow rule it adds and why
+#   disabled.txt          every existing rule it turns off and why
+#   not-allowed.txt       listening ports it did NOT open and why
+#   run.txt               id, host, time
 #   firewall-before.wfw   the whole firewall before the change (netsh export)
 #   keep-firewall.ps1     run it from a NEW connection to keep the change
 #   rollback.ps1          what the timer runs; you can run it too
@@ -68,7 +87,7 @@
 # WHAT IT CHANGES  (only with -Apply)
 #   Firewall profiles (on, block inbound, allow outbound, logging), adds
 #   rules in the group "BT", turns off the existing rules listed in
-#   disabled.csv, and creates the scheduled task "BT-WN25-rollback" until
+#   disabled.txt, and creates the scheduled task "BT-WN25-rollback" until
 #   the change is kept or rolled back.  Outbound traffic is not limited.
 #
 # DEPENDS ON
@@ -95,7 +114,7 @@
 #
 # DEBUGGING
 #   -DebugLog          every listener and rule and the decision about it
-#   plan.csv / disabled.csv / not-allowed.csv   the reasons, one per line
+#   plan.txt / disabled.txt / not-allowed.txt   the reasons, one per line
 #   schtasks /query /tn BT-WN25-rollback      is a rollback still waiting?
 # =============================================================================
 param(
@@ -111,7 +130,10 @@ param(
     [switch]$NoTimer,
     [string]$Undo = '',
     [switch]$Remove,
-    [switch]$Help
+    [switch]$Help,
+    [string]$Box = '',
+    [switch]$Batch,
+    [switch]$NoColor
 )
 
 if ($Help) {
@@ -119,6 +141,7 @@ if ($Help) {
     Write-Host '  -Allow 80/tcp,53/udp   -Exclude 8080/tcp   -AdminFrom 10.0.0.5,10.0.0.0/24'
     Write-Host '  -Strict  -NoPing  -NoLog  -ConfirmMinutes N  -NoTimer'
     Write-Host '  -Undo latest|RUNFOLDER   -Remove (only the rules this script added)'
+    Write-Host '  -Box dc|web|ecomm|fileshare|db|other (asked, guessed)  -Batch  -NoColor'
     Write-Host '  -Apply -Out DIR -Protected FILE -NoProtected -Quiet -DebugLog'
     exit 0
 }
@@ -167,6 +190,7 @@ function Valid-Addr([string]$a) {
 foreach ($a in $AdminFrom) { if (-not (Valid-Addr $a)) { Write-Host "-AdminFrom: not an address or network: '$a'"; exit 2 } }
 if ($ConfirmMinutes -lt 2 -or $ConfirmMinutes -gt 60) { Write-Host '-ConfirmMinutes must be 2..60'; exit 2 }
 if ($Undo -and $Remove) { Write-Host 'use -Undo or -Remove, not both'; exit 2 }
+if (-not (Test-CcBox $Box)) { Write-Host ('-Box must be one of: ' + ($script:CcBoxes -join ' ')); exit 2 }
 
 # ---- Start ------------------------------------------------------------------
 Initialize-Cc -Id 'WN-25' -Name 'Windows firewall' -Kind changes -Bound $PSBoundParameters
@@ -363,8 +387,15 @@ function Task-Delete {
 }
 # Pending-Run -> the run folder whose change is neither kept nor rolled back
 # (has rollback.ps1, no KEPT, no ROLLED_BACK), or ''.
+# Runs -> this host's WN-25 run folders, oldest first: the older
+# WN-25_<host>_<time> ones, then firewall-1, firewall-2, ... by number.
+function Runs {
+    $l = @(Get-ChildItem -LiteralPath $Cc.Out -Force -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer -and ($_.Name -like ('WN-25_' + $Cc.Host + '_*') -or $_.Name -match '^firewall-\d+$') })
+    return @($l | Sort-Object @{ Expression = { if ($_.Name -match '^firewall-(\d+)$') { 1000000 + [int]$matches[1] } else { 0 } } }, Name)
+}
 function Pending-Run {
-    foreach ($d in @(Get-ChildItem -LiteralPath $Cc.Out -Force -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer -and $_.Name -like ('WN-25_' + $Cc.Host + '_*') } | Sort-Object Name -Descending)) {
+    $all = @(Runs); [Array]::Reverse($all)
+    foreach ($d in $all) {
         $f = $d.FullName
         if ((Test-Path -LiteralPath (Join-Path $f 'rollback.ps1')) -and -not (Test-Path -LiteralPath (Join-Path $f 'KEPT')) -and -not (Test-Path -LiteralPath (Join-Path $f 'ROLLED_BACK')) -and -not (Test-Path -LiteralPath (Join-Path $f 'UNDONE'))) { return $f }
     }
@@ -395,7 +426,7 @@ function Task-Create([DateTime]$when, [string]$script) {
 # =============================================================================
 function Find-Run([string]$which) {
     if ($which -eq 'latest') {
-        $c = @(Get-ChildItem -LiteralPath $Cc.Out -Force | Where-Object { $_.PSIsContainer -and $_.Name -like ('WN-25_' + $Cc.Host + '_*') -and (Test-Path -LiteralPath (Join-Path $_.FullName 'firewall-before.wfw')) } | Sort-Object Name)
+        $c = @(Runs | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'firewall-before.wfw') })
         if ($c.Count -eq 0) { Stop-Cc -Code 2 -Message "no WN-25 run with a firewall export in $($Cc.Out)" }
         return $c[-1].FullName
     }
@@ -427,9 +458,31 @@ if ($Remove) {
 # =============================================================================
 # Plan
 # =============================================================================
-Use-CcRunDir
+Use-CcNumberedDir 'firewall'
 $Dir = $Cc.RunDir
 if ($Fake) { $IsDC = Test-Path -LiteralPath (FP 'is-dc') } else { $IsDC = (Get-CcOsInfo).IsDC }
+Write-CcShow -Color Cyan -Text ('WN-25 Windows firewall | host {0} | results in {1}' -f $Cc.Host, $Dir)
+Write-CcLegend -Marks @('Green=[+] allowed in', 'Yellow=[~] would change', 'Red=[x] turned off / failed', 'DarkGray=[-] not opened')
+
+# ---- 1/4 Questions (each answered in advance by its parameter) ---------------
+Write-CcHeader '1/4  questions (Enter = the default in capitals)'
+if (-not $Box) {
+    if ($Fake -and $IsDC -and -not $env:BT_TEST_BOX_GUESS) { $env:BT_TEST_BOX_GUESS = 'dc|a domain controller' }
+    $Box = Read-CcBox -Question 'Which box is this? (its scored ports stay open)'
+}
+$BoxPorts = @{ web = @('80/tcp', '443/tcp'); ecomm = @('80/tcp', '443/tcp'); fileshare = @('139/tcp', '445/tcp'); db = @('1433/tcp') }[$Box]
+if (-not $PSBoundParameters.ContainsKey('AdminFrom')) {
+    $af = Read-CcText -Question 'Addresses that may reach everything here (your team, the scoring engine)?' -Default '' -Hint 'addresses or networks separated by commas, like 10.0.0.5,10.0.0.0/24'
+    $AdminFrom = @($af -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    foreach ($a in $AdminFrom) { if (-not (Valid-Addr $a)) { Stop-Cc -Code 2 -Message "not an address or network: '$a' - nothing was changed" } }
+}
+if (-not $PSBoundParameters.ContainsKey('Allow')) {
+    $al = Read-CcText -Question 'Other ports to keep open, even if nothing listens on them yet?' -Default '' -Hint 'like 80/tcp,53/udp,5000-5100/tcp'
+    $Allow = @($al -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    foreach ($p in $Allow) { if ($null -eq (Parse-Port $p)) { Stop-Cc -Code 2 -Message "not a port: '$p' - nothing was changed" } }
+}
+if (-not $PSBoundParameters.ContainsKey('NoPing')) { $NoPing = -not (Read-CcAsk -Question 'Allow ping? (scoring often pings)' -Default Y -Yes 'yes, answer ping' -No 'no, block it') }
+if (-not $PSBoundParameters.ContainsKey('Strict')) { $Strict = Read-CcAsk -Question 'Also turn off every other inbound allow rule (strict)?' -Default N -Yes 'yes, only our rules let anything in' -No 'no, only the dangerous ones' }
 
 $ShellNames = @('cmd.exe', 'powershell.exe', 'pwsh.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe', 'rundll32.exe', 'regsvr32.exe', 'nc.exe', 'nc64.exe', 'ncat.exe', 'socat.exe', 'plink.exe', 'chisel.exe', 'ngrok.exe')
 $OddRe = '(\\users\\public\\|\\perflogs\\|\\windows\\temp\\|\\temp\\|\\tmp\\|\\appdata\\|\\downloads\\|\\programdata\\[^\\]+\.(exe|dll)|\$recycle\.bin|\\windows\\tasks\\)'
@@ -459,6 +512,7 @@ function Want([string]$spec, [string]$why) { $pp = Parse-Port $spec; $k = $pp.Po
 $exL = @($Exclude | ForEach-Object { $pp = Parse-Port $_; $pp.Ports + '/' + $pp.Proto.ToLower() })
 foreach ($p in $protPorts) { Want $p 'protected list (scored)'; if ($exL -contains $p) { Write-CcLog -Level WARN -Message "$p is both protected and in -Exclude: the protected list wins, it is opened" } }
 foreach ($p in $Allow) { Want $p '-Allow' }
+foreach ($p in @($BoxPorts)) { if ($p) { Want $p ('scored on a ' + $Box + ' box') } }
 if ($IsDC) {
     foreach ($p in @('53/tcp', '53/udp', '88/tcp', '88/udp', '135/tcp', '389/tcp', '389/udp', '445/tcp', '464/tcp', '464/udp', '636/tcp', '3268-3269/tcp', '123/udp')) { Want $p 'domain controller (Active Directory)' }
 }
@@ -538,6 +592,28 @@ if ($na.Count -gt 0) { $sum += ''; $sum += ('NOT opened, though something listen
 if ($stale.Count -gt 0) { $sum += ''; $sum += ('Rules from an earlier WN-25 run no longer wanted, removed ({0}):' -f $stale.Count); foreach ($s in $stale) { $sum += ('  ' + $s) } }
 if ($off.Count -gt 0) { $sum += ''; $sum += ('Existing rules turned off ({0}):' -f $off.Count); foreach ($o in $off) { $sum += ('  {0}: {1}' -f $o.R.name, $o.Why) } }
 if ($admins.Count -eq 0) { $sum += ''; $sum += 'WARNING: no admin or scoring addresses (protected list "host" entries or -AdminFrom). Only the ports above will reach this box.' }
+
+# ---- 2/4 The plan ----------------------------------------------------------------
+Write-CcHeader '2/4  plan'
+foreach ($a in $adds) {
+    $what = $a.Ports + '/' + (Lc $a.Proto); if ($a.Proto -eq 'ANY') { $what = 'everything from ' + $a.From } elseif ($a.Proto -eq 'ICMP') { $what = 'ping' }
+    Write-CcShow -Color Green -Text ('  [+] allow {0,-28} {1}' -f $what, $a.Why)
+}
+foreach ($n in @(Import-Csv -LiteralPath $notCsv)) { Write-CcShow -Color DarkGray -Text ('  [-] not opened {0,-12} {1,-18} {2}' -f $n.port, $n.process, $n.why) }
+foreach ($o in $off) { Write-CcShow -Color Red -Text ('  [x] turn off rule {0}: {1}' -f $o.R.name, $o.Why) }
+if ($admins.Count -eq 0) { Write-CcShow -Color Yellow -Text '  [*] no admin or scoring addresses: only the ports above will reach this box' }
+if (-not $Cc.Apply -and (Test-CcCanAsk)) {
+    $tm = $(if ($NoTimer) { 'with no rollback timer' } else { 'put back by itself in ' + $ConfirmMinutes + ' min unless you run keep-firewall.ps1 from a NEW connection' })
+    if (Read-CcAsk -Question ('Load this firewall now? (' + $tm + ')') -Default N -Yes 'yes, load it' -No 'no, change nothing (dry run)') {
+        if (-not $Cc.Protected -and -not $Cc.NoProtected) {
+            Write-CcShow -Color Yellow -Text '[*] No protected list (the scored ports and the scoring engine address).'
+            if (Read-CcAsk -Question 'Load the firewall without one?' -Default N -Yes 'yes, go on without a protected list' -No 'no, stop') { $Cc.NoProtected = $true; $Cc.Apply = $true }
+        } else { $Cc.Apply = $true }
+        if ($Cc.Apply -and -not $Fake) { Assert-CcAdmin }
+        if ($Cc.Apply) { $sum[0] = $sum[0].Replace('DRY RUN', 'APPLIED') }
+    }
+}
+Write-CcHeader $(if ($Cc.Apply) { '3/4  loading' } else { '3/4  dry run: nothing is changed' })
 
 # =============================================================================
 # Apply
@@ -655,6 +731,13 @@ Write-Host 'Kept: the rollback is cancelled. The new firewall stays.'
     $sum += ('Later, any time:  WN-25-firewall.ps1 -Out {0} -Undo {1} -Apply' -f $Cc.Out, (Split-Path -Leaf $Dir))
 }
 [IO.File]::WriteAllLines((Join-Path $Dir 'summary.txt'), [string[]]$sum)
-if (-not $Quiet -or $Cc.Apply) { foreach ($l in $sum) { Write-Host $l } }
-Write-Host ('All results: ' + $Dir)
+Write-CcHeader '4/4  summary'
+if (-not $Quiet -or $Cc.Apply) {
+    foreach ($l in $sum) {
+        $col = ''
+        if ($l -like 'WN-25 *') { $col = 'Cyan' } elseif ($l -like 'ROLLBACK*' -or $l -like 'SOME CHANGES FAILED*' -or $l -like 'WARNING*') { $col = 'Red' } elseif ($l -like 'Dry run*' -or $l -like 'No rollback*' -or $l -like 'NOT opened*') { $col = 'Yellow' }
+        if ($Cc.Quiet) { Write-Host $l } else { Write-CcShow -Color $col -Text $l }
+    }
+}
+Write-Host ('All results: ' + $Dir)   # always shown, even with -Quiet
 Complete-Cc
