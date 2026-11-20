@@ -4,7 +4,7 @@
 # NAME:     Linux firewall builder
 # ROLE:     Linux  (wave 2, first 15 minutes - run it LAST of the hardening)
 # KIND:     changes - dry run unless --apply
-# VERSION:  2.1.0
+# VERSION:  2.2.0
 #
 # PURPOSE
 #   Shows every open port on the box, says in plain words what each one is
@@ -60,6 +60,10 @@
 #                       service that is down): PORT, PORT/tcp, FIRST-LAST/tcp
 #   --ssh-from CIDR     allow SSH only from these sources (repeat).  Leave it
 #                       out if the scoring engine checks SSH
+#   --box NAME          splunk | webmail | ecomm | fileshare | gitea | web |
+#                       other (asked): that box's scored ports stay open
+#                       without asking.  fileshare: 139, 445, 137-138/udp,
+#                       2049, 111; gitea: 3000, 2222, 80, 443; web: 80, 443
 #   --strict            default every port to DROP except scored ports,
 #                       --keep/--allow, SSH and DHCP
 #   --restrict-out      also limit OUTGOING traffic to DNS, NTP, HTTP(S),
@@ -70,7 +74,9 @@
 #   --drop-ipv6         drop IPv6 (no question)
 #   --backend NAME      nft or iptables (default: nft when it works)
 #   --confirm-timeout N seconds before the automatic rollback (default 120;
-#                       0 = no timer, keep at once - only at the console)
+#                       0 = no timer: only at a terminal, after an extra yes;
+#                       refused with --batch, so nothing can lock you out
+#                       without a way back)
 #   --save              save the CURRENT bt rules for reboot and exit
 #   --remove            remove the bt rules and exit
 #                       (both are dry runs without --apply, like every change)
@@ -1655,7 +1661,8 @@ LX-25 Linux firewall builder - see every open port, keep or drop each one
   --restrict-out / --no-restrict-out   limit outgoing traffic, or leave it alone
   --keep-ipv6 / --drop-ipv6            allow or drop IPv6
   --backend nft|iptables
-  --confirm-timeout N  seconds before automatic rollback (default 120, 0 = none)
+  --confirm-timeout N  seconds before automatic rollback (default 120; 0 = none, terminal only)
+  --box NAME           splunk webmail ecomm fileshare gitea web other: its scored ports stay open
   --save               save the current bt rules for reboot, then exit (with --apply)
   --remove             remove the bt rules, then exit (with --apply)
   --no-color           no colours
@@ -1667,7 +1674,7 @@ USAGE
 
 NL='
 '
-ALLOW=""; ADMIN=""; SSHFROM=""; STRICT=0; RESTOUT=""; KEEP6=""; BACKEND=""; TIMEOUT=120; MODE=build
+BOX=""; ALLOW=""; ADMIN=""; SSHFROM=""; STRICT=0; RESTOUT=""; KEEP6=""; BACKEND=""; TIMEOUT=120; DEFTIMEOUT=120; MODE=build
 KEEPS=""; DROPS=""; COLOR=1
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
@@ -1678,6 +1685,7 @@ while [ $# -gt 0 ]; do
         --admin)           [ $# -ge 2 ] || cc_die 2 "--admin needs an address"; ADMIN="$ADMIN$2$NL"; shift 2 ;;
         --ssh-from)        [ $# -ge 2 ] || cc_die 2 "--ssh-from needs an address"; SSHFROM="$SSHFROM$2$NL"; shift 2 ;;
         --strict)          STRICT=1; shift ;;
+        --box)             [ $# -ge 2 ] || cc_die 2 "--box needs a name"; BOX=$2; shift 2 ;;
         --restrict-out)    RESTOUT=1; shift ;;
         --no-restrict-out) RESTOUT=0; shift ;;
         --keep-ipv6)       KEEP6=1; shift ;;
@@ -1692,6 +1700,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$TIMEOUT" in ''|*[!0-9]*) cc_die 2 "--confirm-timeout needs a whole number of seconds" ;; esac
+case "$BOX" in ''|splunk|webmail|ecomm|fileshare|gitea|web|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm, fileshare, gitea, web or other" ;; esac
 case "$BACKEND" in ''|nft|iptables) ;; *) cc_die 2 "--backend must be nft or iptables" ;; esac
 # valid_cidr ADDR -> IPv4 address or network (a.b.c.d or a.b.c.d/n), or IPv6.
 valid_cidr() {
@@ -1893,6 +1902,23 @@ if _sshd=$(cc_which sshd) && [ -z "${BT_SS:-}" ]; then SSHPORTS=$("$_sshd" -T 2>
 [ -n "$SSHPORTS" ] || SSHPORTS=$(awk -F'|' '$1 == "tcp" && $4 ~ /^sshd/ { print $3 }' "$W/listen" | sort -u | tr '\n' ' ' | sed 's/ *$//')
 [ -n "$SSHPORTS" ] || SSHPORTS=22
 
+# Which box: its scored ports are kept without asking (--box).
+if [ -z "$BOX" ]; then
+    if _cc_can_ask; then
+        cc_choose "Which box is this? (its scored ports stay open)" o "s=splunk" "w=webmail" "e=ecomm" "f=fileshare: Samba or NFS (139, 445, 2049, 111)" "g=gitea (3000, 2222, 80, 443)" "b=web: a ticket, help-desk or shop site (80, 443)" "o=other"
+        case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; f) BOX=fileshare ;; g) BOX=gitea ;; b) BOX=web ;; *) BOX=other ;; esac
+    else BOX=other; fi
+fi
+case "$BOX" in
+    splunk)    BOXPORTS="22/tcp,8000/tcp,8089/tcp,9997/tcp,123/udp" ;;
+    webmail)   BOXPORTS="22/tcp,25/tcp,80/tcp,443/tcp,143/tcp,993/tcp,587/tcp" ;;
+    ecomm|web) BOXPORTS="80/tcp,443/tcp" ;;
+    fileshare) BOXPORTS="139/tcp,445/tcp,137/udp,138/udp,2049,111" ;;
+    gitea)     BOXPORTS="3000/tcp,2222/tcp,80/tcp,443/tcp" ;;
+    *)         BOXPORTS="" ;;
+esac
+BOXSPEC=""; [ -n "$BOXPORTS" ] && BOXSPEC=$(parse_specs "$BOXPORTS")
+
 # Scored ports from the protected list: "80", "80/tcp", "53/udp".
 PROTSPEC=""
 if [ -n "$CC_PROTECTED" ]; then
@@ -1985,6 +2011,7 @@ while IFS='|' read -r _pr _p _bind _proc _pid; do
     if [ "$_bind" = local ]; then _def=local; _why="only this box can reach it (loopback), so the firewall leaves it alone"
     elif [ "$_pr/$_p" = udp/68 ]; then _def=auto-keep; _why="DHCP replies keep this box's address"
     elif in_spec "$PROTSPEC" "$_pr" "$_p"; then _def=auto-keep; _why="scored: it is on your protected list"
+    elif in_spec "$BOXSPEC" "$_pr" "$_p"; then _def=auto-keep; _why="scored on a $BOX box (--box)"
     elif [ "$_is_ssh" = 1 ] && [ -n "$SSHFROM" ]; then _def=auto-keep; _why="SSH, but only from the --ssh-from addresses"
     elif [ "$_is_ssh" = 1 ]; then _def=auto-keep; _why="SSH: how you (and the SSH scoring check) get in"; PI_NAME=SSH; [ "$_p" = 22 ] || PI_DESC="SSH on a non-standard port (from sshd's own config): remote login to this box."
     elif in_spec "$KEEPSPEC" "$_pr" "$_p"; then _def=auto-keep; _why="you said keep (--keep)"
@@ -2052,7 +2079,7 @@ if [ -z "$ALLOW" ] && _cc_can_ask; then
 fi
 # SSH from the team only: only offered when there are team addresses.
 if [ -z "$SSHFROM" ] && [ -n "$ADMIN" ] && _cc_can_ask; then
-    if cc_ask "Allow SSH ONLY from your team's addresses?" N "yes, only the team can SSH in (scoring SSH checks will FAIL)" "no, SSH stays open to everyone"; then SSHFROM=$ADMIN; fi
+    if cc_ask "Allow SSH ONLY from your team's addresses?" N "yes, ONLY these addresses can SSH in: a teammate from anywhere else is LOCKED OUT, and scoring SSH checks FAIL" "no, SSH stays open to everyone (recommended)"; then SSHFROM=$ADMIN; fi
 fi
 if [ -z "$RESTOUT" ]; then
     RESTOUT=0
@@ -2257,6 +2284,16 @@ KEEPF="$CC_RUN_DIR/.keep"
 CURRENT="$CC_OUT/lx25-live-$CC_HOST"
 KEEPSH="$CC_RUN_DIR/keep-firewall.sh"
 _state="dry run - nothing changed"
+# No rollback timer: only with a person at a terminal who says yes twice.
+# Nothing may cut the team off without a way back.
+if [ "$CC_APPLY" = 1 ] && [ "$TIMEOUT" -eq 0 ]; then
+    if [ "$CC_BATCH" = 1 ] || ! _cc_can_ask; then
+        cc_show "$C_YEL" "  [*] --confirm-timeout 0 (no rollback timer) needs a person at a terminal: using ${DEFTIMEOUT}s instead"
+        TIMEOUT=$DEFTIMEOUT
+    elif ! cc_ask "NO rollback timer: if these rules cut you off, nothing takes them out again. Load them with no timer?" N "yes, no timer (you are at the console)" "no, use a ${DEFTIMEOUT}s rollback timer"; then
+        TIMEOUT=$DEFTIMEOUT
+    fi
+fi
 if [ "$BACKEND" = nft ] && ! "$NFT" -c -f "$RULES" >"$W/check" 2>&1; then
     cat "$W/check" >>"$CC_LOG"
     cc_err "nft rejected the ruleset (nothing applied): $(head -n 1 "$W/check")"

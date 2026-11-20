@@ -1293,19 +1293,23 @@ Five sections, colour-coded (KEEP green, DROP red, CHECK yellow, local grey):
 
 | Question | Default | Flag that answers it |
 | --- | --- | --- |
+| Which box is this? (its scored ports stay open, not asked) `[s]plunk [w]ebmail [e]comm [f]ileshare [g]itea [b] web [o]ther` | other | `--box` |
 | Your team's addresses that must always get in | none | `--admin CIDR` (repeat) |
 | Keep PORT open? (one per listening port) | see below | `--keep 80,53/udp` / `--drop 3306` |
 | Other ports to open that are not listening now | none | `--allow 8089/tcp,9000-9010/tcp` |
-| SSH only from your team's addresses? (only asked if you gave some) | no | `--ssh-from CIDR` |
+| SSH only from your team's addresses? (only asked if you gave some; the answer says a teammate from anywhere else is locked out) | no | `--ssh-from CIDR` |
 | Also limit outgoing traffic? | no | `--restrict-out` / `--no-restrict-out` |
 | Block IPv6? | yes | `--drop-ipv6` / `--keep-ipv6` |
 | Load these rules now? (with `--apply`) | yes | `--batch` |
+| No rollback timer? (only with `--confirm-timeout 0`, only at a terminal) | no: the 120 s timer is used | none: with `--batch` it is never skipped |
+
+**It never cuts you off without a way back:** SSH is always kept (unless you limit it to listed addresses yourself), and the rules come out again by themselves unless you confirm from a NEW session. `--confirm-timeout 0` (no timer) needs a person at a terminal and a second yes; with `--batch` or no terminal the 120-second timer is used anyway.
 
 Default for each port:
 
 | Port is... | Default | Asked? |
 | --- | --- | --- |
-| SSH, DHCP client, on the protected list | keep | no |
+| SSH, DHCP client, on the protected list, scored on this `--box` (fileshare: 139, 445, 137-138/udp, 2049, 111; gitea: 3000, 2222, 80, 443; web: 80, 443) | keep | no |
 | Loopback only (127.0.0.1) | left alone: outsiders cannot reach it anyway | no |
 | A scored service in past competitions (22, 25, 53, 80, 143, 443, 993, 123/udp, 1433, 8000, 8089, 9997) | keep | yes |
 | A normal service, a database, FTP | keep, with a note on when to drop it | yes |
