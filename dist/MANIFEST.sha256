@@ -31,7 +31,7 @@ c568f8410259eecb1788112c0f9db7d7065c0bedc2bfde9d819f8428b304cbdd  linux/LX-44-ap
 cfe31a624c0fa5e56cdc0965ce67c04437d70fcd37655b0fe65ffacd9c395c65  linux/SV-26-banning.sh
 160e3ac196231ac68fc63aba724312f98929c37e6c63c29827be6851d0575049  network/NW-01-config-backup.sh
 22a9dfaaa1f397a6eafddad13efe56b04b0fd47c0c54aaa5a4e791625180e90a  network/NW-07-config-audit.sh
-d27817906e1ce50271cc0e868c34df1096d7cfd393819243ae47a034d1070f3f  network/NW-10-device-passwords.sh
+4f61b87097c0fdcff181701c8ba723c44b85c2b69692032f825786481e6f4a79  network/NW-10-device-passwords.sh
 b324ea7e33a76e0aada06a6078666db020e4b734f9c344418b9f92df418c7d18  network/NW-12-device-sessions.sh
 07df34250d1fde4c1803f5a7145015f3d8eccd6acd30199c24d91c5b661bc969  network/NW-20-firewall-ruleset.sh
 aaa47c54e4650be7da27271a161e0b18a45471784643f85f1b27d96d556ef8f5  network/NW-21-device-hardening.sh

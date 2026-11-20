@@ -226,7 +226,7 @@ if command -v script >/dev/null 2>&1; then
     printf 'Old-Pass-1\n' >"$D/owrt.pw"; rm -f "$D/owrt.mode"
     # address, type (Enter = OpenWRT), name, user, another (Enter = no),
     # current password, new passwords: t, typed twice, then: change now? Enter
-    printf 'owrt\n\n\n\n\nOld-Pass-1\nt\nTyped-Pass-12\nTyped-Pass-12\n\n' >"$T_TMP/ans"
+    printf 'owrt\n\n\n\n\nOld-Pass-1\n\nTyped-Pass-12\nTyped-Pass-12\n\n' >"$T_TMP/ans"
     mkdir -p "$T_TMP/empty"
     tt=$(cd "$T_TMP/empty" && unset BT_NET_PASS && BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --apply --no-protected" /dev/null <"$T_TMP/ans" 2>&1)
     t_has "$tt" "What is owrt?" "the device is asked for"
@@ -234,6 +234,8 @@ if command -v script >/dev/null 2>&1; then
     t_has "$tt" "New passwords?" "how to make the new ones is asked"
     t_has "$tt" "[t] type one for every device" "with every answer spelled out"
     t_has "$tt" "Change the password on 1 device(s) now?" "one yes before anything is sent"
+    t_has "$tt" "Answer [T/r]" "typing one shared password is the default"
+    t_has "$tt" "EVERYONE who logs in to these devices with the current password" "it says who needs the new password"
     t_eq "$(cat "$D/owrt.pw")" "Typed-Pass-12" "the typed password is set"
 fi
 t_done

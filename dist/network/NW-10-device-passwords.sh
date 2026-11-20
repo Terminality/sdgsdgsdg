@@ -1712,7 +1712,9 @@ else
 fi
 # The new passwords, when no flag said.
 if [ "$NEWENV" = 0 ] && [ "$RANDPW" = 0 ] && [ -z "$PWFILE" ] && _cc_can_ask; then
-    cc_choose "New passwords?" r "r=a new random one per device (only in passwords.txt, mode 600)" "t=type one for every device (hidden, typed twice)"
+    # Typed is the default: one password the whole team is told, so nobody
+    # is left out of a device by a password only this box knows.
+    cc_choose "New passwords?" t "t=type one for every device (hidden, typed twice) - tell the team" "r=a new random one per device (only in passwords.txt, mode 600 - give it to the team)"
     if [ "$CC_CHOICE" = t ]; then
         printf '%s[?]%s New password (hidden; letters, digits and _ . , @ %% + = -; 12 or more): ' "$C_CYN" "$C_OFF" >/dev/tty
         stty -echo </dev/tty 2>/dev/null; read -r BT_NET_NEWPASS </dev/tty; printf '\n%s[?]%s Again: ' "$C_CYN" "$C_OFF" >/dev/tty
@@ -1968,6 +1970,7 @@ header "2/3  each device"
 # --apply: one yes before anything is sent (--batch: yes).
 if [ "$CC_APPLY" = 1 ]; then
     _nd=$(awk -F'|' '$3 != "pfsense" && $3 != "opnsense"' "$W/devices" | grep -c .)
+    cc_show "$C_YEL" "  [*] After this, EVERYONE who logs in to these devices with the current password (teammates, a scoring engine; on OpenWRT also the web page) needs the new one: tell them first. Leave out a device a scoring engine logs in to (--protected)."
     if ! cc_ask "Change the password on $_nd device(s) now? (each new login is tested first; a failed one gets its old password back)" Y "yes, change them" "no, change nothing"; then
         cc_show "$C_GRY" "  Nothing changed."; rm -rf "$W"; cc_finish; exit 0
     fi
