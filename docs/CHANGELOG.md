@@ -2,6 +2,11 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-20: LX-44 on SELinux and Alpine boxes
+
+- **LX-44** (1.1.0): on Rocky and Fedora it says plainly that SELinux does this job and LX-44 has nothing to do, then shows SELinux now and after a reboot (`/etc/selinux/config`): enforcing is `[ok]`; permissive gets `setenforce 1` and where denials are logged; disabled gets the relabel-and-reboot steps; enforcing now but not in the config is flagged (a reboot would turn it off). Found by SELinux being on, `/etc/selinux/config`, or the OS, not only by `getenforce`. On Alpine it says AppArmor is off unless booted with it, instead of the "container" message. `apk add apparmor` when the parser is missing on Alpine. No questions or flags changed.
+- Tested: lx44 under dash, bash, ksh93, mksh, yash and busybox sh; gawk, mawk and busybox awk; the built copy.
+
 ## 2026-11-20: Linux scripts on Alpine, Rocky/Fedora and Ubuntu/Mint (library 0.4.0)
 
 Same options and questions as before; what differs per box is found by itself.
