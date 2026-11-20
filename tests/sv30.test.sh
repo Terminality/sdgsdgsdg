@@ -163,8 +163,15 @@ t_fail "access level: Roundcube installer moved" test -d "$R/var/lib/roundcube/i
 $SH "$C" --box mars >/dev/null 2>&1; t_eq "$?" 2 "a bad --box exits 2"
 rm -rf "$R"; mkdir -p "$R/etc"
 
+t_start "Alpine: Apache conf.d and /etc/phpNN"
+rm -rf "$R"; mkdir -p "$R/etc/apache2/conf.d" "$R/etc/php83"
+printf '[PHP]\nexpose_php = On\n' >"$R/etc/php83/php.ini"
+out=$($SH "$C" --root "$R" --out "$O" --no-color --batch --apply --no-protected --level service 2>&1)
+t_has "$(cat "$R/etc/apache2/conf.d/zz-bt-hardening.conf" 2>/dev/null)" "ServerTokens Prod" "the Apache drop-in goes in conf.d"
+t_has "$(cat "$R/etc/php83/php.ini")" "expose_php = Off" "PHP in /etc/php83 is found"
+
 t_start "nothing to do when no service is present"
-rm -f "$R/etc/vsftpd.conf" "$R/etc/ftpusers"
+rm -rf "$R"; mkdir -p "$R/etc"
 r=$(run --root "$R" --out "$O" --batch --no-color 2>&1)
 t_has "$r" "nothing to harden" "says there is nothing to harden"
 t_done
