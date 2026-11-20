@@ -2,6 +2,15 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-19: Device change watch (NW-30, new)
+
+- **NW-30** reads every firewall, router and switch every few minutes (the same read-only show commands as NW-01) and compares it with a trusted baseline: NW-01's copy, the earlier watch's, or read now (asked per device).
+- Each added, removed or moved line is shown once, with the section it is in, HIGH/MED, what it may mean and a suggested undo that is never sent. It stays open until it goes away (shown) or you say it was ours (`[n]ot ours` / `[o]urs` / `[e]ach one`; `--batch` never says ours).
+- Noise is dropped before comparing: time stamps, counters, Cisco size lines, FortiGate headers and `ENC` values, MikroTik line wraps, pfSense revision times. Secrets masked in all output. A changed SSH host key is HIGH.
+- A change you said was ours that someone later undoes is shown (HIGH). Kinds are judged from the line, else its section (a MikroTik `add` under `/user` is an account).
+- Output in `.txt` files; no CSV.
+- Tested: 82 checks with a stand-in device for every brand under seven shells and three awks, including the questions on a terminal, the loop and Ctrl-C; the Linux brand against this box's real nft (a table added, then gone). Not yet on real network devices.
+
 ## 2026-11-19: Firewall ruleset (NW-20, new)
 
 - **NW-20** puts named `bt-` rules at the top of the network firewall (Palo Alto, Cisco ASA, FortiGate, MikroTik, a Linux router; pfSense/OPNsense as web GUI steps; Cisco IOS/VyOS as a plan): team allowed, any address to each scored box on its scored ports only, ping in, everything else in blocked and logged. Optional, default no: outgoing limits (servers may only start connections to DNS, NTP and listed places) and threat prevention.

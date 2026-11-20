@@ -35,6 +35,7 @@ cfc468c3fcdf8477174f1e5d18bb538a176caefcfda1429cfc9b2a22b27dcdf3  network/NW-07-
 ad4dde828643e16db278b5bac51d4288a2776882609d018c4b18353869236d63  network/NW-12-device-sessions.sh
 69656475de1f0cb09d944ffd03b74ee8938a94d61c8b31f79d8976c4513d9baf  network/NW-20-firewall-ruleset.sh
 37b0a7320c344d57f3a1f9c13ce8e7b38d437819a46fb4472a38f3d8c3b2b67d  network/NW-21-device-hardening.sh
+73e2b6dd548b2ec6414cfe94538f75b6f68b636488a849f8d45df93b3e5f6b2f  network/NW-30-device-watch.sh
 bea9c1b1eb65f646bc999ee7b1b8a029a874c95c9b1feff87daae7695e4bb4f2  network/SH-03-network-scan.sh
 cee95feeed72cc6440ad689b9197eb6a1b51e5c845109531001229bd89065d4e  network/SH-04-scan-diff.sh
 e7ae49305df230a7f7fd5e54e052eab2f81c4a80702ee1cd0f7a9e594d18e1a1  windows-ad/SH-06-windows-enum.ps1

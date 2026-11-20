@@ -60,6 +60,7 @@ Contents:
 50. Device accounts and sessions, `roles/network/NW-12-device-sessions.sh` (NW-12)
 51. Network device hardening, `roles/network/NW-21-device-hardening.sh` (NW-21)
 52. Firewall ruleset, `roles/network/NW-20-firewall-ruleset.sh` (NW-20)
+53. Device change watch, `roles/network/NW-30-device-watch.sh` (NW-30)
 
 ---
 
@@ -3474,3 +3475,54 @@ In `firewall-ruleset-N/`: `output.txt`, `scored.txt`, `plan.txt` (every rule in 
 - **ASA outgoing limits** sit on the servers' interface, so they also stop the servers reaching other inside networks (the team stays open). List those with `--out-allow`.
 - **Outgoing limits** stop updates and anything the servers fetch (package mirrors, an outside database). List those with `--out-allow`, or leave the limits off.
 - **The countdown only expires by itself in shells with `read -t`** (bash, ksh, mksh, yash, busybox); dash waits for the answer.
+
+## 53. Device change watch, `roles/network/NW-30-device-watch.sh` (NW-30)
+
+Reads every firewall, router and switch every few minutes and shows what changed since the config you trust. Read-only: it sends the same show commands as NW-01 and never changes a device.
+
+### How to run it
+
+```sh
+BT_NET_PASS='pw' sh NW-30-device-watch.sh --hosts config/hosts.csv                     # asks, then watches until Ctrl-C
+BT_NET_PASS='pw' sh NW-30-device-watch.sh --device fw1,10.0.0.1,paloalto --every 60
+BT_NET_PASS='pw' sh NW-30-device-watch.sh --hosts config/hosts.csv --once --batch     # one round (cron)
+```
+
+Run NW-01 first, after your own hardening: its copy is the best baseline.
+
+### The questions
+
+| Question | Answers | Flag |
+| --- | --- | --- |
+| Watch these devices? | `[Y/n]` | `--batch` |
+| Each device: which config is the trusted one? | `[k]eep` the earlier watch's baseline / `[n]` NW-01's copy / `[f]resh`, read now (the first one there is the default) | `--baseline keep\|nw01\|fresh` |
+| How often? | every 1, 2 (default), 5 or 10 minutes | `--every SECONDS` |
+| For how long? | until Ctrl-C (default) / once / an hour / four hours | `--for MINUTES`, `--once`, `--rounds N` |
+| New changes on DEVICE: made by your team? | `[n]ot ours` (default) / `[o]urs` / `[e]ach one` | none: `--batch` leaves every change open |
+
+Only a person can say a change was ours. When every new line carries NW-20 or NW-21's names (`bt-`, `BT-IN`, `BT-MGMT`), Enter says ours.
+
+### What it shows for each change
+
+```
+[!] HIGH added: username evil privilege 15 secret 5 ****
+      account: an account added or changed: a back door?
+      undo (not sent): configure terminal / no username evil privilege 15 secret 5 ****
+```
+
+- **added, removed or moved.** Each line is compared with the section it sits in, so `shutdown` under one interface is not the same as under another. Moved means a rule changed places (above or below another).
+- **HIGH** for accounts, passwords and keys, SNMP, scheduled jobs, AAA, VPN and tunnels, NAT, management access, firewall rules, logging, routes, anything turned off. **MED** for the rest.
+- **The undo** is a suggestion for Cisco, VyOS, FortiGate, Linux iptables and MikroTik, and a place to look for Palo Alto and pfSense / OPNsense. It is never sent: check it, then type it.
+- A change is shown once. It stays on the open list until it goes away ("back as in the baseline") or you say it was ours. If a change you said was ours is later undone by someone, that is shown as HIGH.
+- A changed SSH host key is HIGH and that device is no longer read. A device that cannot be read is tried again next round.
+
+### What it produces
+
+In `device-watch-N/`: `output.txt`, `changes.txt` (every change: time, device, level, kind, line, section), `undo-hints.txt`, `rounds.txt`, `summary.txt` (what is still open). In `--out/net-watch/DEVICE/` (mode 700, kept between runs): the baseline, the lines you said were ours, the open list, and each changed read (mode 600).
+
+### What to watch for
+
+- **Not yet run on real devices.** Run `--once` first: a quiet device must show no change. A line that changes by itself on every read is noise; report the brand and the line.
+- **Secrets are shown as `****`.** The full read is in `net-watch/DEVICE/copies/`.
+- **FortiGate secrets (`ENC ...`)** read differently each time, so they are hidden before comparing: a changed secret is not seen (a new admin still is).
+- **Ctrl-C stops it cleanly**; the summary is still written.
