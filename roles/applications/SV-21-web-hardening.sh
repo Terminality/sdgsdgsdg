@@ -174,7 +174,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$LEVEL" in ''|safe|service|access) ;; *) cc_die 2 "--level must be safe, service or access" ;; esac
-case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
+cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 case "$ADMINS" in ''|keep|demote) ;; *) cc_die 2 "--admins must be keep or demote" ;; esac
 for _n in "$DAYS" "$TIMER"; do case "$_n" in ''|*[!0-9]*) cc_die 2 "--days and --timer need whole numbers" ;; esac; done
 for _a in $(printf '%s' "$ONLY,$SKIP" | tr ',' ' '); do
@@ -205,8 +205,7 @@ cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it
 
 # ---- Box and level ----------------------------------------------------------------------
 if [ -z "$BOX" ]; then
-    cc_choose "Which box is this?" e "s=splunk" "w=webmail" "e=ecomm" "o=other"
-    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
+    cc_box_ask e "${R:-}"
 fi
 case "$BOX" in
     ecomm)   cc_show "$C_GRY" "  ecomm: the store is scored (ecomm-http). It must still load after the changes: that is checked." ;;

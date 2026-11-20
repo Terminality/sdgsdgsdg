@@ -202,7 +202,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$TIMEOUT" in ''|*[!0-9]*) cc_die 2 "--confirm-timeout needs a whole number of seconds" ;; esac
-case "$BOX" in ''|splunk|webmail|ecomm|fileshare|gitea|web|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm, fileshare, gitea, web or other" ;; esac
+cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 case "$BACKEND" in ''|nft|iptables) ;; *) cc_die 2 "--backend must be nft or iptables" ;; esac
 # valid_cidr ADDR -> IPv4 address or network (a.b.c.d or a.b.c.d/n), or IPv6.
 valid_cidr() {
@@ -406,10 +406,7 @@ if _sshd=$(cc_which sshd) && [ -z "${BT_SS:-}" ]; then SSHPORTS=$("$_sshd" -T 2>
 
 # Which box: its scored ports are kept without asking (--box).
 if [ -z "$BOX" ]; then
-    if _cc_can_ask; then
-        cc_choose "Which box is this? (its scored ports stay open)" o "s=splunk" "w=webmail" "e=ecomm" "f=fileshare: Samba or NFS (139, 445, 2049, 111)" "g=gitea (3000, 2222, 80, 443)" "b=web: a ticket, help-desk or shop site (80, 443)" "o=other"
-        case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; f) BOX=fileshare ;; g) BOX=gitea ;; b) BOX=web ;; *) BOX=other ;; esac
-    else BOX=other; fi
+    cc_box_ask o "${R:-}" "Which box is this? (its scored ports stay open)"
 fi
 case "$BOX" in
     splunk)    BOXPORTS="22/tcp,8000/tcp,8089/tcp,9997/tcp,123/udp" ;;

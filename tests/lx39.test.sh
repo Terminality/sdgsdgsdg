@@ -183,7 +183,7 @@ t_file "$T_TMP/o2/safe-fixes-1/output.txt" "first run is safe-fixes-1"
 t_file "$T_TMP/o2/safe-fixes-1/plan.txt" "plan.txt written"
 t_has "$out" "==========[ PLAN (dry run: nothing is changed yet) ]==========" "plan section"
 t_has "$out" "[~] /etc/shadow  0644 -> 0640" "planned change shown live"
-t_has "$out" "[?] Which box is this? [s/w/e/O] o (default): other" "box question takes its default with no terminal"
+t_has "$out" "[?] Which box is this? [s/w/e/f/g/b/O] o (default): other" "box question takes its default with no terminal"
 t_hasnt "$out" "$(printf '\033')" "no colour codes when piped"
 t_has "$(cat "$T_TMP/o2/safe-fixes-1/output.txt")" "==========[ SUMMARY ]==========" "output.txt has everything"
 run --out "$T_TMP/o2" --root "$R" >/dev/null 2>&1

@@ -170,7 +170,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$LEVEL" in ''|safe|service|access) ;; *) cc_die 2 "--level must be safe, service or access" ;; esac
-case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
+cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 case "$TIMER" in ''|*[!0-9]*) cc_die 2 "--timer needs a whole number of seconds" ;; esac
 # Validate --only/--skip names.
 for _a in $(printf '%s' "$ONLY,$SKIP" | tr ',' ' '); do
@@ -180,11 +180,7 @@ done
 
 # Which box: says what is scored here, so nothing scored is turned off.
 if [ -z "$BOX" ]; then
-    BOX=other
-    if _cc_can_ask; then
-        cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "o=other"
-        case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; esac
-    fi
+    cc_box_ask o "${R:-}"
 fi
 # How far to go: asked when --level was not given (Enter = safe).
 if [ -z "$LEVEL" ]; then

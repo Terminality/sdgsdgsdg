@@ -115,7 +115,7 @@ while [ $# -gt 0 ]; do
         *)          cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-case "$BOX" in ''|splunk|webmail|ecomm|fileshare|gitea|web|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm, fileshare, gitea, web or other" ;; esac
+cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 case "$TIMER" in ''|*[!0-9]*) cc_die 2 "--timer needs a whole number" ;; esac
 
 cc_init "LX-26" "Remote access lockdown" changes
@@ -139,8 +139,7 @@ cc_show "$C_CYN" "LX-26 Remote access lockdown | host $CC_HOST | results in $CC_
 cc_show "" "Legend: ${C_RED}[!] HIGH${C_OFF}   ${C_YEL}[*] MED${C_OFF}   ${C_GRY}[-] LOW${C_OFF}   ${C_GRN}[ok]${C_OFF} fine   ${C_YEL}[~] would stop${C_OFF}   ${C_GRN}[+] stopped${C_OFF}   ${C_RED}[x] failed${C_OFF}"
 
 if [ -z "$BOX" ]; then
-    cc_choose "Which box is this? (its scored ports are never offered)" o "s=splunk" "w=webmail" "e=ecomm" "f=fileshare: Samba or NFS (139, 445, 2049, 111)" "g=gitea (3000, 2222, 80, 443)" "b=web: a ticket, help-desk or shop site (80, 443)" "o=other"
-    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; f) BOX=fileshare ;; g) BOX=gitea ;; b) BOX=web ;; *) BOX=other ;; esac
+    cc_box_ask o "${R:-}" "Which box is this? (its scored ports are never offered)"
 fi
 # Ports that are scored on this box: never offered.
 case "$BOX" in

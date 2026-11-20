@@ -188,7 +188,7 @@ while [ $# -gt 0 ]; do
         *)                 cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-case "$BOX" in ''|splunk|webmail|ecomm|fileshare|gitea|web|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm, fileshare, gitea, web or other" ;; esac
+cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 case "$GKEYS" in ''|keep|ask) ;; *) cc_die 2 "--gitea-keys must be keep or ask" ;; esac
 case "$ROOTMODE" in y|yes) ROOTMODE=yes ;; n|no) ROOTMODE=no ;; k|key-only) ROOTMODE=key-only ;; l|leave) ROOTMODE=leave ;; '') ;; *) cc_die 2 "--root-login must be yes, no, key-only or leave" ;; esac
 case "$TIMER" in ''|*[!0-9]*) cc_die 2 "--timer needs a whole number of seconds" ;; esac
@@ -404,8 +404,7 @@ yn() {
     [ "$CC_CHOICE" = y ]
 }
 if [ -z "$BOX" ]; then
-    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "f=fileshare: Samba or NFS" "g=gitea (git over SSH may be scored)" "b=web: a ticket, help-desk or shop site" "o=other"
-    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; f) BOX=fileshare ;; g) BOX=gitea ;; b) BOX=web ;; *) BOX=other ;; esac
+    cc_box_ask o "${R:-}"
 fi
 SCORED=0
 case "$BOX" in splunk|webmail)

@@ -457,6 +457,10 @@ Do this on the oldest and the newest Windows you expect to defend. It ends with 
 | Git shows every line of a `.sh` file as changed | Line endings were converted | `.gitattributes` forces LF for `.sh`. Run `git add --renormalize .` |
 | A script printed a password | A script passed a secret to `cc_log`, `cc_run` or a description | Treat that password as exposed and rotate it. Fix the script to use `cc_run_quiet` / `-Secret` |
 
+### Which box is this (`--box`)
+
+Every script with `--box` asks the same question and takes the same answers: splunk, webmail, ecomm, fileshare, gitea, web, other. It first guesses from the box's files and makes the guess the answer for Enter, for example "This box looks like: gitea (/etc/gitea/app.ini)". It knows Splunk, Roundcube or postfix plus dovecot (webmail), Gitea, a Samba share or NFS export (fileshare) and a web server (web). It only reads files. `--batch` takes the guess.
+
 ### Linux boxes that are not Ubuntu
 
 The Linux scripts are used the same way on every distribution: same options, same questions. What differs is found by itself.
@@ -869,7 +873,7 @@ sudo sh LX-31-backup.sh --box splunk --copy-to admin@10.0.0.5:/srv/backups/splun
 
 The questions:
 
-1. **Which box?** splunk / webmail / ecomm / other. It offers that box's important folders, for example Splunk's `/opt/splunk/etc` (config, users, apps) or the mail folders on webmail. For ecomm it reminds you to run SV-14 for the database.
+1. **Which box?** splunk / webmail / ecomm / fileshare / gitea / web / other (guessed for you). It offers that box's important folders, for example Splunk's `/opt/splunk/etc` (config, users, apps) or the mail folders on webmail. For ecomm it reminds you to run SV-14 for the database.
 2. **Web roots?** It lists the ones it found, with sizes.
 3. **Home-folder dotfiles and SSH keys?**
 4. **Hash system programs?** Takes 10 to 60 seconds, and later shows which programs were replaced.

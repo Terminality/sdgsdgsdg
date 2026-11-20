@@ -116,7 +116,7 @@ while [ $# -gt 0 ]; do
         *)          cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
+cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 for _n in "$QMAX" "$TIMER"; do case "$_n" in ''|*[!0-9]*) cc_die 2 "--queue and --timer need whole numbers" ;; esac; done
 
 cc_init "SV-31" "Mail tamper check" changes
@@ -144,8 +144,7 @@ if [ ! -f "$(P "$MAIN")" ] && [ ! -d "$(P /etc/dovecot)" ]; then
     cc_show "$C_GRY" "No Postfix or Dovecot here: nothing to check."; rm -rf "$W"; cc_finish; exit 0
 fi
 if [ -z "$BOX" ]; then
-    cc_choose "Which box is this?" w "s=splunk" "w=webmail" "e=ecomm" "o=other"
-    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
+    cc_box_ask w "${R:-}"
 fi
 [ "$BOX" = webmail ] && cc_show "$C_GRY" "  webmail: SMTP (25) and IMAP (143) are scored: they are checked after any change."
 
