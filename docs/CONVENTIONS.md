@@ -19,7 +19,7 @@ Rules for writing a script in this repository. The libraries enforce most of the
 5. Run `sh tests/run-tests.sh` until it passes.
 6. In `docs/catalog.csv` set `status` to `built` and fill in `path`. Run `sh tools/update-docs.sh`.
 7. Add a section to `docs/MANUAL.md`: how to use it, what to watch for, problems and fixes.
-8. Add a line to `docs/CHANGELOG.md`, and to the "Ready to use" table in `README.md`.
+8. Add a file `docs/changes/YYYY-MM-DD-short-name.md` (what changed, how it was tested; see `docs/changes/README.md`), and a line to the "Ready to use" table in `README.md`. Do not edit `docs/CHANGELOG.md`: one shared file made every two open changes conflict.
 
 ## The header
 
@@ -48,7 +48,7 @@ Every script starts with the header block from the template: ID, NAME, ROLE, KIN
 12. No internet and no package installs.
 13. Work alone and under fan-out. Never prompt unless `cc_confirm` / `Confirm-Cc` is used, which honors `BT_ASSUME_YES=1`.
 14. Block IPv6 unless a scored service or an inject needs it.
-15. The kit's hash is checked before each run (automatic once `MANIFEST.sha256` exists).
+15. The kit's hash is checked before each run (automatic: `tools/build.sh` writes `SCRIPT.sha256` next to each built script).
 16. The team automation account is on the protected list.
 17. Output is for people reading a terminal, not for web pages: plain words, sections, aligned tables. Unusual items on screen; everything in readable `.txt` tables; CSV only as a copy in `csv/` for other scripts.
 

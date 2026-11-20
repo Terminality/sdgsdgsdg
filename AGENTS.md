@@ -10,5 +10,6 @@ For people and AI tools.
 6. Don't change scripts you weren't asked to change.
 7. **Rebuild `dist/` after changing anything in `roles/` or `lib/`:** `sh tools/build.sh`. Never edit `dist/` by hand. The tests fail if it is out of date.
 8. Open a merge request. Don't push to `main`. Say what you tested.
-9. Keep docs short and plain.
-10. Make output human-readable: something a person can read in a terminal (sections, plain words, aligned tables), not formatted for web pages or spreadsheets.
+9. **Write what changed in a new file `docs/changes/YYYY-MM-DD-short-name.md`**, never in `docs/CHANGELOG.md` (one shared file made every two open changes conflict). See `docs/changes/README.md`.
+10. Keep docs short and plain.
+11. Make output human-readable: something a person can read in a terminal (sections, plain words, aligned tables), not formatted for web pages or spreadsheets.

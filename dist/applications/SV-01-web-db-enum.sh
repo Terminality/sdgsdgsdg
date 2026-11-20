@@ -109,12 +109,12 @@
 #   raw/*.txt        what the servers themselves reported
 # =============================================================================
 
-# >>> BT-LIB  (lib/lib.sh 0.5.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.6.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.5.0
+# VERSION:  0.6.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -185,7 +185,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.5.0"
+CC_LIB_VERSION="0.6.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -1570,22 +1570,24 @@ cc_net_ask_password() {
 # -----------------------------------------------------------------------------
 
 # cc_verify_self
-#   Rule 15: the kit's hash is checked before each run.  If a MANIFEST.sha256
-#   (written by tools/build.sh) sits in the script's folder or one of the two
-#   folders above it, or BT_MANIFEST points to one, the running script's
-#   hash must match its line there.  A mismatch stops the script: the file on
+#   Rule 15: the kit's hash is checked before each run.  tools/build.sh
+#   writes SCRIPT.sha256 next to each script; when it is there (or
+#   BT_MANIFEST names a hash list), the running script's hash must match it.
+#   An older kit's MANIFEST.sha256 in the script's folder or one of the two
+#   folders above is still read.  A mismatch stops the script: the file on
 #   this host is not the one you built, and a red team may have edited it.
 #   BT_SKIP_VERIFY=1 turns the check off (for development).
 cc_verify_self() {
     [ "${BT_SKIP_VERIFY:-0}" = 1 ] && { cc_debug "verify: skipped (BT_SKIP_VERIFY=1)"; return 0; }
     [ -f "$0" ] || { cc_debug "verify: script was not started from a file, nothing to hash"; return 0; }
     _cc_vs_man=${BT_MANIFEST:-}
+    [ -z "$_cc_vs_man" ] && [ -r "$0.sha256" ] && _cc_vs_man="$0.sha256"
     if [ -z "$_cc_vs_man" ]; then
         for _cc_vs_d in "$CC_KIT" "$CC_KIT/.." "$CC_KIT/../.."; do
             if [ -r "$_cc_vs_d/MANIFEST.sha256" ]; then _cc_vs_man="$_cc_vs_d/MANIFEST.sha256"; break; fi
         done
     fi
-    [ -n "$_cc_vs_man" ] && [ -r "$_cc_vs_man" ] || { cc_debug "verify: no MANIFEST.sha256 found (unbuilt copy), not checked"; return 0; }
+    [ -n "$_cc_vs_man" ] && [ -r "$_cc_vs_man" ] || { cc_debug "verify: no $(basename "$0").sha256 or MANIFEST.sha256 found (unbuilt copy), not checked"; return 0; }
     _cc_vs_name=$(basename "$0")
     _cc_vs_want=$(awk -v n="$_cc_vs_name" '{ f=$2; sub(/.*\//, "", f); if (f == n) { print $1; exit } }' "$_cc_vs_man")
     [ -n "$_cc_vs_want" ] || { cc_warn "verify: $_cc_vs_name is not listed in $_cc_vs_man"; return 0; }

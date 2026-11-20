@@ -243,6 +243,15 @@ $r = Run $v @('-Out', $out); T-Eq $r.Code 3 'edited script is refused with exit 
 T-Has $r.Text 'KIT CHECK FAILED' 'message explains why'
 $env:BT_SKIP_VERIFY = '1'
 $r = Run $v @('-Out', $out); T-Eq $r.Code 0 'BT_SKIP_VERIFY=1 bypasses the check'
+$env:BT_SKIP_VERIFY = $null
+# The hash file next to the script (what tools/build.sh writes now).
+$dist2 = Join-Path $tmp 'dist2'; New-Item -ItemType Directory -Path $dist2 -Force | Out-Null
+$w = Join-Path $dist2 'w.ps1'; Copy-Item -LiteralPath (Join-Path $sdir 'init.ps1') -Destination $w
+[IO.File]::WriteAllText(($w + '.sha256'), ((Get-CcSha256 -Path $w) + '  w.ps1' + "`n"))
+$r = Run $w @('-Out', $out); T-Eq $r.Code 0 'SCRIPT.sha256 next to it: an untouched script passes'
+Add-Content -LiteralPath $w -Value '# tampered'
+$r = Run $w @('-Out', $out); T-Eq $r.Code 3 'and an edited one is refused'
+$env:BT_SKIP_VERIFY = '1'
 
 T-Start 'the PowerShell template runs as a dry run and writes its files'
 $r = Run (Join-Path (Join-Path $root 'templates') 'script-template.ps1') @('-Out', $out, '-Example', 'hello')

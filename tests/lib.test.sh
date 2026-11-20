@@ -310,5 +310,12 @@ echo "# tampered" >>"$T_TMP/dist/v.sh"
 r=$(run "$T_TMP/dist/v.sh" --out "$OUT" 2>&1); t_eq "$?" 3 "edited script is refused with exit 3"
 t_has "$r" "KIT CHECK FAILED" "message explains why"
 (BT_SKIP_VERIFY=1; export BT_SKIP_VERIFY; run "$T_TMP/dist/v.sh" --out "$OUT" >/dev/null 2>&1); t_eq "$?" 0 "BT_SKIP_VERIFY=1 bypasses the check"
+# The hash file next to the script (what tools/build.sh writes now).
+mkdir -p "$T_TMP/dist2"; cp "$S/init.sh" "$T_TMP/dist2/w.sh"
+( cd "$T_TMP/dist2" && sha256sum w.sh >w.sh.sha256 )
+run "$T_TMP/dist2/w.sh" --out "$OUT" >/dev/null 2>&1; t_eq "$?" 0 "SCRIPT.sha256 next to it: an untouched script passes"
+echo "# tampered" >>"$T_TMP/dist2/w.sh"
+r=$(run "$T_TMP/dist2/w.sh" --out "$OUT" 2>&1); t_eq "$?" 3 "and an edited one is refused"
+t_has "$r" "w.sh.sha256" "naming the hash file"
 
 t_done
