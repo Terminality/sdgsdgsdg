@@ -1,5 +1,7 @@
 # Changelog
 
+**New changes are not written here any more.** Each change is one file in [`changes/`](changes/), named `YYYY-MM-DD-short-name.md`, so two changes made at the same time never edit the same lines (this file made every second pull request conflict). List them newest first with `ls -r docs/changes`. This file keeps the history up to 2026-11-20.
+
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
 ## 2026-11-20: NW-21 hardens OpenWRT routers; questions

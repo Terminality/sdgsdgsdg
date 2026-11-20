@@ -12,7 +12,7 @@ Use the files in **[`dist/`](dist/)**: each one is a single standalone file with
 sudo sh LX-39-safe-fixes.sh
 ```
 
-Copy `dist/MANIFEST.sha256` too if you want each script to check it wasn't changed. The scripts in `roles/` are the source and still need `lib/` next to them.
+Copy the script's `.sha256` file too (it sits next to it in `dist/`) if you want the script to check it wasn't changed. The scripts in `roles/` are the source and still need `lib/` next to them.
 
 ## Ready to use
 
@@ -209,7 +209,7 @@ The Windows library passes its tests on Windows PowerShell 5.1. It is written to
 - [`docs/MANUAL.md`](docs/MANUAL.md): how to use what is built, what to watch for, problems and fixes
 - [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md): rules for writing a script
 - [`docs/STATUS.md`](docs/STATUS.md): what is built
-- [`docs/CHANGELOG.md`](docs/CHANGELOG.md): what changed, and when
+- [`docs/changes/`](docs/changes/): what changed, and when (one file per change; [`docs/CHANGELOG.md`](docs/CHANGELOG.md) has the older history)
 - [`docs/PLAN.md`](docs/PLAN.md): the plan, tiers and lockout rule
 - [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md): scored services
 - [`AGENTS.md`](AGENTS.md): rules for changing the repo

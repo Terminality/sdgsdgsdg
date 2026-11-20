@@ -256,7 +256,7 @@ cc_finish
 | `cc_flag_report [MAX]` | Print HIGH then MED flags, at most MAX lines (default 30), then counts. LOW flags are counted, never listed |
 | `CC_AWK_CSV` | An awk `csvsplit()` function for reading the kit's CSV files correctly |
 | `cc_shquote STR` / `cc_abspath PATH` | Quote for a shell; make a path absolute |
-| `cc_verify_self` | Check the running script against `MANIFEST.sha256` (called by `cc_init`) |
+| `cc_verify_self` | Check the running script against `SCRIPT.sha256` next to it (or an older `MANIFEST.sha256`; called by `cc_init`) |
 | `cc_finish [CODE]` | Print the summary and exit |
 
 ### What to watch for
@@ -268,7 +268,7 @@ cc_finish
 - **`cc_genpass` prints the password and nothing else.** Capture it with `p=$(cc_genpass)` and send it only to the operator's credential file.
 - **No `local`.** A new function's temporary variables must have their own prefix or they will overwrite another function's.
 - **No `set -e`.** A failed step is counted and the script continues. Check the return value of `cc_run` if a later step depends on it.
-- **The kit hash check does nothing yet.** It activates when a `MANIFEST.sha256` exists beside the scripts, which the build step (LB-03) will create.
+- **The kit hash check** works when the script's `.sha256` file (written by `tools/build.sh`) is next to it; a copy without it is not checked.
 
 ### Problems and fixes
 
@@ -350,7 +350,7 @@ Library state is in one hashtable, `$Cc`: `$Cc.Apply`, `$Cc.Out`, `$Cc.Log`, `$C
 | `Add-CcFlag -Severity -Section -Item -Detail` | Record something unusual (`HIGH`, `MED`, `LOW`) |
 | `Show-CcFlagReport [-Max]` / `Get-CcFlagReport` | Print, or return, the HIGH then MED flags and the counts |
 | `ConvertTo-CcQuoted` / `Resolve-CcPath` | Quote for PowerShell; make a path absolute |
-| `Test-CcSelf` | Check the running script against `MANIFEST.sha256` (called by `Initialize-Cc`) |
+| `Test-CcSelf` | Check the running script against `SCRIPT.sha256` next to it (or an older `MANIFEST.sha256`; called by `Initialize-Cc`) |
 | `Complete-Cc [-ExitCode]` | Print the summary and exit |
 
 ### What to watch for

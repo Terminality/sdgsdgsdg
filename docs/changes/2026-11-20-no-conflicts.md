@@ -1,0 +1,7 @@
+# 2026-11-20: Changes no longer conflict with each other (library 0.6.0)
+
+- **Changelog:** each change is now a file in `docs/changes/` (this is the first). `docs/CHANGELOG.md` keeps the history up to today and is not edited by new changes: every change used to add its entry at the same place in it, so any two open changes conflicted.
+- **Kit hashes:** `tools/build.sh` writes `SCRIPT.sha256` next to each script in `dist/` instead of one `dist/MANIFEST.sha256` for all of them: two changes to different scripts no longer touch the same file. Copy a script's `.sha256` with it and it checks itself as before.
+- **Library 0.6.0** (`lib/lib.sh`, `lib/lib.ps1`): `cc_verify_self` and `Test-CcSelf` read `SCRIPT.sha256` next to the script first; an older kit's `MANIFEST.sha256` (in the script's folder or up to two above) and `BT_MANIFEST` still work. Every script in `dist/` is rebuilt once because the library changed.
+- Docs: `AGENTS.md`, `docs/CONVENTIONS.md`, `README.md`, `tools/README.md`, `docs/MANUAL.md` say where a change is written and where the hash is.
+- Tested: `lib` and `build` tests under dash, bash, ksh93, mksh, yash and busybox sh, with gawk, mawk and busybox awk (a script with its `.sha256` passes, an edited one is refused; the old `MANIFEST.sha256` still works; no shared manifest is written). The PowerShell check (`tests/lib.Tests.ps1`) has the same new test but was not run: no PowerShell on this machine.
