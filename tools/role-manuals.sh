@@ -1,7 +1,8 @@
 #!/bin/sh
 # =============================================================================
 # tools/role-manuals.sh - build the per-role manuals:
-#     docs/manual-linux.md, docs/manual-network.md, docs/manual-applications.md
+#     docs/manual-linux.md, docs/manual-network.md, docs/manual-applications.md,
+#     docs/manual-windows.md
 #
 # WHY   Each role gets one manual to read on the day: the playbook (first 15
 #       minutes, what to run after, what to do when something happens) and a
@@ -22,6 +23,7 @@ order() {
         linux)        echo "SH-05 LX-31 LX-20 LX-22 LX-25 LX-21 LX-26 LX-42 LX-45 LX-39 SV-26 LX-40 LX-41 LX-43 LX-44 LX-46" ;;
         network)      echo "SH-03 NW-01 NW-07 NW-12 NW-10 NW-21 NW-20 NW-30 SH-04" ;;
         applications) echo "SV-01 SV-14 SV-15 SV-50 SV-45 SV-46 SV-21 SV-20 SV-42 SV-30 SV-16 SV-32 SV-31 SV-40 SV-41 SV-44" ;;
+        windows)      echo "SH-06 WN-35 WN-20 WN-25 WN-23 WN-43 WN-42" ;;
     esac
 }
 
@@ -40,7 +42,7 @@ section() {
 }
 
 RC=0
-for _r in linux network applications; do
+for _r in linux network applications windows; do
     _out="docs/manual-$_r.md"; _tmp="$_out.new"
     {
         printf '<!-- Built by tools/role-manuals.sh from docs/playbooks/%s.md and docs/MANUAL.md. Edit those, then run it. -->\n\n' "$_r"

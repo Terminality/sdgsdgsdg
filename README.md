@@ -2,7 +2,7 @@
 
 Blue-team admin and hardening scripts, written with Claude.
 
-**On the day, read your role's manual:** [Linux](docs/manual-linux.md), [Network](docs/manual-network.md), [Applications](docs/manual-applications.md). Each one has the first 15 minutes, what to run after, and a deep dive for every script.
+**On the day, read your role's manual:** [Linux](docs/manual-linux.md), [Network](docs/manual-network.md), [Applications](docs/manual-applications.md), [Windows](docs/manual-windows.md). Each one has the first 15 minutes, what to run after, and a deep dive for every script.
 
 **Start here:** [`docs/PLAN.md`](docs/PLAN.md) (the plan), [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) (what is scored), [`AGENTS.md`](AGENTS.md) (rules for changing the repo). Core scripts are for Linux, Windows / AD and Network only; other roles write their own.
 
