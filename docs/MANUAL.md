@@ -2043,9 +2043,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:
 | --- | --- |
 | `-Only a,b` / `-Skip a,b` | Make only these fixes / all safe fixes but these |
 | `-Include a,b` | Also make these "might affect a service" fixes |
-| `-Undo latest\|RUNFOLDER` | Replay that run's `undo-plan.csv` backwards. Dry run unless `-Apply`. A run can be undone once |
+| `-Undo latest\|RUNFOLDER` | Replay that run's `undo-plan.txt` backwards. Dry run unless `-Apply`. A run can be undone once |
 | `-List` | List the fixes |
 
+
+### The questions
+
+It looks like LX-39: the questions, each fix as it is made (`[+]` fixed, `[~]` would fix, `[x]` failed, `[-]` left: check it), then the summary. Already-fine checks are only counted.
+
+| Question | Answers | Parameter |
+| --- | --- | --- |
+| Which safe fixes? | `[A]`ll 20 / `[c]`hoose each (then one yes/no question per fix) | `-Only`, `-Skip` |
+| Each "might affect a service" fix (firewall, latfp, ntlm, lsappl, rdpnla, spooler, remotereg, smbsigning) | `[y]` / `[N]` | `-Include` |
+| Apply these fixes now? | `[y]` / `[N]` | `-Apply` |
+| Keep these changes? (the revert timer: undone by themselves unless kept from a NEW session) | `[y]` / `[N]` | `-Batch` keeps; `-NoTimer` for no timer |
+
+`-Batch` takes every default: a dry run unless `-Apply` is given. `-Undo latest` still puts a whole run back at any time.
 ### The fixes
 
 | Fix | What it does | Undo |

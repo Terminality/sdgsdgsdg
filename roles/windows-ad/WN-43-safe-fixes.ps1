@@ -3,7 +3,7 @@
 # NAME:     Windows safe fixes
 # ROLE:     Windows / AD  (wave 2, first 15 minutes)
 # KIND:     changes - dry run unless -Apply; -Undo puts a run back
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Fixes the settings red teams weaken or hide in, choosing only fixes that
@@ -48,6 +48,13 @@
 #     remotereg    Remote Registry stopped and disabled
 #     smbsigning   SMB signing required by the server (very old clients fail)
 #
+#   The look and the questions are the same as the Linux scripts (LX-39).
+#   QUESTIONS (Enter takes the default in capitals; a parameter answers each):
+#     which safe fixes?               [A]ll / [c]hoose each (-Only, -Skip)
+#     each "might affect a service" fix: [y/N]   (-Include)
+#     apply these changes?            -Apply (Enter = no: a dry run)
+#     keep them? (the revert timer)   -Batch keeps them
+#
 # USAGE
 #   powershell -NoProfile -ExecutionPolicy Bypass -File WN-43-safe-fixes.ps1 -Out C:\bt-out                dry run
 #   powershell ... WN-43-safe-fixes.ps1 -Out C:\bt-out -Apply                                            make the safe fixes
@@ -61,15 +68,22 @@
 #   -Skip a,b         make the safe fixes except these
 #   -Include a,b      also make these "might affect a service" fixes
 #   -Undo RUN         put back what a run changed: RUN is "latest" or a run
-#                     folder (WN-43_<host>_<time>).  Dry run unless -Apply
+#                     folder (safe-fixes-N, or an older WN-43_<host>_<time>).
+#                     Dry run unless -Apply
 #   -List             list the fixes and exit
+#   -Timer SECONDS    revert countdown (default 120); -NoTimer
+#   -Batch            no questions: the defaults (a dry run unless -Apply)
+#   -NoColor          no colours
 #   Common options (-Apply, -Out, -Protected, -NoProtected, -Quiet, -DebugLog)
 #   come from the library.  Protected services, ports and accounts are never
 #   changed.
 #
-# OUTPUTS  (under -Out, in WN-43_<host>_<UTC time>\)
-#   fixes.csv         fix,item,before,after,result
-#   undo-plan.csv     every change in order, for -Undo (machine-readable)
+# OUTPUTS  (under -Out, one numbered folder per run: safe-fixes-1, -2, ...)
+#   output.txt        everything shown on screen, without colour
+#   fixes.txt         fix, item, before, after, result
+#   undo-plan.txt     every change in order, for -Undo (read by the script)
+#   undo.txt, revert.ps1   the revert timer's undo of this run
+#   run.txt           id, host, time
 #   backup\           registry keys, hosts file, WMI definitions as they were
 #   summary.txt       what was fixed, already fine, skipped, failed
 #   The host's undo log (undo-<host>.log) also gets a plain command per change.
@@ -78,7 +92,7 @@
 #   The registry values, services, account flag, audit policy, Defender
 #   settings, port forwards, WMI subscriptions, hosts lines and log size
 #   listed above - nothing else.  Every change is recorded first in
-#   undo-plan.csv; -Undo replays it backwards.  Two fixes are not undone on
+#   undo-plan.txt; -Undo replays it backwards.  Two fixes are not undone on
 #   purpose: a repaired sticky-keys program (undo would put the backdoor
 #   back) and nothing else.  Some changes take effect after a reboot (UAC,
 #   LSA protection, SMBv1 on Windows before 8 / 2012); the summary says which.
@@ -105,8 +119,8 @@
 #
 # DEBUGGING
 #   -DebugLog          shows every check and its value
-#   fixes.csv          what each fix found and did
-#   undo-plan.csv      exactly what -Undo will do
+#   fixes.txt          what each fix found and did
+#   undo-plan.txt      exactly what -Undo will do
 # =============================================================================
 param(
     [switch]$Apply, [string]$Out, [string]$Protected, [switch]$NoProtected,
@@ -116,17 +130,33 @@ param(
     [string]$Include = '',
     [string]$Undo = '',
     [switch]$List,
-    [switch]$Help
+    [switch]$Help,
+    [int]$Timer = 120,
+    [switch]$NoTimer,
+    [switch]$Batch,
+    [switch]$NoColor
 )
 
 $SafeFixes = @('wdigest', 'smb1', 'zerologon', 'uac', 'guest', 'debuggers', 'stickykeys', 'portproxy', 'defender', 'eventlog', 'auditing', 'anonymous', 'lmhash', 'installer', 'winlogon', 'appinit', 'netsh', 'wmi', 'hosts', 'llmnr')
 $ServiceFixes = @('firewall', 'latfp', 'ntlm', 'lsappl', 'rdpnla', 'spooler', 'remotereg', 'smbsigning')
+$Desc = @{
+    wdigest = 'passwords no longer kept readable in memory'; smb1 = 'SMBv1 server off'; zerologon = 'domain controller: Netlogon secure channel enforced'
+    uac = 'UAC back on'; guest = 'Guest account disabled'; debuggers = '"debugger" backdoors removed'; stickykeys = 'sticky keys and the other logon-screen programs repaired'
+    portproxy = 'port forwards removed'; defender = 'Defender real-time protection on, exclusions removed'; eventlog = 'Event Log service running'
+    auditing = 'logons, accounts, processes and PowerShell audited'; anonymous = 'no anonymous account listing or null sessions'; lmhash = 'LM hashes no longer stored'
+    installer = 'AlwaysInstallElevated off'; winlogon = 'Userinit and Shell back; stored logon password removed'; appinit = 'AppInit DLLs off'
+    netsh = 'unknown netsh helper DLLs removed'; wmi = 'WMI subscriptions that run commands removed'; hosts = 'hosts lines that redirect Microsoft or antivirus removed'; llmnr = 'LLMNR off'
+    firewall = 'every firewall profile on (with the rules there are now)'; latfp = 'remote admin with local accounts off (LocalAccountTokenFilterPolicy)'
+    ntlm = 'NTLMv2 only (very old clients fail)'; lsappl = 'LSA protection (after a reboot; some plug-ins stop loading)'; rdpnla = 'RDP requires Network Level Authentication'
+    spooler = 'Print Spooler off on a domain controller'; remotereg = 'Remote Registry off'; smbsigning = 'SMB signing required (very old clients fail)'
+}
 
 if ($Help -or $List) {
     Write-Host 'WN-43 Windows safe fixes - dry run unless -Apply; -Undo RUN puts a run back'
     Write-Host ('  safe (made by default):      ' + ($SafeFixes -join ', '))
     Write-Host ('  only with -Include (service): ' + ($ServiceFixes -join ', '))
     Write-Host '  -Only a,b  -Skip a,b  -Include a,b  -Undo latest|RUNFOLDER  -List'
+    Write-Host '  -Timer SECONDS  -NoTimer  -Batch  -NoColor'
     Write-Host '  -Apply -Out DIR -Protected FILE -NoProtected -Quiet -DebugLog'
     exit 0
 }
@@ -552,6 +582,11 @@ $script:Reboot = @()
 # a fix that did not stick - is right in the file too.)
 function Res([string]$fix, [string]$item, [string]$before, [string]$after, [string]$result) {
     $result = ($result -replace '[\r\n]+', ' ').Trim()
+    # Shown as it happens (already-fine checks only in fixes.txt and the count).
+    if ($result -eq 'fixed') { Write-CcShow -Color Green -Text ('  [+] {0,-11} {1}: {2} -> {3}' -f $fix, $item, $before, $after) }
+    elseif ($result -eq 'would fix') { Write-CcShow -Color Yellow -Text ('  [~] {0,-11} {1}: {2} -> {3}' -f $fix, $item, $before, $after) }
+    elseif ($result -like 'FAILED*') { Write-CcShow -Color Red -Text ('  [x] {0,-11} {1}: {2}' -f $fix, $item, $result) }
+    elseif ($result -ne 'already fine') { Write-CcShow -Color DarkGray -Text ('  [-] {0,-11} {1}: {2}' -f $fix, $item, $result) }
     $script:Rows += New-Object PSObject -Property @{ Fix = $fix; Item = $item; Before = $before; After = $after; Result = $result }
 }
 
@@ -939,18 +974,25 @@ function F-smbsigning { RegFix smbsigning "$CCS\Services\LanmanServer\Parameters
 # =============================================================================
 # -Undo: replay a run's undo-plan.csv backwards
 # =============================================================================
+# PlanOf RUNDIR -> its undo plan (undo-plan.txt; an older run: undo-plan.csv), or ''.
+function PlanOf([string]$d) {
+    foreach ($n in @('undo-plan.txt', 'undo-plan.csv')) { $f = Join-Path $d $n; if (Test-Path -LiteralPath $f) { return $f } }
+    return ''
+}
 function Invoke-Undo {
     $dir = $Undo
     if ($Undo -eq 'latest') {
-        $cands = @(Get-ChildItem -LiteralPath $Cc.Out -Force | Where-Object { $_.PSIsContainer -and $_.Name -like ('WN-43_' + $Cc.Host + '_*') -and (Test-Path -LiteralPath (Join-Path $_.FullName 'undo-plan.csv')) -and -not (Test-Path -LiteralPath (Join-Path $_.FullName 'UNDONE')) } | Sort-Object Name)
+        # Older WN-43_<host>_<time> runs first, then safe-fixes-1, -2, ... by number.
+        $cands = @(Get-ChildItem -LiteralPath $Cc.Out -Force | Where-Object { $_.PSIsContainer -and ($_.Name -like ('WN-43_' + $Cc.Host + '_*') -or $_.Name -match '^safe-fixes-\d+$') -and (PlanOf $_.FullName) -and -not (Test-Path -LiteralPath (Join-Path $_.FullName 'UNDONE')) } |
+            Sort-Object @{ Expression = { if ($_.Name -match '^safe-fixes-(\d+)$') { 1000000 + [int]$matches[1] } else { 0 } } }, Name)
         if ($cands.Count -eq 0) { Stop-Cc -Code 2 -Message "no WN-43 run with an undo plan (and not already undone) in $($Cc.Out)" }
         $dir = $cands[-1].FullName
     } elseif (-not (Test-Path -LiteralPath $dir)) {
         $try = Join-Path $Cc.Out $Undo
         if (Test-Path -LiteralPath $try) { $dir = $try } else { Stop-Cc -Code 2 -Message "-Undo: no run folder $Undo" }
     }
-    $planF = Join-Path $dir 'undo-plan.csv'
-    if (-not (Test-Path -LiteralPath $planF)) { Stop-Cc -Code 2 -Message "-Undo: $dir has no undo-plan.csv (was it a dry run?)" }
+    $planF = PlanOf $dir
+    if (-not $planF) { Stop-Cc -Code 2 -Message "-Undo: $dir has no undo plan (was it a dry run?)" }
     if (Test-Path -LiteralPath (Join-Path $dir 'UNDONE')) { Stop-Cc -Code 2 -Message "-Undo: $dir was already undone" }
     $steps = @(Import-Csv -LiteralPath $planF)
     Write-CcLog -Level INFO -Message ('undo: {0} steps from {1}' -f $steps.Count, $dir)
@@ -988,15 +1030,40 @@ if ($Undo) { Invoke-Undo }
 # =============================================================================
 # Run the fixes
 # =============================================================================
-Use-CcRunDir
+Use-CcNumberedDir 'safe-fixes'
+Write-CcShow -Color Cyan -Text ('WN-43 Windows safe fixes | host {0} | results in {1}' -f $Cc.Host, $Cc.RunDir)
+Write-CcLegend -Marks @('Green=[+] fixed', 'Yellow=[~] would fix', 'Red=[x] failed', 'DarkGray=[-] left (check it)')
+
+# ---- 1/3 Questions (each answered in advance by its parameter) -----------------
+Write-CcHeader '1/3  questions (Enter = the default in capitals)'
+if ($onlyL.Count -eq 0 -and $skipL.Count -eq 0) {
+    $wc = Read-CcChoice -Question ('Which safe fixes? (they cannot break a scored service)') -Default a -Options @(('a=all ' + $SafeFixes.Count + ' of them'), 'c=choose each one')
+    if ($wc -eq 'c') { $Run = @($SafeFixes | Where-Object { Read-CcAsk -Question ($_ + ': ' + $Desc[$_] + '?') -Default Y -Yes 'yes, fix it' -No 'no, skip it' }) }
+}
+if ($inclL.Count -eq 0 -and $onlyL.Count -eq 0) {
+    foreach ($f in $ServiceFixes) {
+        if (Read-CcAsk -Question ('Might affect a service - ' + $f + ': ' + $Desc[$f] + '?') -Default N -Yes 'yes, make it too' -No 'no, leave it') { $Run += $f; $inclL += $f }
+    }
+}
+if ($Run.Count -gt 0 -and -not $Cc.Apply -and (Test-CcCanAsk)) {
+    if (Read-CcAsk -Question ('Apply these {0} fix(es) now?' -f $Run.Count) -Default N -Yes 'yes, fix them (a revert timer runs)' -No 'no, show what would change (dry run)') {
+        if (-not $Cc.Protected -and -not $Cc.NoProtected) {
+            Write-CcShow -Color Yellow -Text '[*] No protected list (the scored services, ports and accounts).'
+            if (Read-CcAsk -Question 'Fix without one?' -Default N -Yes 'yes, go on without a protected list' -No 'no, stop') { $Cc.NoProtected = $true; $Cc.Apply = $true }
+        } else { $Cc.Apply = $true }
+        if ($Cc.Apply -and -not $Fake) { Assert-CcAdmin }
+    }
+}
+Write-CcHeader $(if ($Cc.Apply) { '2/3  fixing' } else { '2/3  dry run: what would change' })
+if ($Cc.Apply -and -not $NoTimer) { Start-CcTimer -Seconds $Timer }
 $script:BackDir = Join-Path $Cc.RunDir 'backup'
 New-Item -ItemType Directory -Path $script:BackDir -Force | Out-Null
 if ((Test-CcWindows) -and $Cc.Apply -and (Test-CcCommand 'icacls.exe')) {
     # The backup holds registry exports (a stored logon password among them).
     [void](Invoke-CcProgram -FilePath 'icacls.exe' -Arguments @($Cc.RunDir, '/inheritance:r', '/grant:r', '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F'))
 }
-$script:FixCsv = New-CcCsv -Name fixes -Header @('fix', 'item', 'before', 'after', 'result')
-$script:PlanFile = Join-Path $Cc.RunDir 'undo-plan.csv'
+$script:FixTab = New-CcTable -Name fixes -Columns @('fix', 'item', 'before', 'after', 'result')
+$script:PlanFile = Join-Path $Cc.RunDir 'undo-plan.txt'
 if ($Cc.Apply) { [IO.File]::WriteAllText($script:PlanFile, "kind,a,b,c,d`r`n") }
 
 foreach ($f in $Run) {
@@ -1004,7 +1071,8 @@ foreach ($f in $Run) {
     catch { Res $f '' '' '' ('FAILED: stopped: ' + $_.Exception.Message); $Cc.Failed++ }
 }
 
-foreach ($r in $script:Rows) { Add-CcCsvRow -File $script:FixCsv -Values @($r.Fix, $r.Item, $r.Before, $r.After, $r.Result) }
+foreach ($r in $script:Rows) { Add-CcTableRow -File $script:FixTab -Values @($r.Fix, $r.Item, $r.Before, $r.After, $r.Result) }
+Format-CcTable -File $script:FixTab
 
 # ---- Summary ---------------------------------------------------------------------
 $fixed = @($script:Rows | Where-Object { $_.Result -eq 'fixed' -or $_.Result -eq 'would fix' })
@@ -1028,6 +1096,12 @@ if ($script:Reboot.Count -gt 0) { $sum += ('Takes effect after a reboot: ' + (($
 if ($Cc.Apply -and $fixed.Count -gt 0) { $sum += ('To put this run back:  WN-43-safe-fixes.ps1 -Out ' + $Cc.Out + ' -Undo ' + (Split-Path -Leaf $Cc.RunDir) + ' -Apply') }
 if (-not $Cc.Apply) { $sum += 'Dry run: nothing was changed. Check the list, then add -Apply.' }
 [IO.File]::WriteAllLines((Join-Path $Cc.RunDir 'summary.txt'), [string[]]$sum)
-if (-not $Quiet) { foreach ($l in $sum) { Write-Host $l } }
-Write-Host ('All results: ' + $Cc.RunDir)
+Write-CcHeader '3/3  summary'
+foreach ($l in $sum) {
+    $col = ''
+    if ($l -like 'WN-43 *') { $col = 'Cyan' } elseif ($l -like 'FAILED*') { $col = 'Red' } elseif ($l -like 'Not changed*' -or $l -like 'Dry run*' -or $l -like 'Would fix*') { $col = 'Yellow' } elseif ($l -like 'Fixed*') { $col = 'Green' }
+    Write-CcShow -Color $col -Text $l
+}
+if ($Cc.Apply -and -not $NoTimer) { [void](Complete-CcTimer) }
+Write-Host ('All results: ' + $Cc.RunDir)   # always shown, even with -Quiet
 Complete-Cc
