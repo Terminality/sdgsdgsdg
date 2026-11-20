@@ -72,12 +72,12 @@
 #     TLS 1.2 connection and put back if the port stops answering.
 # =============================================================================
 
-# >>> BT-LIB  (lib/lib.sh 0.3.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.4.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.3.0
+# VERSION:  0.4.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -148,7 +148,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.3.0"
+CC_LIB_VERSION="0.4.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -534,7 +534,7 @@ cc_backup_file() {
     (umask 077; mkdir -p "$(dirname "$_cc_bk_dst")") || { cc_err "backup: cannot create $(dirname "$_cc_bk_dst")"; return 1; }
     if cp -pR "$_cc_bk_src" "$_cc_bk_dst" 2>>"$CC_LOG"; then
         CC_LAST_BACKUP=$_cc_bk_dst
-        cc_undo_add "restore $_cc_bk_src" "cp -pR $(cc_shquote "$_cc_bk_dst") $(cc_shquote "$_cc_bk_src")"
+        cc_undo_add "restore $_cc_bk_src" "cp -pR $(cc_shquote "$_cc_bk_dst") $(cc_shquote "$_cc_bk_src")$(cc_relabel_cmd "$_cc_bk_src")"
         cc_debug "backup: $_cc_bk_src -> $_cc_bk_dst"
         return 0
     fi
@@ -968,6 +968,60 @@ cc_detect_os() {
 }
 
 # -----------------------------------------------------------------------------
+# Services and SELinux (systemd, OpenRC or SysV init)
+# -----------------------------------------------------------------------------
+
+# cc_svc ACTION NAME -> run ACTION on service NAME with this box's init system.
+#   ACTION: start stop restart reload enable disable is-active is-enabled exists
+#   systemd: systemctl; OpenRC (Alpine): rc-service / rc-update; SysV: service
+#   and update-rc.d or chkconfig.  Returns the tool's exit code.  BT_SVC_INIT
+#   overrides the detected init (the tests use it).
+cc_svc() {
+    _cc_sv_i=${BT_SVC_INIT:-${CC_INIT:-}}
+    [ -n "$_cc_sv_i" ] || { cc_detect_os; _cc_sv_i=$CC_INIT; }
+    case "$_cc_sv_i:$1" in
+        systemd:exists)      systemctl list-unit-files "$2.service" "$2" 2>/dev/null | grep -q "^$2[.@ ]" ;;
+        systemd:*)           systemctl "$1" "$2" ;;
+        openrc:exists)       [ -x "/etc/init.d/$2" ] ;;
+        openrc:is-active)    rc-service "$2" status >/dev/null 2>&1 ;;
+        openrc:is-enabled)   rc-update show -v 2>/dev/null | awk -v s="$2" '$1 == s && $3 != "" { f = 1 } END { exit !f }' ;;
+        openrc:enable)       rc-update add "$2" default ;;
+        openrc:disable)      rc-update -a del "$2" ;;
+        openrc:*)            rc-service "$2" "$1" ;;
+        *:exists)            [ -x "/etc/init.d/$2" ] ;;
+        *:is-active)         service "$2" status >/dev/null 2>&1 ;;
+        *:is-enabled)        ls /etc/rc[2345].d/S*"$2" >/dev/null 2>&1 ;;
+        *:enable)            if cc_have update-rc.d; then update-rc.d "$2" enable; else chkconfig "$2" on; fi ;;
+        *:disable)           if cc_have update-rc.d; then update-rc.d "$2" disable; else chkconfig "$2" off; fi ;;
+        *)                   service "$2" "$1" ;;
+    esac
+}
+# cc_svc_cmd ACTION NAME -> the same as a command line (for undo lines)
+cc_svc_cmd() {
+    _cc_sc_i=${BT_SVC_INIT:-${CC_INIT:-}}
+    case "$_cc_sc_i:$1" in
+        systemd:*)         printf 'systemctl %s %s' "$1" "$(cc_shquote "$2")" ;;
+        openrc:enable)     printf 'rc-update add %s default' "$(cc_shquote "$2")" ;;
+        openrc:disable)    printf 'rc-update -a del %s' "$(cc_shquote "$2")" ;;
+        openrc:*)          printf 'rc-service %s %s' "$(cc_shquote "$2")" "$1" ;;
+        *:enable)          printf '{ update-rc.d %s enable || chkconfig %s on; }' "$(cc_shquote "$2")" "$(cc_shquote "$2")" ;;
+        *:disable)         printf '{ update-rc.d %s disable || chkconfig %s off; }' "$(cc_shquote "$2")" "$(cc_shquote "$2")" ;;
+        *)                 printf 'service %s %s' "$(cc_shquote "$2")" "$1" ;;
+    esac
+}
+# cc_selinux_on -> true when SELinux is enforcing or permissive on this box
+cc_selinux_on() {
+    [ -n "${BT_SELINUX:-}" ] && { [ "$BT_SELINUX" = 1 ]; return; }
+    cc_have selinuxenabled && selinuxenabled 2>/dev/null
+}
+# cc_relabel_cmd PATH -> "; restorecon ..." to add to an undo line on an
+#   SELinux box (a file put back by cp or mv may carry the wrong label, and a
+#   service then cannot read it); nothing elsewhere.
+cc_relabel_cmd() { cc_selinux_on && cc_have restorecon && printf '; restorecon -R %s 2>/dev/null' "$(cc_shquote "$1")"; return 0; }
+# cc_relabel PATH... -> restore the SELinux label of new or replaced files (no-op elsewhere)
+cc_relabel() { cc_selinux_on && cc_have restorecon || return 0; restorecon -R "$@" 2>/dev/null; return 0; }
+
+# -----------------------------------------------------------------------------
 # Hashing, passwords, quarantine
 # -----------------------------------------------------------------------------
 
@@ -1034,7 +1088,7 @@ cc_quarantine() {
     if mv "$_cc_q_src" "$_cc_q_dst" 2>>"$CC_LOG"; then
         CC_N_DONE=$((CC_N_DONE + 1))
         cc_log DO "quarantined $_cc_q_src -> $_cc_q_dst (sha256 ${_cc_q_hash:-n/a})"
-        cc_undo_add "un-quarantine $_cc_q_src" "mv $(cc_shquote "$_cc_q_dst") $(cc_shquote "$_cc_q_src")"
+        cc_undo_add "un-quarantine $_cc_q_src" "mv $(cc_shquote "$_cc_q_dst") $(cc_shquote "$_cc_q_src")$(cc_relabel_cmd "$_cc_q_src")"
         return 0
     fi
     CC_N_FAIL=$((CC_N_FAIL + 1))

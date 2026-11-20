@@ -4,7 +4,7 @@
 # NAME:     Linux change watch
 # ROLE:     Linux  (wave 2, first 15 minutes - start it once the box is hardened)
 # KIND:     readonly - changes nothing on the host
-# VERSION:  2.0.0
+# VERSION:  2.1.0
 #
 # PURPOSE
 #   Takes a baseline of the places red teams use to get back in, then checks
@@ -113,12 +113,12 @@
 #   baseline/ and last/ are plain text: diff them by hand.
 # =============================================================================
 
-# >>> BT-LIB  (lib/lib.sh 0.3.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.4.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.3.0
+# VERSION:  0.4.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -189,7 +189,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.3.0"
+CC_LIB_VERSION="0.4.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -575,7 +575,7 @@ cc_backup_file() {
     (umask 077; mkdir -p "$(dirname "$_cc_bk_dst")") || { cc_err "backup: cannot create $(dirname "$_cc_bk_dst")"; return 1; }
     if cp -pR "$_cc_bk_src" "$_cc_bk_dst" 2>>"$CC_LOG"; then
         CC_LAST_BACKUP=$_cc_bk_dst
-        cc_undo_add "restore $_cc_bk_src" "cp -pR $(cc_shquote "$_cc_bk_dst") $(cc_shquote "$_cc_bk_src")"
+        cc_undo_add "restore $_cc_bk_src" "cp -pR $(cc_shquote "$_cc_bk_dst") $(cc_shquote "$_cc_bk_src")$(cc_relabel_cmd "$_cc_bk_src")"
         cc_debug "backup: $_cc_bk_src -> $_cc_bk_dst"
         return 0
     fi
@@ -1009,6 +1009,60 @@ cc_detect_os() {
 }
 
 # -----------------------------------------------------------------------------
+# Services and SELinux (systemd, OpenRC or SysV init)
+# -----------------------------------------------------------------------------
+
+# cc_svc ACTION NAME -> run ACTION on service NAME with this box's init system.
+#   ACTION: start stop restart reload enable disable is-active is-enabled exists
+#   systemd: systemctl; OpenRC (Alpine): rc-service / rc-update; SysV: service
+#   and update-rc.d or chkconfig.  Returns the tool's exit code.  BT_SVC_INIT
+#   overrides the detected init (the tests use it).
+cc_svc() {
+    _cc_sv_i=${BT_SVC_INIT:-${CC_INIT:-}}
+    [ -n "$_cc_sv_i" ] || { cc_detect_os; _cc_sv_i=$CC_INIT; }
+    case "$_cc_sv_i:$1" in
+        systemd:exists)      systemctl list-unit-files "$2.service" "$2" 2>/dev/null | grep -q "^$2[.@ ]" ;;
+        systemd:*)           systemctl "$1" "$2" ;;
+        openrc:exists)       [ -x "/etc/init.d/$2" ] ;;
+        openrc:is-active)    rc-service "$2" status >/dev/null 2>&1 ;;
+        openrc:is-enabled)   rc-update show -v 2>/dev/null | awk -v s="$2" '$1 == s && $3 != "" { f = 1 } END { exit !f }' ;;
+        openrc:enable)       rc-update add "$2" default ;;
+        openrc:disable)      rc-update -a del "$2" ;;
+        openrc:*)            rc-service "$2" "$1" ;;
+        *:exists)            [ -x "/etc/init.d/$2" ] ;;
+        *:is-active)         service "$2" status >/dev/null 2>&1 ;;
+        *:is-enabled)        ls /etc/rc[2345].d/S*"$2" >/dev/null 2>&1 ;;
+        *:enable)            if cc_have update-rc.d; then update-rc.d "$2" enable; else chkconfig "$2" on; fi ;;
+        *:disable)           if cc_have update-rc.d; then update-rc.d "$2" disable; else chkconfig "$2" off; fi ;;
+        *)                   service "$2" "$1" ;;
+    esac
+}
+# cc_svc_cmd ACTION NAME -> the same as a command line (for undo lines)
+cc_svc_cmd() {
+    _cc_sc_i=${BT_SVC_INIT:-${CC_INIT:-}}
+    case "$_cc_sc_i:$1" in
+        systemd:*)         printf 'systemctl %s %s' "$1" "$(cc_shquote "$2")" ;;
+        openrc:enable)     printf 'rc-update add %s default' "$(cc_shquote "$2")" ;;
+        openrc:disable)    printf 'rc-update -a del %s' "$(cc_shquote "$2")" ;;
+        openrc:*)          printf 'rc-service %s %s' "$(cc_shquote "$2")" "$1" ;;
+        *:enable)          printf '{ update-rc.d %s enable || chkconfig %s on; }' "$(cc_shquote "$2")" "$(cc_shquote "$2")" ;;
+        *:disable)         printf '{ update-rc.d %s disable || chkconfig %s off; }' "$(cc_shquote "$2")" "$(cc_shquote "$2")" ;;
+        *)                 printf 'service %s %s' "$(cc_shquote "$2")" "$1" ;;
+    esac
+}
+# cc_selinux_on -> true when SELinux is enforcing or permissive on this box
+cc_selinux_on() {
+    [ -n "${BT_SELINUX:-}" ] && { [ "$BT_SELINUX" = 1 ]; return; }
+    cc_have selinuxenabled && selinuxenabled 2>/dev/null
+}
+# cc_relabel_cmd PATH -> "; restorecon ..." to add to an undo line on an
+#   SELinux box (a file put back by cp or mv may carry the wrong label, and a
+#   service then cannot read it); nothing elsewhere.
+cc_relabel_cmd() { cc_selinux_on && cc_have restorecon && printf '; restorecon -R %s 2>/dev/null' "$(cc_shquote "$1")"; return 0; }
+# cc_relabel PATH... -> restore the SELinux label of new or replaced files (no-op elsewhere)
+cc_relabel() { cc_selinux_on && cc_have restorecon || return 0; restorecon -R "$@" 2>/dev/null; return 0; }
+
+# -----------------------------------------------------------------------------
 # Hashing, passwords, quarantine
 # -----------------------------------------------------------------------------
 
@@ -1075,7 +1129,7 @@ cc_quarantine() {
     if mv "$_cc_q_src" "$_cc_q_dst" 2>>"$CC_LOG"; then
         CC_N_DONE=$((CC_N_DONE + 1))
         cc_log DO "quarantined $_cc_q_src -> $_cc_q_dst (sha256 ${_cc_q_hash:-n/a})"
-        cc_undo_add "un-quarantine $_cc_q_src" "mv $(cc_shquote "$_cc_q_dst") $(cc_shquote "$_cc_q_src")"
+        cc_undo_add "un-quarantine $_cc_q_src" "mv $(cc_shquote "$_cc_q_dst") $(cc_shquote "$_cc_q_src")$(cc_relabel_cmd "$_cc_q_src")"
         return 0
     fi
     CC_N_FAIL=$((CC_N_FAIL + 1))
@@ -1737,17 +1791,28 @@ snap() {
              "$R/etc/ld.so.conf" "$R/etc/ld.so.conf.d" "$R/etc/profile" "$R/etc/profile.d" "$R/etc/bash.bashrc" \
              "$R/etc/bashrc" "$R/etc/environment" "$R/etc/hosts" "$R/etc/resolv.conf" "$R/etc/nsswitch.conf" \
              "$R/etc/ssh/sshd_config" "$R/etc/ssh/sshd_config.d" "$R/etc/sysctl.conf" "$R/etc/sysctl.d" \
-             "$R/root/.bashrc" "$R/root/.profile" "$R/root/.bash_profile" | sort >"$_sd/files"
+             "$R/root/.bashrc" "$R/root/.profile" "$R/root/.bash_profile" \
+             "$R/etc/doas.conf" "$R/etc/doas.d" "$R/root/.ashrc" "$R/etc/apk/repositories" "$R/etc/apk/keys" | sort >"$_sd/files"
     # cron: every cron and at file, plus systemd timers by name
     { hashlist "$R/etc/crontab" "$R/etc/cron.d" "$R/etc/cron.hourly" "$R/etc/cron.daily" "$R/etc/cron.weekly" \
-               "$R/etc/cron.monthly" "$R/var/spool/cron" "$R/var/spool/at" "$R/var/spool/anacron" "$R/etc/anacrontab"
+               "$R/etc/cron.monthly" "$R/var/spool/cron" "$R/var/spool/at" "$R/var/spool/anacron" "$R/etc/anacrontab" \
+               "$R/etc/crontabs" "$R/etc/periodic"
       if [ -n "$SYSCTL" ]; then
           "$SYSCTL" list-timers --all --no-legend --no-pager 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /\.timer$/) print "timer " $i "|" }'
       fi; } | sort -u >"$_sd/cron"
     # units: services that start at boot
     hashlist "$R/etc/systemd/system" "$R/lib/systemd/system" "$R/usr/lib/systemd/system" "$R/etc/init.d" \
-             "$R/etc/rc.local" "$R/etc/rc.d" | sort >"$_sd/units"
-    # running: services running now (systemd only)
+             "$R/etc/rc.local" "$R/etc/rc.d" "$R/etc/local.d" "$R/etc/conf.d" | sort >"$_sd/units"
+    # OpenRC (Alpine): which services start in which runlevel (the links in /etc/runlevels)
+    for _rl in "$R"/etc/runlevels/*/; do
+        [ -d "$_rl" ] || continue
+        for _l in "$_rl"*; do [ -e "$_l" ] || [ -L "$_l" ] || continue; printf '%s|runlevel %s\n' "${_l#"$R"}" "$(basename "$_rl")"; done
+    done | sort >>"$_sd/units"
+    sort -o "$_sd/units" "$_sd/units"
+    # running: services running now (systemd, or OpenRC's rc-status)
+    if [ -z "$SYSCTL" ] && [ -z "$R" ] && [ "$CC_INIT" = openrc ] && cc_have rc-status; then
+        rc-status -s 2>/dev/null | awk '/\[ *started/ { print $1 "|" }' | sort -u >"$_sd/running"
+    fi
     if [ -n "$SYSCTL" ]; then
         "$SYSCTL" list-units --type=service --state=running --no-legend --no-pager 2>/dev/null |
             awk '{ for (i = 1; i <= NF; i++) if ($i ~ /\.service$/) { print $i "|"; break } }' | sort -u >"$_sd/running"
@@ -1901,15 +1966,17 @@ compare() {
                 } else if (sec == "files") {
                     why = "config file"
                     if (k ~ /sudoers/) why = "sudo rules (who can become root)"
+                    else if (k ~ /doas/) why = "doas rules (who can become root)"
+                    else if (k ~ /apk\/(repositories|keys)/) why = "where packages come from (apk)"
                     else if (k ~ /pam\.d|security\//) why = "login checks (PAM)"
                     else if (k ~ /ld\.so\.preload/) why = "code loaded into EVERY program"
                     else if (k ~ /ld\.so\.conf/) why = "where programs load libraries from"
-                    else if (k ~ /(profile|bashrc|bash_profile|environment)/) why = "runs at every login"
+                    else if (k ~ /(profile|bashrc|bash_profile|ashrc|environment)/) why = "runs at every login"
                     else if (k ~ /hosts$/) why = "name lookups (/etc/hosts)"
                     else if (k ~ /(resolv\.conf|nsswitch)/) why = "DNS / name lookup settings"
                     else if (k ~ /sshd_config/) why = "SSH server settings"
                     else if (k ~ /sysctl/) why = "kernel settings"
-                    sev = (k ~ /(sudoers|pam\.d|ld\.so\.preload|security\/)/ || c == "added") ? "HIGH" : "MED"
+                    sev = (k ~ /(sudoers|doas|pam\.d|ld\.so\.preload|security\/|apk\/keys)/ || c == "added") ? "HIGH" : "MED"
                     d = why ": file " c
                 } else if (sec == "cron") {
                     sev = (c == "removed") ? "LOW" : "HIGH"
@@ -1917,10 +1984,12 @@ compare() {
                     if (c != "removed" && k !~ /^timer /) d = d " - look at what it runs"
                 } else if (sec == "units") {
                     sev = (c == "added") ? "HIGH" : (c == "removed" ? "LOW" : "MED")
-                    d = "boot service file " c (c == "removed" ? "" : " - check its ExecStart line")
+                    if (k ~ /^\/etc\/runlevels\//) d = "starts at boot (OpenRC runlevel): " c (c == "added" ? " - is this service yours?" : "")
+                    else if (k ~ /^\/etc\/local\.d\//) d = "runs at boot (OpenRC local.d) " c (c == "removed" ? "" : " - look at what it runs")
+                    else d = "boot service file " c (c == "removed" ? "" : (k ~ /init\.d|conf\.d/ ? " - check what it starts" : " - check its ExecStart line"))
                 } else if (sec == "running") {
                     if (c == "added") { sev = "LOW"; d = "service started" }
-                    else if (k ~ /^(auditd|rsyslog|syslog|syslog-ng|systemd-journald|splunk.*|SplunkForwarder|wazuh.*|ossec.*|osqueryd|falco.*|fail2ban|sysmon.*|auditbeat|filebeat|crowdsec)\.service$/) { sev = "HIGH"; d = "logging or security service STOPPED - the red team may be hiding something" }
+                    else if (k ~ /^(auditd|rsyslog|syslog|syslog-ng|systemd-journald|splunk.*|SplunkForwarder|wazuh.*|ossec.*|osqueryd|falco.*|fail2ban|sysmon.*|auditbeat|filebeat|crowdsec)(\.service)?$/) { sev = "HIGH"; d = "logging or security service STOPPED - the red team may be hiding something" }
                     else d = "service stopped running - if it is scored, it is down"
                 } else if (sec == "keys") {
                     sev = (c == "removed") ? "MED" : "HIGH"

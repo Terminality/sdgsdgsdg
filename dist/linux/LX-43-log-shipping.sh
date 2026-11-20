@@ -4,7 +4,7 @@
 # NAME:     Log shipping to Splunk
 # ROLE:     Linux  (wave 2: the Splunk box first, then every other box)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Red team clears logs on the box they are on.  Logs that already left
@@ -49,7 +49,8 @@
 #
 # OUTPUTS  (under --out, in logship-N/)
 #   output.txt, plan.txt, summary.txt, run.txt, revert.sh
-#   the config written: /etc/rsyslog.d/90-bt-splunk.conf (sender) or
+#   the config written: /etc/rsyslog.d/90-bt-splunk.conf (sender; Alpine
+#   without rsyslog: SYSLOGD_OPTS in /etc/conf.d/syslog) or
 #   SPLUNK/etc/apps/bt_receiver/local/inputs.conf (receiver)
 #
 # DEPENDS ON
@@ -68,14 +69,18 @@
 #   - Plain syslog is not encrypted: fine inside the team network.
 #   - Boxes with only journald (no rsyslog): install rsyslog first
 #     (apt-get install rsyslog) or forward with systemd-journal-upload.
+#   - Alpine without rsyslog: busybox syslogd sends the system logs itself
+#     (-R in /etc/conf.d/syslog, local copy kept with -L), but only over UDP,
+#     without buffering and without the service log files.  For those:
+#     apk add rsyslog, then run this again.
 # =============================================================================
 
-# >>> BT-LIB  (lib/lib.sh 0.3.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.4.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.3.0
+# VERSION:  0.4.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -146,7 +151,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.3.0"
+CC_LIB_VERSION="0.4.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -532,7 +537,7 @@ cc_backup_file() {
     (umask 077; mkdir -p "$(dirname "$_cc_bk_dst")") || { cc_err "backup: cannot create $(dirname "$_cc_bk_dst")"; return 1; }
     if cp -pR "$_cc_bk_src" "$_cc_bk_dst" 2>>"$CC_LOG"; then
         CC_LAST_BACKUP=$_cc_bk_dst
-        cc_undo_add "restore $_cc_bk_src" "cp -pR $(cc_shquote "$_cc_bk_dst") $(cc_shquote "$_cc_bk_src")"
+        cc_undo_add "restore $_cc_bk_src" "cp -pR $(cc_shquote "$_cc_bk_dst") $(cc_shquote "$_cc_bk_src")$(cc_relabel_cmd "$_cc_bk_src")"
         cc_debug "backup: $_cc_bk_src -> $_cc_bk_dst"
         return 0
     fi
@@ -966,6 +971,60 @@ cc_detect_os() {
 }
 
 # -----------------------------------------------------------------------------
+# Services and SELinux (systemd, OpenRC or SysV init)
+# -----------------------------------------------------------------------------
+
+# cc_svc ACTION NAME -> run ACTION on service NAME with this box's init system.
+#   ACTION: start stop restart reload enable disable is-active is-enabled exists
+#   systemd: systemctl; OpenRC (Alpine): rc-service / rc-update; SysV: service
+#   and update-rc.d or chkconfig.  Returns the tool's exit code.  BT_SVC_INIT
+#   overrides the detected init (the tests use it).
+cc_svc() {
+    _cc_sv_i=${BT_SVC_INIT:-${CC_INIT:-}}
+    [ -n "$_cc_sv_i" ] || { cc_detect_os; _cc_sv_i=$CC_INIT; }
+    case "$_cc_sv_i:$1" in
+        systemd:exists)      systemctl list-unit-files "$2.service" "$2" 2>/dev/null | grep -q "^$2[.@ ]" ;;
+        systemd:*)           systemctl "$1" "$2" ;;
+        openrc:exists)       [ -x "/etc/init.d/$2" ] ;;
+        openrc:is-active)    rc-service "$2" status >/dev/null 2>&1 ;;
+        openrc:is-enabled)   rc-update show -v 2>/dev/null | awk -v s="$2" '$1 == s && $3 != "" { f = 1 } END { exit !f }' ;;
+        openrc:enable)       rc-update add "$2" default ;;
+        openrc:disable)      rc-update -a del "$2" ;;
+        openrc:*)            rc-service "$2" "$1" ;;
+        *:exists)            [ -x "/etc/init.d/$2" ] ;;
+        *:is-active)         service "$2" status >/dev/null 2>&1 ;;
+        *:is-enabled)        ls /etc/rc[2345].d/S*"$2" >/dev/null 2>&1 ;;
+        *:enable)            if cc_have update-rc.d; then update-rc.d "$2" enable; else chkconfig "$2" on; fi ;;
+        *:disable)           if cc_have update-rc.d; then update-rc.d "$2" disable; else chkconfig "$2" off; fi ;;
+        *)                   service "$2" "$1" ;;
+    esac
+}
+# cc_svc_cmd ACTION NAME -> the same as a command line (for undo lines)
+cc_svc_cmd() {
+    _cc_sc_i=${BT_SVC_INIT:-${CC_INIT:-}}
+    case "$_cc_sc_i:$1" in
+        systemd:*)         printf 'systemctl %s %s' "$1" "$(cc_shquote "$2")" ;;
+        openrc:enable)     printf 'rc-update add %s default' "$(cc_shquote "$2")" ;;
+        openrc:disable)    printf 'rc-update -a del %s' "$(cc_shquote "$2")" ;;
+        openrc:*)          printf 'rc-service %s %s' "$(cc_shquote "$2")" "$1" ;;
+        *:enable)          printf '{ update-rc.d %s enable || chkconfig %s on; }' "$(cc_shquote "$2")" "$(cc_shquote "$2")" ;;
+        *:disable)         printf '{ update-rc.d %s disable || chkconfig %s off; }' "$(cc_shquote "$2")" "$(cc_shquote "$2")" ;;
+        *)                 printf 'service %s %s' "$(cc_shquote "$2")" "$1" ;;
+    esac
+}
+# cc_selinux_on -> true when SELinux is enforcing or permissive on this box
+cc_selinux_on() {
+    [ -n "${BT_SELINUX:-}" ] && { [ "$BT_SELINUX" = 1 ]; return; }
+    cc_have selinuxenabled && selinuxenabled 2>/dev/null
+}
+# cc_relabel_cmd PATH -> "; restorecon ..." to add to an undo line on an
+#   SELinux box (a file put back by cp or mv may carry the wrong label, and a
+#   service then cannot read it); nothing elsewhere.
+cc_relabel_cmd() { cc_selinux_on && cc_have restorecon && printf '; restorecon -R %s 2>/dev/null' "$(cc_shquote "$1")"; return 0; }
+# cc_relabel PATH... -> restore the SELinux label of new or replaced files (no-op elsewhere)
+cc_relabel() { cc_selinux_on && cc_have restorecon || return 0; restorecon -R "$@" 2>/dev/null; return 0; }
+
+# -----------------------------------------------------------------------------
 # Hashing, passwords, quarantine
 # -----------------------------------------------------------------------------
 
@@ -1032,7 +1091,7 @@ cc_quarantine() {
     if mv "$_cc_q_src" "$_cc_q_dst" 2>>"$CC_LOG"; then
         CC_N_DONE=$((CC_N_DONE + 1))
         cc_log DO "quarantined $_cc_q_src -> $_cc_q_dst (sha256 ${_cc_q_hash:-n/a})"
-        cc_undo_add "un-quarantine $_cc_q_src" "mv $(cc_shquote "$_cc_q_dst") $(cc_shquote "$_cc_q_src")"
+        cc_undo_add "un-quarantine $_cc_q_src" "mv $(cc_shquote "$_cc_q_dst") $(cc_shquote "$_cc_q_src")$(cc_relabel_cmd "$_cc_q_src")"
         return 0
     fi
     CC_N_FAIL=$((CC_N_FAIL + 1))
@@ -1537,6 +1596,17 @@ if [ -z "$MODE" ]; then
         "r=receive: this IS the Splunk box (open a port for the other boxes' logs)"
     case "$CC_CHOICE" in r) MODE=receive ;; *) MODE=send ;; esac
 fi
+# Alpine without rsyslog: busybox syslogd (system logs, UDP only)
+BB=0
+if [ "$MODE" = send ]; then
+    if [ -n "$R" ]; then [ ! -f "$(P /etc/rsyslog.conf)" ] && [ -f "$(P /etc/conf.d/syslog)" ] && BB=1
+    elif ! cc_have rsyslogd && [ -f /etc/conf.d/syslog ] && cc_have syslogd; then BB=1; fi
+    if [ "$BB" = 1 ]; then
+        cc_show "$C_YEL" "  [*] no rsyslog here: busybox syslogd sends the system logs itself, over UDP only (no buffering, no service log files)."
+        cc_show "$C_GRY" "      For TCP and the service logs: apk add rsyslog, then run this again."
+        UDP=1; LOGS=system
+    fi
+fi
 if [ -z "$PORT" ]; then cc_ask_text "Port the logs go to" 1514 "a port number (the same on every box)"; PORT=$CC_ANSWER; fi
 case "$PORT" in ''|*[!0-9]*) cc_die 2 "the port must be a number" ;; esac
 if [ -z "$UDP" ]; then
@@ -1600,7 +1670,7 @@ fi
 
 # ---- Sender -------------------------------------------------------------------------------
 header "1/3  this box's logs"
-[ -n "$R" ] || cc_have rsyslogd || { cc_show "$C_RED" "  [x] rsyslog is not installed: apt-get install rsyslog (or dnf install rsyslog), then run again"; rm -rf "$W"; cc_finish; exit 3; }
+[ -n "$R" ] || [ "$BB" = 1 ] || cc_have rsyslogd || { cc_show "$C_RED" "  [x] rsyslog is not installed: apt-get install rsyslog (or dnf install rsyslog, apk add rsyslog), then run again"; rm -rf "$W"; cc_finish; exit 3; }
 if [ -z "$TO" ]; then cc_ask_text "The Splunk box's address" "" "its IP address or name"; TO=$CC_ANSWER; fi
 case "$TO" in ''|*[!A-Za-z0-9.:_-]*) cc_die 2 "the Splunk box's address is needed (--to HOST)" ;; esac
 # Service log files: tag|file
@@ -1626,6 +1696,50 @@ case "$LOGS" in
 esac
 
 header "2/3  plan"
+if [ "$BB" = 1 ]; then
+    # /etc/conf.d/syslog: SYSLOGD_OPTS="..."; -R HOST:PORT sends, -L keeps the local log too
+    BBCONF=/etc/conf.d/syslog
+    _old=$(sed -n 's/^SYSLOGD_OPTS=//p' "$(P "$BBCONF")" | tail -n 1 | tr -d '"'"'")
+    _new=$(printf '%s' "$_old" | awk '{ o = ""; for (i = 1; i <= NF; i++) { if ($i == "-R") { i++; continue } if ($i ~ /^-R./ || $i == "-L") continue; o = o (o == "" ? "" : " ") $i } print o }')
+    _new="${_new:+$_new }-L -R $TO:$PORT"
+    case " $_old " in *" -R "*|*" -R"[!\ ]*) cc_show "$C_YEL" "  [*] syslogd already sends logs somewhere: SYSLOGD_OPTS=\"$_old\" - yours? (red team can send copies of logs out too)" ;; esac
+    if [ "$_old" = "$_new" ]; then cc_show "$C_GRN" "  [ok] $BBCONF already sends to $TO:$PORT"
+    else plan "set SYSLOGD_OPTS=\"$_new\" in $BBCONF (was \"$_old\"): busybox syslogd sends the system logs to $TO:$PORT over UDP and keeps its local log"
+        [ -z "$R" ] && plan "restart syslog (rc-service syslog restart), then send a test line"
+    fi
+    header "3/3  apply"
+    TESTID=""
+    if go; then
+        _cf=$(P "$BBCONF")
+        cc_backup_file "$_cf" >/dev/null
+        if grep -q '^SYSLOGD_OPTS=' "$_cf"; then
+            awk -v n="$_new" '/^SYSLOGD_OPTS=/ { print "SYSLOGD_OPTS=\"" n "\""; next } { print }' "$_cf" >"$W/bb" && cat "$W/bb" >"$_cf"
+        else printf 'SYSLOGD_OPTS="%s"\n' "$_new" >>"$_cf"; fi
+        cc_show "$C_GRN" "  [+] wrote $BBCONF"; NOK=1
+        if [ -z "$R" ]; then
+            cc_undo_add "restart syslog after its config is put back" "$(cc_svc_cmd restart syslog)"
+            if cc_svc restart syslog >>"$CC_LOG" 2>&1 </dev/null && sleep 1 && tr '\000' ' ' <"/proc/$(pgrep -x syslogd | head -n 1)/cmdline" 2>/dev/null | grep -q -- "-R $TO:$PORT"; then
+                cc_show "$C_GRN" "  [+] syslog restarted (it sends to $TO:$PORT)"
+            else cc_show "$C_RED" "  [x] syslogd did not restart with the new options: rc-service syslog restart, then check: ps | grep syslogd"; NBAD=1; fi
+            TESTID="BT-LX43-TEST-$CC_HOST-$(date +%s)"
+            logger -p auth.info "$TESTID" 2>/dev/null && cc_show "$C_GRN" "  [+] test line sent: search Splunk for $TESTID"
+        fi
+    fi
+    # shellcheck disable=SC2034  # read by cc_finish
+    CC_N_DONE=$NOK
+    # shellcheck disable=SC2034  # read by cc_finish
+    CC_N_FAIL=$NBAD
+    {
+        printf '==========[ summary ]==========\n'
+        printf 'LX-43 Log shipping | host %s | sender (busybox syslogd) | %s\n' "$CC_HOST" "$([ "$APPLIED" = 1 ] && echo APPLIED || echo 'DRY RUN - nothing changed')"
+        printf 'To: %s:%s over udp   Service logs: 0 (busybox syslogd sends the system logs only)\n' "$TO" "$PORT"
+        [ -n "$TESTID" ] && printf '\nIn Splunk, search: "%s"   (nothing? open udp %s on the Splunk box: LX-25, and run LX-43 --receive --udp there)\n' "$TESTID" "$PORT"
+        [ -f "$CC_RUN_DIR/revert.sh" ] && printf 'Undo: sh %s/revert.sh --force\n' "$CC_RUN_DIR"
+    } >"$CC_RUN_DIR/summary.txt"
+    cc_show "" ""; while IFS= read -r _l; do case "$_l" in ==*|LX-43*) cc_show "$C_CYN" "$_l" ;; *) cc_show "" "$_l" ;; esac; done <"$CC_RUN_DIR/summary.txt"
+    rm -rf "$W"
+    cc_finish
+fi
 CONF=/etc/rsyslog.d/90-bt-splunk.conf
 {
     printf '# Written by LX-43: send this box'"'"'s logs to Splunk (%s %s:%s).\n# Delete this file and restart rsyslog to stop.\n' "$PROTO" "$TO" "$PORT"

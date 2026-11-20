@@ -5,7 +5,7 @@
 # ROLE:     Linux  (wave 2 - after the enum and the safe fixes; run it again
 #           whenever the red team has been on the box)
 # KIND:     changes - looks only, unless --apply (then it asks before each removal)
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Finds the ways an attacker makes sure they get back in or their code
@@ -15,10 +15,12 @@
 #   which is always "no").
 #
 #   Areas it searches (pick some, or do the full scan):
-#     cron      crontabs, cron.d, the cron.* folders, at jobs
+#     cron      crontabs, cron.d, the cron.* folders, at jobs; Alpine: /etc/crontabs, /etc/periodic
 #     systemd   services, timers, drop-in overrides, user units, generators
 #     boot      rc.local, init.d, login/network/sleep hook folders, udev
-#               rules, apt hooks, logrotate scripts, inetd/xinetd, autostart
+#               rules, apt hooks, logrotate scripts, inetd/xinetd, autostart;
+#               OpenRC: /etc/local.d, /etc/conf.d (an init script removed there
+#               is also stopped and disabled)
 #     ssh       every authorized_keys file, forced commands, sshd settings
 #               that add keys or commands, ssh rc files
 #     shell     /etc/profile, profile.d, bashrc/zshrc/profile of every user:
@@ -123,12 +125,12 @@
 #   findings.txt     the numbered list; csv/findings.csv has the fix column
 # =============================================================================
 
-# >>> BT-LIB  (lib/lib.sh 0.3.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.4.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.3.0
+# VERSION:  0.4.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -199,7 +201,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.3.0"
+CC_LIB_VERSION="0.4.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -585,7 +587,7 @@ cc_backup_file() {
     (umask 077; mkdir -p "$(dirname "$_cc_bk_dst")") || { cc_err "backup: cannot create $(dirname "$_cc_bk_dst")"; return 1; }
     if cp -pR "$_cc_bk_src" "$_cc_bk_dst" 2>>"$CC_LOG"; then
         CC_LAST_BACKUP=$_cc_bk_dst
-        cc_undo_add "restore $_cc_bk_src" "cp -pR $(cc_shquote "$_cc_bk_dst") $(cc_shquote "$_cc_bk_src")"
+        cc_undo_add "restore $_cc_bk_src" "cp -pR $(cc_shquote "$_cc_bk_dst") $(cc_shquote "$_cc_bk_src")$(cc_relabel_cmd "$_cc_bk_src")"
         cc_debug "backup: $_cc_bk_src -> $_cc_bk_dst"
         return 0
     fi
@@ -1019,6 +1021,60 @@ cc_detect_os() {
 }
 
 # -----------------------------------------------------------------------------
+# Services and SELinux (systemd, OpenRC or SysV init)
+# -----------------------------------------------------------------------------
+
+# cc_svc ACTION NAME -> run ACTION on service NAME with this box's init system.
+#   ACTION: start stop restart reload enable disable is-active is-enabled exists
+#   systemd: systemctl; OpenRC (Alpine): rc-service / rc-update; SysV: service
+#   and update-rc.d or chkconfig.  Returns the tool's exit code.  BT_SVC_INIT
+#   overrides the detected init (the tests use it).
+cc_svc() {
+    _cc_sv_i=${BT_SVC_INIT:-${CC_INIT:-}}
+    [ -n "$_cc_sv_i" ] || { cc_detect_os; _cc_sv_i=$CC_INIT; }
+    case "$_cc_sv_i:$1" in
+        systemd:exists)      systemctl list-unit-files "$2.service" "$2" 2>/dev/null | grep -q "^$2[.@ ]" ;;
+        systemd:*)           systemctl "$1" "$2" ;;
+        openrc:exists)       [ -x "/etc/init.d/$2" ] ;;
+        openrc:is-active)    rc-service "$2" status >/dev/null 2>&1 ;;
+        openrc:is-enabled)   rc-update show -v 2>/dev/null | awk -v s="$2" '$1 == s && $3 != "" { f = 1 } END { exit !f }' ;;
+        openrc:enable)       rc-update add "$2" default ;;
+        openrc:disable)      rc-update -a del "$2" ;;
+        openrc:*)            rc-service "$2" "$1" ;;
+        *:exists)            [ -x "/etc/init.d/$2" ] ;;
+        *:is-active)         service "$2" status >/dev/null 2>&1 ;;
+        *:is-enabled)        ls /etc/rc[2345].d/S*"$2" >/dev/null 2>&1 ;;
+        *:enable)            if cc_have update-rc.d; then update-rc.d "$2" enable; else chkconfig "$2" on; fi ;;
+        *:disable)           if cc_have update-rc.d; then update-rc.d "$2" disable; else chkconfig "$2" off; fi ;;
+        *)                   service "$2" "$1" ;;
+    esac
+}
+# cc_svc_cmd ACTION NAME -> the same as a command line (for undo lines)
+cc_svc_cmd() {
+    _cc_sc_i=${BT_SVC_INIT:-${CC_INIT:-}}
+    case "$_cc_sc_i:$1" in
+        systemd:*)         printf 'systemctl %s %s' "$1" "$(cc_shquote "$2")" ;;
+        openrc:enable)     printf 'rc-update add %s default' "$(cc_shquote "$2")" ;;
+        openrc:disable)    printf 'rc-update -a del %s' "$(cc_shquote "$2")" ;;
+        openrc:*)          printf 'rc-service %s %s' "$(cc_shquote "$2")" "$1" ;;
+        *:enable)          printf '{ update-rc.d %s enable || chkconfig %s on; }' "$(cc_shquote "$2")" "$(cc_shquote "$2")" ;;
+        *:disable)         printf '{ update-rc.d %s disable || chkconfig %s off; }' "$(cc_shquote "$2")" "$(cc_shquote "$2")" ;;
+        *)                 printf 'service %s %s' "$(cc_shquote "$2")" "$1" ;;
+    esac
+}
+# cc_selinux_on -> true when SELinux is enforcing or permissive on this box
+cc_selinux_on() {
+    [ -n "${BT_SELINUX:-}" ] && { [ "$BT_SELINUX" = 1 ]; return; }
+    cc_have selinuxenabled && selinuxenabled 2>/dev/null
+}
+# cc_relabel_cmd PATH -> "; restorecon ..." to add to an undo line on an
+#   SELinux box (a file put back by cp or mv may carry the wrong label, and a
+#   service then cannot read it); nothing elsewhere.
+cc_relabel_cmd() { cc_selinux_on && cc_have restorecon && printf '; restorecon -R %s 2>/dev/null' "$(cc_shquote "$1")"; return 0; }
+# cc_relabel PATH... -> restore the SELinux label of new or replaced files (no-op elsewhere)
+cc_relabel() { cc_selinux_on && cc_have restorecon || return 0; restorecon -R "$@" 2>/dev/null; return 0; }
+
+# -----------------------------------------------------------------------------
 # Hashing, passwords, quarantine
 # -----------------------------------------------------------------------------
 
@@ -1085,7 +1141,7 @@ cc_quarantine() {
     if mv "$_cc_q_src" "$_cc_q_dst" 2>>"$CC_LOG"; then
         CC_N_DONE=$((CC_N_DONE + 1))
         cc_log DO "quarantined $_cc_q_src -> $_cc_q_dst (sha256 ${_cc_q_hash:-n/a})"
-        cc_undo_add "un-quarantine $_cc_q_src" "mv $(cc_shquote "$_cc_q_dst") $(cc_shquote "$_cc_q_src")"
+        cc_undo_add "un-quarantine $_cc_q_src" "mv $(cc_shquote "$_cc_q_dst") $(cc_shquote "$_cc_q_src")$(cc_relabel_cmd "$_cc_q_src")"
         return 0
     fi
     CC_N_FAIL=$((CC_N_FAIL + 1))
@@ -1617,6 +1673,10 @@ fi
 
 cc_init "LX-42" "Linux persistence sweep" changes
 cc_detect_os
+# OpenRC (Alpine): init scripts are the services.
+OPENRC=0
+if [ -n "$R" ]; then [ -d "$R/etc/runlevels" ] && OPENRC=1
+elif [ "${BT_SVC_INIT:-$CC_INIT}" = openrc ]; then OPENRC=1; fi
 cc_use_numbered_dir persistence
 CC_CSV_DIR="$CC_RUN_DIR/csv"
 mkdir -p "$CC_CSV_DIR" || cc_die 3 "cannot create $CC_CSV_DIR"
@@ -1658,6 +1718,10 @@ elif [ -d /var/lib/dpkg/info ]; then
     cat /var/lib/dpkg/info/*.list 2>/dev/null | sort -u >"$OWNEDF"; [ -s "$OWNEDF" ] && OWNED_OK=1
 elif cc_have rpm; then
     rpm -qal 2>/dev/null | sort -u >"$OWNEDF"; [ -s "$OWNEDF" ] && OWNED_OK=1
+elif [ -f /lib/apk/db/installed ]; then
+    # Alpine: F: is a folder, R: a file in it.
+    awk -F: '/^F:/ { d = substr($0, 3) } /^R:/ { print "/" d "/" substr($0, 3) }' /lib/apk/db/installed 2>/dev/null | sort -u >"$OWNEDF"
+    [ -s "$OWNEDF" ] && OWNED_OK=1
 fi
 owned() {
     [ "$OWNED_OK" = 1 ] || return 2
@@ -1781,7 +1845,7 @@ a_cron() {
     cron_file /etc/crontab system ""
     cron_file /etc/anacrontab system ""
     for _c in "$(P /etc/cron.d)"/*; do [ -f "$_c" ] && cron_file "$(L "$_c")" system ""; done
-    for _d in /var/spool/cron/crontabs /var/spool/cron /var/cron/tabs; do
+    for _d in /var/spool/cron/crontabs /var/spool/cron /var/cron/tabs /etc/crontabs; do
         for _c in "$(P "$_d")"/*; do
             [ -f "$_c" ] || continue
             _u=$(basename "$_c"); case " $IGUSERS " in *" $_u "*) continue ;; esac
@@ -1793,6 +1857,14 @@ a_cron() {
             [ -f "$_c" ] || continue
             case "$_c" in */.placeholder) continue ;; esac
             check_script "$(L "$_c")" cron "runs as root every ${_d%ly}"
+        done
+    done
+    # Alpine (busybox crond): /etc/periodic/<when>/ run from root's crontab.
+    for _d in 15min hourly daily weekly monthly; do
+        for _c in "$(P "/etc/periodic/$_d")"/*; do
+            [ -f "$_c" ] || continue
+            _e=$_d; [ "$_d" = 15min ] || _e=${_d%ly}; [ "$_d" = daily ] && _e=day
+            check_script "$(L "$_c")" cron "runs as root every $_e"
         done
     done
     for _d in /var/spool/cron/atjobs /var/spool/at /var/spool/atjobs; do
@@ -1883,7 +1955,24 @@ a_boot() {
     for _i in "$(P /etc/init.d)"/*; do
         [ -f "$_i" ] || continue
         case "$(basename "$_i")" in README|skeleton|functions) continue ;; esac
-        check_script "$(L "$_i")" boot "init script: runs as root at boot"
+        # On OpenRC an init script is the service itself: stop and disable it too.
+        _ifix="file"; [ "$OPENRC" = 1 ] && _ifix="unit"
+        check_script "$(L "$_i")" boot "init script: runs as root at boot" "$_ifix"
+    done
+    # OpenRC (Alpine): local.d runs at boot and shutdown, conf.d is sourced
+    # by the service of the same name.
+    for _s in "$(P /etc/local.d)"/*.start "$(P /etc/local.d)"/*.stop; do
+        [ -f "$_s" ] || continue
+        case "$_s" in *.start) _when="runs as root at every boot (OpenRC local)" ;; *) _when="runs as root at every shutdown (OpenRC local)" ;; esac
+        check_script "$(L "$_s")" boot "$_when"
+        unowned "$(L "$_s")" || continue
+        grep -q "|$(L "$_s")|" "$W/findings" || f MED boot "$(L "$_s")" "$_when: $(lines "$_s" | head -n 1 | cut -c1-160)" file
+    done
+    for _s in "$(P /etc/conf.d)"/*; do
+        [ -f "$_s" ] || continue
+        _l=$(lines "$_s" | grep -E "$SUSP" | head -n 1 | cut -c1-200)
+        [ -n "$_l" ] || _l=$(lines "$_s" | grep -E "$BADPATH" | head -n 1 | cut -c1-200)
+        [ -n "$_l" ] && f HIGH boot "$(L "$_s")" "sourced as root when the $(basename "$_s") service starts: $_l" line "$_l"
     done
     # Folders whose scripts run by themselves, and when.
     for _hd in "/etc/update-motd.d|runs as root every time anyone logs in" "/etc/NetworkManager/dispatcher.d|runs as root when the network changes" \
@@ -2574,6 +2663,14 @@ else
                     _undo_extra="systemctl daemon-reload"
                     for _w in $_was; do _undo_extra="$_undo_extra; systemctl $_w $(cc_shquote "$_ub")"; done
                     cc_undo_add "reload systemd and restore $_ub" "$_undo_extra"
+                elif [ "$_fk" = unit ] && [ -z "$R" ] && [ "$OPENRC" = 1 ]; then
+                    _ub=$(basename "$_it"); _undo_extra=""
+                    cc_svc is-enabled "$_ub" && _undo_extra="$(cc_svc_cmd enable "$_ub")"
+                    cc_svc is-active "$_ub" && _undo_extra="${_undo_extra:+$_undo_extra; }$(cc_svc_cmd start "$_ub")"
+                    cc_run_quiet "stop $_ub" cc_svc stop "$_ub"
+                    cc_run_quiet "disable $_ub" cc_svc disable "$_ub"
+                    # Runs after the file is put back (undo goes newest first).
+                    [ -n "$_undo_extra" ] && cc_undo_add "restore $_ub" "$_undo_extra"
                 fi
                 _dst="$CC_RUN_DIR/quarantine$_it"
                 cc_run_quiet "quarantine $_it" _quar "$_src" "$_dst"; _rc=$?

@@ -129,4 +129,73 @@ if [ "$(id -u)" = 0 ]; then
         t_ok "l: breakme stays on the new version" grep -q 'breakme 1.1' "$ST/inst"
     fi
 fi
+t_start "Alpine (apk)"
+A="$T_TMP/apkstub"; AE="$T_TMP/aetc"; mkdir -p "$A" "$AE/apk/keys" "$T_TMP/apkcache"
+cat >"$A/apk" <<'EOF'
+#!/bin/sh
+# stand-in apk: installed in $STUB_STATE/ainst ("name ver"), offered in aavail
+D=$STUB_STATE; echo "apk $*" >>"$D/calls"
+setv() { awk -v p="$1" -v v="$2" '$1 == p { $2 = v } { print }' "$D/ainst" >"$D/ai.n"; cat "$D/ai.n" >"$D/ainst"; }
+case "$1" in
+    list) awk 'NR == FNR { i[$1] = $2; next } ($1 in i) && i[$1] != $2 { printf "%s-%s x86_64 {%s} (MIT) [upgradable from: %s-%s]\n", $1, $2, $1, $1, i[$1] }' "$D/ainst" "$D/aavail" ;;
+    info) awk '{ print $1 "-" $2 }' "$D/ainst" ;;
+    update) ;;
+    fetch) for a; do case "$a" in *=*) case " ${STUB_NODL:-} " in *" ${a%%=*} "*) echo "ERROR: unable to select packages" >&2; exit 1 ;; esac; : >"$4/${a%%=*}-${a#*=}.apk" ;; esac; done ;;
+    add)
+        shift
+        if [ "$1" = -u ]; then shift
+            for a; do v=$(awk -v p="$a" '$1 == p { print $2 }' "$D/aavail"); [ -n "$v" ] && setv "$a" "$v"
+                [ "$a" = breakme ] && { grep -v '^8080$' "$D/ports" >"$D/p.n"; cat "$D/p.n" >"$D/ports"; }; done
+        else
+            for a; do case "$a" in
+                ./*.apk) b=${a#./}; b=${b%.apk}; n=$(printf '%s' "$b" | sed 's/-[0-9][^-]*-r[0-9]*$//'); setv "$n" "${b#"$n"-}"; [ "$n" = breakme ] && echo 8080 >>"$D/ports" ;;
+                *) n=$(printf '%s' "$a" | sed 's/[=<>~].*//'); awk -v n="$n" -v a="$a" '{ x = $0; sub(/[=<>~].*/, "", x) } x == n { print a; next } { print }' "$AWORLD" >"$D/w.n"; cat "$D/w.n" >"$AWORLD" ;;
+            esac; done
+        fi ;;
+esac
+exit 0
+EOF
+chmod +x "$A/apk"
+areset() {
+    printf 'openssh 9.9_p1-r2\nlibcrypto3 3.5.1-r0\nbreakme 1.0-r0\nlinux-lts 6.12.1-r0\nbusybox 1.37.0-r30\n' >"$ST/ainst"
+    printf 'openssh 9.9_p2-r0\nlibcrypto3 3.5.2-r0\nbreakme 1.1-r0\nlinux-lts 6.12.9-r0\n' >"$ST/aavail"
+    printf '22\n8080\n' >"$ST/ports"; : >"$ST/calls"
+    printf 'https://dl-cdn.alpinelinux.org/alpine/v3.23/main\nhttps://dl-cdn.alpinelinux.org/alpine/v3.23/community\n@evil http://203.0.113.9/alpine\n' >"$AE/apk/repositories"
+    : >"$AE/apk/keys/alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub"; : >"$AE/apk/keys/someone.rsa.pub"
+    printf 'alpine-base\nopenssh\nsudo=1.9.15_p5-r0\nbusybox\n' >"$AE/apk/world"
+    rm -f "$T_TMP/apkcache"/*; : >"$T_TMP/apkcache/breakme-1.0-r0.abc123.apk"
+}
+arun() { BT_TEST_PM=apk BT_TEST_ETC="$AE" BT_TEST_APKCACHE="$T_TMP/apkcache" AWORLD="$AE/apk/world" PATH="$A:$PATH" $SH "$C" --out "$O" --no-color --url http://127.0.0.1:1/ --no-restart --no-refresh --no-protected "$@"; }
+export AWORLD="$AE/apk/world"
+areset
+out=$(arun --batch 2>&1)
+t_has "$out" "package manager: apk" "apk is used"
+t_has "$out" "[ok] https://dl-cdn.alpinelinux.org/alpine/v3.23/main" "Alpine's own repository is fine"
+t_has "$out" "[*] not alpinelinux.org: http://203.0.113.9/alpine" "a strange repository is flagged"
+t_has "$out" "[!] an extra package signing key: /etc/apk/keys/someone.rsa.pub" "an extra signing key is HIGH"
+t_hasnt "$out" "alpine-devel@lists.alpinelinux.org-6165ee59" "Alpine's own key is not flagged"
+t_has "$out" "[*] held (never updated): sudo" "a pin in /etc/apk/world is a hold"
+t_has "$out" "treated as security" "it says why updates count as security"
+t_has "$out" "Security updates for ssh (1: openssh): what now? [U/s] u (default)" "ssh updates default to update"
+t_has "$out" "Security updates for openssl (1: libcrypto3)" "libcrypto3 is in the openssl group"
+t_has "$out" "Kernel updates (only take effect after a REBOOT" "linux-lts is the kernel"
+t_has "$out" "linux-lts): what now? [u/S] s (default)" "the kernel defaults to skip"
+t_eq "$(cat "$ST/ainst" | grep openssh)" "openssh 9.9_p1-r2" "a dry run changes nothing"
+areset
+out=$(arun --batch --apply 2>&1)
+t_eq "$(grep '^openssh ' "$ST/ainst")" "openssh 9.9_p2-r0" "--apply: openssh updated"
+t_has "$(cat "$ST/calls")" "apk add -u openssh" "with apk add -u, one group at a time"
+t_has "$out" "after the system" "a broken service is seen"
+t_has "$out" "[+] rolled back; everything answers again" "and rolled back from apk's cache"
+t_eq "$(grep '^breakme ' "$ST/ainst")" "breakme 1.0-r0" "the old version is back"
+t_eq "$(grep '^linux-lts ' "$ST/ainst")" "linux-lts 6.12.1-r0" "the kernel was left alone"
+areset; STUB_NODL="openssh libcrypto3"; export STUB_NODL
+out=$(arun --batch --apply 2>&1)
+t_has "$out" "the old version of openssh is no longer on the mirror: no rollback for it" "no old .apk: said before updating"
+t_eq "$(grep '^openssh ' "$ST/ainst")" "openssh 9.9_p1-r2" "and --batch leaves it (default no)"
+unset STUB_NODL
+areset
+out=$(arun --batch --apply 2>&1)
+t_eq "$(grep '^sudo' "$AE/apk/world")" "sudo=1.9.15_p5-r0" "a pin is kept by default (k)"
+
 t_done

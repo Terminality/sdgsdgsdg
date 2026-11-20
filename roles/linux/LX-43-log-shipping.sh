@@ -4,7 +4,7 @@
 # NAME:     Log shipping to Splunk
 # ROLE:     Linux  (wave 2: the Splunk box first, then every other box)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Red team clears logs on the box they are on.  Logs that already left
@@ -49,7 +49,8 @@
 #
 # OUTPUTS  (under --out, in logship-N/)
 #   output.txt, plan.txt, summary.txt, run.txt, revert.sh
-#   the config written: /etc/rsyslog.d/90-bt-splunk.conf (sender) or
+#   the config written: /etc/rsyslog.d/90-bt-splunk.conf (sender; Alpine
+#   without rsyslog: SYSLOGD_OPTS in /etc/conf.d/syslog) or
 #   SPLUNK/etc/apps/bt_receiver/local/inputs.conf (receiver)
 #
 # DEPENDS ON
@@ -68,6 +69,10 @@
 #   - Plain syslog is not encrypted: fine inside the team network.
 #   - Boxes with only journald (no rsyslog): install rsyslog first
 #     (apt-get install rsyslog) or forward with systemd-journal-upload.
+#   - Alpine without rsyslog: busybox syslogd sends the system logs itself
+#     (-R in /etc/conf.d/syslog, local copy kept with -L), but only over UDP,
+#     without buffering and without the service log files.  For those:
+#     apk add rsyslog, then run this again.
 # =============================================================================
 
 # >>> BT-LIB
@@ -153,6 +158,17 @@ if [ -z "$MODE" ]; then
         "r=receive: this IS the Splunk box (open a port for the other boxes' logs)"
     case "$CC_CHOICE" in r) MODE=receive ;; *) MODE=send ;; esac
 fi
+# Alpine without rsyslog: busybox syslogd (system logs, UDP only)
+BB=0
+if [ "$MODE" = send ]; then
+    if [ -n "$R" ]; then [ ! -f "$(P /etc/rsyslog.conf)" ] && [ -f "$(P /etc/conf.d/syslog)" ] && BB=1
+    elif ! cc_have rsyslogd && [ -f /etc/conf.d/syslog ] && cc_have syslogd; then BB=1; fi
+    if [ "$BB" = 1 ]; then
+        cc_show "$C_YEL" "  [*] no rsyslog here: busybox syslogd sends the system logs itself, over UDP only (no buffering, no service log files)."
+        cc_show "$C_GRY" "      For TCP and the service logs: apk add rsyslog, then run this again."
+        UDP=1; LOGS=system
+    fi
+fi
 if [ -z "$PORT" ]; then cc_ask_text "Port the logs go to" 1514 "a port number (the same on every box)"; PORT=$CC_ANSWER; fi
 case "$PORT" in ''|*[!0-9]*) cc_die 2 "the port must be a number" ;; esac
 if [ -z "$UDP" ]; then
@@ -216,7 +232,7 @@ fi
 
 # ---- Sender -------------------------------------------------------------------------------
 header "1/3  this box's logs"
-[ -n "$R" ] || cc_have rsyslogd || { cc_show "$C_RED" "  [x] rsyslog is not installed: apt-get install rsyslog (or dnf install rsyslog), then run again"; rm -rf "$W"; cc_finish; exit 3; }
+[ -n "$R" ] || [ "$BB" = 1 ] || cc_have rsyslogd || { cc_show "$C_RED" "  [x] rsyslog is not installed: apt-get install rsyslog (or dnf install rsyslog, apk add rsyslog), then run again"; rm -rf "$W"; cc_finish; exit 3; }
 if [ -z "$TO" ]; then cc_ask_text "The Splunk box's address" "" "its IP address or name"; TO=$CC_ANSWER; fi
 case "$TO" in ''|*[!A-Za-z0-9.:_-]*) cc_die 2 "the Splunk box's address is needed (--to HOST)" ;; esac
 # Service log files: tag|file
@@ -242,6 +258,50 @@ case "$LOGS" in
 esac
 
 header "2/3  plan"
+if [ "$BB" = 1 ]; then
+    # /etc/conf.d/syslog: SYSLOGD_OPTS="..."; -R HOST:PORT sends, -L keeps the local log too
+    BBCONF=/etc/conf.d/syslog
+    _old=$(sed -n 's/^SYSLOGD_OPTS=//p' "$(P "$BBCONF")" | tail -n 1 | tr -d '"'"'")
+    _new=$(printf '%s' "$_old" | awk '{ o = ""; for (i = 1; i <= NF; i++) { if ($i == "-R") { i++; continue } if ($i ~ /^-R./ || $i == "-L") continue; o = o (o == "" ? "" : " ") $i } print o }')
+    _new="${_new:+$_new }-L -R $TO:$PORT"
+    case " $_old " in *" -R "*|*" -R"[!\ ]*) cc_show "$C_YEL" "  [*] syslogd already sends logs somewhere: SYSLOGD_OPTS=\"$_old\" - yours? (red team can send copies of logs out too)" ;; esac
+    if [ "$_old" = "$_new" ]; then cc_show "$C_GRN" "  [ok] $BBCONF already sends to $TO:$PORT"
+    else plan "set SYSLOGD_OPTS=\"$_new\" in $BBCONF (was \"$_old\"): busybox syslogd sends the system logs to $TO:$PORT over UDP and keeps its local log"
+        [ -z "$R" ] && plan "restart syslog (rc-service syslog restart), then send a test line"
+    fi
+    header "3/3  apply"
+    TESTID=""
+    if go; then
+        _cf=$(P "$BBCONF")
+        cc_backup_file "$_cf" >/dev/null
+        if grep -q '^SYSLOGD_OPTS=' "$_cf"; then
+            awk -v n="$_new" '/^SYSLOGD_OPTS=/ { print "SYSLOGD_OPTS=\"" n "\""; next } { print }' "$_cf" >"$W/bb" && cat "$W/bb" >"$_cf"
+        else printf 'SYSLOGD_OPTS="%s"\n' "$_new" >>"$_cf"; fi
+        cc_show "$C_GRN" "  [+] wrote $BBCONF"; NOK=1
+        if [ -z "$R" ]; then
+            cc_undo_add "restart syslog after its config is put back" "$(cc_svc_cmd restart syslog)"
+            if cc_svc restart syslog >>"$CC_LOG" 2>&1 </dev/null && sleep 1 && tr '\000' ' ' <"/proc/$(pgrep -x syslogd | head -n 1)/cmdline" 2>/dev/null | grep -q -- "-R $TO:$PORT"; then
+                cc_show "$C_GRN" "  [+] syslog restarted (it sends to $TO:$PORT)"
+            else cc_show "$C_RED" "  [x] syslogd did not restart with the new options: rc-service syslog restart, then check: ps | grep syslogd"; NBAD=1; fi
+            TESTID="BT-LX43-TEST-$CC_HOST-$(date +%s)"
+            logger -p auth.info "$TESTID" 2>/dev/null && cc_show "$C_GRN" "  [+] test line sent: search Splunk for $TESTID"
+        fi
+    fi
+    # shellcheck disable=SC2034  # read by cc_finish
+    CC_N_DONE=$NOK
+    # shellcheck disable=SC2034  # read by cc_finish
+    CC_N_FAIL=$NBAD
+    {
+        printf '==========[ summary ]==========\n'
+        printf 'LX-43 Log shipping | host %s | sender (busybox syslogd) | %s\n' "$CC_HOST" "$([ "$APPLIED" = 1 ] && echo APPLIED || echo 'DRY RUN - nothing changed')"
+        printf 'To: %s:%s over udp   Service logs: 0 (busybox syslogd sends the system logs only)\n' "$TO" "$PORT"
+        [ -n "$TESTID" ] && printf '\nIn Splunk, search: "%s"   (nothing? open udp %s on the Splunk box: LX-25, and run LX-43 --receive --udp there)\n' "$TESTID" "$PORT"
+        [ -f "$CC_RUN_DIR/revert.sh" ] && printf 'Undo: sh %s/revert.sh --force\n' "$CC_RUN_DIR"
+    } >"$CC_RUN_DIR/summary.txt"
+    cc_show "" ""; while IFS= read -r _l; do case "$_l" in ==*|LX-43*) cc_show "$C_CYN" "$_l" ;; *) cc_show "" "$_l" ;; esac; done <"$CC_RUN_DIR/summary.txt"
+    rm -rf "$W"
+    cc_finish
+fi
 CONF=/etc/rsyslog.d/90-bt-splunk.conf
 {
     printf '# Written by LX-43: send this box'"'"'s logs to Splunk (%s %s:%s).\n# Delete this file and restart rsyslog to stop.\n' "$PROTO" "$TO" "$PORT"
