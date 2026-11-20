@@ -223,6 +223,16 @@ $r = Run @('-Out', $out, '-Undo', 'latest', '-Apply', '-Protected', $prot)
 T-Eq $r.Code 0 'undo latest exits 0'
 T-Eq (Snap) $start 'state back exactly, including values that did not exist before (RunAsPPL, RequireSecuritySignature)'
 
+T-Start 'service undo starts only what was running'
+Plant
+Csv 'services.csv' @('name,state,startmode', 'EventLog,Stopped,Disabled', 'Spooler,Running,Auto', 'RemoteRegistry,Stopped,Manual', 'iphlpsvc,Running,Auto')
+$r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-Only', 'spooler,remotereg')
+T-Eq $r.Code 0 'exits 0'
+$u = [IO.File]::ReadAllText((Join-Path $r.Dir 'undo.txt'))
+T-True ($u -match 'Set-Service Spooler -StartupType Automatic; Start-Service Spooler') 'Spooler was running: its undo starts it'
+T-True ($u -match 'Set-Service RemoteRegistry -StartupType Manual') 'Remote Registry back to Manual'
+T-True ($u -notmatch 'Start-Service RemoteRegistry') 'Remote Registry was stopped: its undo does not start it'
+
 T-Start 'protected items are refused'
 Plant
 $p2 = Join-Path $tmp 'prot2.csv'
