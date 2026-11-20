@@ -129,6 +129,7 @@ newest() { for _f in "$O"/firewall-ruleset-*; do printf '%s %s\n' "${_f##*-}" "$
 t_start "options"
 $SH "$C" --device p1,pan,paloalto --team moon >/dev/null 2>&1; t_eq "$?" 2 "a bad --team exits 2"
 $SH "$C" >/dev/null 2>&1; t_eq "$?" 2 "no firewall exits 2"
+$SH "$C" --device p1,pan,paloalto,admin,22x >/dev/null 2>&1; t_eq "$?" 2 "a port that is not a number exits 2"
 out=$($SH "$C" --out "$O" --device p1,pan,paloalto --batch 2>&1); t_eq "$?" 2 "no scored boxes exits 2"
 t_has "$out" "No scored boxes" "and says why"
 out=$($SH "$C" --help 2>&1); t_has "$out" "--remove" "--help"
