@@ -3401,7 +3401,8 @@ A non-default SNMP community is reported, but its value is never shown or writte
 | Found | Fix |
 | --- | --- |
 | Web admin (LuCI) over plain HTTP | `uhttpd.main.redirect_https=1` |
-| SSH on every interface; the web admin on every address | SSH on `lan` only; the web admin on the router's lan address (a management change: you confirm a login from another team machine) |
+| The web admin on every address | on the router's lan address (a management change: you confirm a login from another team machine) |
+| SSH on the outside (wan) | shown, **left by default**: the team logs in from outside. `[f]ix` puts SSH on `lan` only. To limit who may connect from outside, use NW-20 |
 | UPnP on | off, and `miniupnpd` disabled |
 | Telnet started at boot | stopped and disabled |
 | No SSH idle timeout | `IdleTimeout` = `--timeout` minutes |

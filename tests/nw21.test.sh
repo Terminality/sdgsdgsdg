@@ -322,16 +322,17 @@ EOF
 cp "$D/ow.cfg" "$T_TMP/ow.orig"
 OW="--device router,ow,openwrt,root"
 out=$(run $OW --batch 2>&1)
-for x in "[!] web admin (LuCI) over plain HTTP" "[!] telnet starts at boot (/etc/rc.d/S50telnet)" "[!] SSH and the web admin answer on every interface" \
+for x in "[!] web admin (LuCI) over plain HTTP" "[!] telnet starts at boot (/etc/rc.d/S50telnet)" "[*] SSH answers on the outside (wan) too" "[!] the web admin (LuCI) answers on every address" \
          "[!] UPnP is on" "[*] SNMP has a default community name" "[*] SSH logins never time out" "[*] logs are not sent to 10.0.0.20" \
          "[*] time is not taken from 10.0.0.20" "[-] no login banner"; do t_has "$out" "$x" "OpenWRT: $x"; done
 t_has "$out" "Dry run: nothing was changed" "dry run"
 t_fail "a dry run sends no uci change" grep -q '^uci set' "$D/ow.log"
+t_has "$out" "What now? [f/L/a] l (default): leave it" "SSH from outside: the default is leave"
 _u0=$(cat "$O"/undo-*.log 2>/dev/null | grep -c .)
 out=$(run $OW --batch --apply --no-protected 2>&1)
 c=$(cat "$D/ow.cfg")
 t_has "$c" "uhttpd.main.redirect_https='1'" "HTTPS only"
-t_has "$c" "dropbear.@dropbear[0].Interface='lan'" "SSH on lan only"
+t_hasnt "$c" "dropbear.@dropbear[0].Interface='lan'" "SSH from outside is left on by default"
 t_has "$c" "uhttpd.main.listen_https='192.168.220.2:443'" "the web admin on the lan address"
 t_hasnt "$c" "0.0.0.0" "nothing on every address"
 t_has "$c" "upnpd.config.enabled='0'" "UPnP off"
@@ -349,7 +350,6 @@ c=$(cat "$D/ow.cfg")
 t_has "$c" "uhttpd.main.redirect_https='0'" "undo: HTTP again"
 t_has "$c" "S50telnet" "undo: telnet back"
 t_has "$c" "upnpd.config.enabled='1'" "undo: UPnP back"
-t_hasnt "$c" "Interface='lan'" "undo: SSH on every interface again"
 t_has "$c" "uhttpd.main.listen_http='0.0.0.0:80' '[::]:80'" "undo: the old web addresses back"
 
 t_start "questions: devices, password, team, log and time servers"

@@ -33,8 +33,10 @@
 #   openwrt (log in as root; every change is a uci setting, committed and
 #   only that service reloaded):
 #     web admin (LuCI) over plain HTTP     -> redirected to HTTPS
-#     SSH on every interface / web admin   -> SSH on lan only, the web admin
-#       on every address                      on the router's lan address
+#     web admin on every address           -> on the router's lan address
+#     SSH on the outside (wan)             -> shown; left by default (the team
+#                                             logs in from outside; NW-20 can
+#                                             limit who may)
 #     UPnP on                              -> off
 #     telnet started at boot               -> stopped and disabled
 #     no SSH idle timeout                  -> --timeout minutes
@@ -2021,15 +2023,18 @@ END {
         X("telnet", "/etc/init.d/telnet stop; /etc/init.d/telnet disable"); U("telnet", "/etc/init.d/telnet enable; /etc/init.d/telnet start") }
     else O("no telnet at boot")
     ifc = q(V[db ".Interface"]); anyweb = ((hh " " hs) ~ /(^| )(0\.0\.0\.0:|\[::\]:|[0-9]+( |$))/)
-    if ((ifc == "" || ifc == "wan") || (anyweb && lan != "")) {
-        if (lan != "") { F("mgmt", "HIGH", "SSH" (anyweb ? " and the web admin" : "") " answer on every interface, the outside (wan) too: limit them to the inside (lan)", "f")
-            if (ifc == "" || ifc == "wan") { X("mgmt", "uci set " db ".Interface=lan && uci commit dropbear && /etc/init.d/dropbear restart"); U("mgmt", (ifc == "" ? "uci delete " db ".Interface" : "uci set " db ".Interface=" ifc) " && uci commit dropbear && /etc/init.d/dropbear restart") }
-            if (anyweb) { X("mgmt", "uci delete uhttpd.main.listen_http; uci delete uhttpd.main.listen_https; uci add_list uhttpd.main.listen_https=" lan ":443" (hh != "" ? "; uci add_list uhttpd.main.listen_http=" lan ":80" : "") " && uci commit uhttpd && /etc/init.d/uhttpd restart")
-                u = "uci delete uhttpd.main.listen_http; uci delete uhttpd.main.listen_https"; n = split(hh, L, " "); for (i = 1; i <= n; i++) u = u "; uci add_list uhttpd.main.listen_http=" L[i]
-                n = split(hs, L, " "); for (i = 1; i <= n; i++) u = u "; uci add_list uhttpd.main.listen_https=" L[i]
-                U("mgmt", u " && uci commit uhttpd && /etc/init.d/uhttpd restart") } }
-        else F("mgmt", "HIGH", "SSH answers on every interface: set its Interface to lan (the lan address was not read)", "-") }
-    else O("SSH and the web admin on the inside (lan) only")
+    # SSH from the outside is how the team gets in from remote: shown, left
+    # by default (limit who may connect with NW-20 firewall rules instead).
+    if (ifc == "" || ifc == "wan") { F("sshwan", "MED", "SSH answers on the outside (wan) too - needed if you log in from outside; NW-20 can limit who may", "l")
+        X("sshwan", "uci set " db ".Interface=lan && uci commit dropbear && /etc/init.d/dropbear restart"); U("sshwan", (ifc == "" ? "uci delete " db ".Interface" : "uci set " db ".Interface=" ifc) " && uci commit dropbear && /etc/init.d/dropbear restart") }
+    else O("SSH on " ifc " only")
+    if (anyweb && lan != "") { F("webany", "HIGH", "the web admin (LuCI) answers on every address, the outside too: limit it to the inside (" lan ")", "f")
+        X("webany", "uci delete uhttpd.main.listen_http; uci delete uhttpd.main.listen_https; uci add_list uhttpd.main.listen_https=" lan ":443" (hh != "" ? "; uci add_list uhttpd.main.listen_http=" lan ":80" : "") " && uci commit uhttpd && /etc/init.d/uhttpd restart")
+        u = "uci delete uhttpd.main.listen_http; uci delete uhttpd.main.listen_https"; n = split(hh, L, " "); for (i = 1; i <= n; i++) u = u "; uci add_list uhttpd.main.listen_http=" L[i]
+        n = split(hs, L, " "); for (i = 1; i <= n; i++) u = u "; uci add_list uhttpd.main.listen_https=" L[i]
+        U("webany", u " && uci commit uhttpd && /etc/init.d/uhttpd restart") }
+    else if (anyweb) F("webany", "HIGH", "the web admin (LuCI) answers on every address (the lan address was not read: set uhttpd listen_http/https by hand)", "-")
+    else O("the web admin on chosen addresses only")
     if (q(V["upnpd.config.enabled"]) == "1") { F("upnp", "HIGH", "UPnP is on: any program inside can open ports on the router to the outside", "f")
         X("upnp", "uci set upnpd.config.enabled=0 && uci commit upnpd && /etc/init.d/miniupnpd stop; /etc/init.d/miniupnpd disable"); U("upnp", "uci set upnpd.config.enabled=1 && uci commit upnpd && /etc/init.d/miniupnpd enable; /etc/init.d/miniupnpd start") }
     for (k in V) if (k ~ /^snmpd\..*\.community$/ && dflt(q(V[k]))) snmpd = 1
@@ -2092,6 +2097,8 @@ while IFS="$US" read -r _n _i _l _t _d; do
     if [ "$_all" = 0 ]; then
         case "$_i" in
             mgmt) _how="limit it to $TEAM and this box; a new login is tested, then you confirm from another machine" ;;
+            sshwan) _how="SSH on the inside (lan) only: you could no longer log in from OUTSIDE; a new login is tested, then you confirm from another machine" ;;
+            webany) _how="the web admin on the inside address only; a new login is tested, then you confirm from another machine" ;;
             telnet|plain) _how="turn it off; SSH (and HTTPS) stay" ;;
             *) _how="change it; the undo puts it back" ;;
         esac
@@ -2164,7 +2171,7 @@ elif cc_ask "Do these $NCH change(s) now, one device at a time?" Y "yes (each de
         cc_show "" ""; cc_show "$C_CYN" "  -- $_n ($_v): $(tr '\n' ' ' <"$W/ids.$_n")"
         { pre "$_v"; lines "$_n" X "$W/ids.$_n"; post "$_v"; } >"$W/fix.$_n"
         { pre "$_v"; lines "$_n" U "$W/ids.$_n"; post "$_v"; save "$_v"; } >"$W/undo.$_n"
-        _risky=0; grep -qxE 'mgmt|telnet|plain' "$W/ids.$_n" && _risky=1
+        _risky=0; grep -qxE 'mgmt|telnet|plain|sshwan|webany' "$W/ids.$_n" && _risky=1
         # 1. One session stays open: the changes go in through a FIFO.
         rm -f "$W/fifo"; mkfifo "$W/fifo"
         sshopts >"$W/opts"; set --; while IFS= read -r _o; do set -- "$@" "$_o"; done <"$W/opts"
