@@ -1,6 +1,6 @@
 # Build status
 
-45 of 49 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+46 of 50 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -13,7 +13,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | wave1 | 3 | 3 |
 | Hardening: easy | 3 | 3 |
 | Hardening: medium | 2 | 2 |
-| Hardening: hard | 3 | 5 |
+| Hardening: hard | 4 | 6 |
 | Management | 4 | 4 |
 | Alerts | 3 | 4 |
 | Kit | 3 | 3 |
@@ -95,6 +95,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | WN-27 | Windows remote access lockdown | access | planned |  |
 | WN-23 | Account lockdown (Windows / AD) | access | planned |  |
 | NW-21 | Network device hardening | access | built | `roles/network/NW-21-device-hardening.sh` |
+| NW-20 | Firewall ruleset | service | built | `roles/network/NW-20-firewall-ruleset.sh` |
 
 ## Management
 

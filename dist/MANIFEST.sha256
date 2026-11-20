@@ -33,6 +33,7 @@ afa25d711d05c25482ee47bde7a354da2cd7548d832e36d924bfb73da9827a53  network/NW-01-
 954425d7ac27500da32a26c674049071501ec77384d08565508bf903bb2479c4  network/NW-07-config-audit.sh
 fde7f11fb50c7c7e876b6ed292444ceddd587d24223bc2bbf222bede312f7b25  network/NW-10-device-passwords.sh
 7830affa898539d4fee874ca731ecacf59668930ce506b9cbebf985b300b1bcf  network/NW-12-device-sessions.sh
+f1467165f1e9825652f63bf0e29154ff8e25650cff28e84041a427c17c39284b  network/NW-20-firewall-ruleset.sh
 a73d013a16f751daff25e36fb2be4bcdb4057850e81c16d8ee533a39c6db717b  network/NW-21-device-hardening.sh
 a7560955fec8e51b54db3f2bc36c6ce73d75c8dea5470ba8b05d3a9e5878c1d5  network/SH-03-network-scan.sh
 cee95feeed72cc6440ad689b9197eb6a1b51e5c845109531001229bd89065d4e  network/SH-04-scan-diff.sh

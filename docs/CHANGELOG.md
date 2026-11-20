@@ -7,9 +7,18 @@ What changed, newest first. Each entry names the scripts touched and how they we
 - **NW-01**: FortiGate shows its encrypted secrets (`ENC ...`) differently on every read, so every backup showed them as HIGH changes: hidden before comparing (the saved `.cfg` keeps them). Header lines `#config-version`, `#buildno`, `#global_vdom` dropped too. MikroTik's wrapped export lines (ending in `\`) are joined, so a re-wrap is no change. Linux routers: `iptables-save` and `nft` run with `sudo -n` when the login is not root (they showed nothing).
 - **NW-07**: MikroTik wrapped lines joined before the rules: a `disabled=yes` on the second half was missed (a false "www on").
 - **NW-10**: device names checked like the other scripts (they are used in paths to NW-01's copies).
-- **NW-01, NW-10, NW-12, NW-21**: the SSH port is checked (1-65535), from `--device` and the host list.
+- **NW-01, NW-10, NW-12, NW-20, NW-21**: the SSH port is checked (1-65535), from `--device` and the host list.
 - **SH-03**: the host list is read by column name, so a list with an added column (like `vendor`) still finds the scored services. The port list for the details scan is in number order (it differed between awks).
 - Tested: the network tests (nw01, nw07, nw10, nw12, nw21, sh03, sh04) under seven shells and three awks.
+
+## 2026-11-19: Firewall ruleset (NW-20, new)
+
+- **NW-20** puts named `bt-` rules at the top of the network firewall (Palo Alto, Cisco ASA, FortiGate, MikroTik, a Linux router; pfSense/OPNsense as web GUI steps; Cisco IOS/VyOS as a plan): team allowed, any address to each scored box on its scored ports only, ping in, everything else in blocked and logged. Optional, default no: outgoing limits (servers may only start connections to DNS, NTP and listed places) and threat prevention.
+- Scored boxes from `--allow`, a plain `.txt` list (`--file`), the newest SH-03 scan (offered port by port) or typed in. No CSV needed.
+- Asks about the list, the team, each rule, the outside and inside zones, and each firewall. Every scored service is tried before and after; one that stops answering puts everything back at once. Then you confirm against the scoreboard within `--timer` seconds, else put back. Undo script per device and `--remove`.
+- Palo Alto and FortiGate: NAT rules and virtual IPs leading to a scored box are read and added to its rules.
+- Puts back by itself also when the firewall refuses a command, a Palo Alto commit does not say it worked, or the run is stopped (Ctrl-C) mid-change. The undo is written before anything is sent.
+- Tested: 128 checks with a stand-in firewall for every brand (one that breaks a scored service and one that refuses a command, so the put-back is real) under seven shells and three awks; the real `nft` accepts the Linux ruleset; live on a Linux router. Not yet on real firewalls.
 
 ## 2026-11-19: Network device hardening (NW-21, new)
 
