@@ -159,6 +159,7 @@ run() { $SH "$C" --out "$O" --no-color $OPTS "$@"; }
 t_start "options"
 $SH "$C" --device r1,ios,cisco-ios --banner 'a;b' >/dev/null 2>&1; t_eq "$?" 2 "a banner with odd characters exits 2"
 $SH "$C" --device r1,ios,cisco-ios --timeout 0 >/dev/null 2>&1; t_eq "$?" 2 "--timeout 0 exits 2"
+$SH "$C" --device r1,ios,cisco-ios,admin,22x >/dev/null 2>&1; t_eq "$?" 2 "a port that is not a number exits 2"
 $SH "$C" --device r1,ios,cisco-ios --log-host moon >/dev/null 2>&1; t_eq "$?" 2 "a bad --log-host exits 2"
 out=$($SH "$C" --help 2>&1); t_has "$out" "--log-host IP" "--help"
 
