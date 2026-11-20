@@ -61,6 +61,7 @@ Contents:
 51. Network device hardening, `roles/network/NW-21-device-hardening.sh` (NW-21)
 52. Firewall ruleset, `roles/network/NW-20-firewall-ruleset.sh` (NW-20)
 53. Device change watch, `roles/network/NW-30-device-watch.sh` (NW-30)
+54. Gitea hardening, `roles/applications/SV-45-gitea-hardening.sh` (SV-45)
 
 ---
 
@@ -3604,3 +3605,48 @@ In `device-watch-N/`: `output.txt`, `changes.txt` (every change: time, device, l
 - **Secrets are shown as `****`.** The full read is in `net-watch/DEVICE/copies/`.
 - **FortiGate secrets (`ENC ...`)** read differently each time, so they are hidden before comparing: a changed secret is not seen (a new admin still is).
 - **Ctrl-C stops it cleanly**; the summary is still written.
+
+## 54. Gitea hardening, `roles/applications/SV-45-gitea-hardening.sh` (SV-45)
+
+Gitea (or Forgejo) is scored: people log in, browse and clone. It is also an easy way in. This reads `app.ini` and the repositories, shows what is wrong and offers the fixes. Run it on the Gitea box (Gufu).
+
+### How to run it
+
+```sh
+sudo sh SV-45-gitea-hardening.sh                                  # look + dry run
+sudo sh SV-45-gitea-hardening.sh --protected p.csv --apply        # asks about each fix
+sudo sh SV-45-gitea-hardening.sh --protected p.csv --apply --batch --skip no-register
+```
+
+### What it shows
+
+| Section | Shows |
+| --- | --- |
+| 1/4 what this Gitea is | config file, version, web port, git over SSH (sshd or Gitea's own), the user it runs as, public repositories, plain HTTP, Actions |
+| 2/4 settings | the install page (HIGH), sign-ups (MED), git hooks users can add (HIGH), migrations into the inside network (HIGH), webhooks into the inside network (MED), `app.ini` readable by everyone (MED) |
+| 3/4 hooks and admins | hooks in repositories that Gitea did not put there (HIGH: they run on every push), admin accounts (sqlite; otherwise the command to list them) |
+| 4/4 questions and changes | one question per fix, then apply |
+
+### The fixes (each asked; Enter = yes)
+
+| Fix | What it does |
+| --- | --- |
+| `install-lock` | `[security] INSTALL_LOCK = true` |
+| `no-register` | `[service] DISABLE_REGISTRATION = true`. Say no if the scoring engine signs up users |
+| `git-hooks` | `[security] DISABLE_GIT_HOOKS = true` |
+| `local-migrate` | `[migrations] ALLOW_LOCALNETWORKS = false` |
+| `webhook-local` | `[webhook] ALLOWED_HOST_LIST = external` |
+| `repo-hooks` | Quarantines each planted hook (Gitea's own and git's `.sample` files stay) |
+| `config-perms` | `app.ini` to the Gitea user's group, mode 640 |
+
+Settings are written in their section with a `; BT SV-45` line above them (Gitea ignores comments at the end of a line). Plain HTTP and public repositories are only reported: the scoring engine may need them.
+
+### Safety
+
+- Dry run unless `--apply`. Revert timer (120 s).
+- After the changes: Gitea is restarted, then **the login page must load again within 20 seconds**, or everything is put back and Gitea restarted.
+- Nothing is printed from `app.ini` except the setting names: no passwords or keys.
+
+### With the other scripts
+
+LX-22 keeps Gitea's SSH keys and the git user; LX-25 `--box gitea` keeps ports 3000, 2222, 80, 443 open; SV-50 `--box gitea` brings it back if it goes down; SV-16 for web shells. All of them guess `gitea` as the box when they find `app.ini`.

@@ -321,7 +321,7 @@ t_has "$r" "w.sh.sha256" "naming the hash file"
 t_start "which box: the shared list and the guess"
 B="$T_TMP/boxroot"
 mk box 'BOX=${1:-${BOX:-}}; cc_box_valid "${1:-}" || { echo "invalid ${1:-}"; exit 0; }; cc_box_ask "${2:-o}" "$B"; echo "BOX=$BOX"'
-sed -i "s|\$B|$B|" "$S/box.sh"
+sed "s|\$B|$B|" "$S/box.sh" >"$S/box.t" && mv "$S/box.t" "$S/box.sh"
 guess() { rm -rf "$B"; mkdir -p "$B"; for _f in "$@"; do mkdir -p "$B/${_f%/*}"; : >"$B/$_f"; done; }
 bx() { (export BT_NO_TTY=1; run "$S/box.sh" "$@" 2>&1); }
 guess;                                  t_has "$(bx '' o)" "BOX=other" "nothing found: other"
