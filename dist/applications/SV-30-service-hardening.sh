@@ -1555,13 +1555,13 @@ cc_net_ask_devices() {
     done
     [ -n "$CC_NET_DEVICES" ]
 }
-# cc_net_ask_password -> BT_NET_PASS: used as it is when already set (setting
+# cc_net_ask_password [LABEL] -> BT_NET_PASS: used as it is when already set (setting
 #   it is the answer), else typed now, hidden, never logged.  Returns 1 when
 #   there is no password and nobody to ask.
 cc_net_ask_password() {
     [ -n "${BT_NET_PASS:-}" ] && return 0
     _cc_can_ask || return 1
-    printf '%s[?]%s Device password (hidden, never saved): ' "${C_CYN:-}" "${C_OFF:-}" >/dev/tty
+    printf '%s[?]%s %s (hidden, never saved): ' "${C_CYN:-}" "${C_OFF:-}" "${1:-Device password}" >/dev/tty
     stty -echo </dev/tty 2>/dev/null; read -r BT_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
     [ -n "$BT_NET_PASS" ]
 }
