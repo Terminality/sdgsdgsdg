@@ -485,6 +485,18 @@ function Read-CcAsk {
     return ((Read-CcChoice -Question $Question -Default $d -Options @(('y=' + $Yes), ('n=' + $No))) -eq 'y')
 }
 
+# Read-CcSecret 'prompt'   -> a typed secret, not shown, never logged and never
+#   copied to output.txt.  Tests feed it through $env:BT_TEST_ANSWERS like any
+#   other answer.
+function Read-CcSecret {
+    param([string]$Prompt)
+    $c = $script:Cc
+    if ($null -ne $c.Answers -and $c.Answers.Count -gt 0) { $a = [string]$c.Answers[0]; $c.Answers.RemoveAt(0); Write-Host ($Prompt + ': (hidden)'); return $a }
+    $ss = Read-Host -Prompt $Prompt -AsSecureString
+    $b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($ss)
+    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($b) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) }
+}
+
 # Read-CcText -Question 'Your team addresses?' -Default '' [-Hint 'addresses separated by spaces']
 #   -> the typed text, or the default on Enter, -Batch or no console.
 function Read-CcText {

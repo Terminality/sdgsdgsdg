@@ -29,7 +29,15 @@ function Run([string[]]$a) {
     $dir = ''; if ($text -match 'All results: (\S+)') { $dir = $matches[1].Trim() }
     return @{ Code = $LASTEXITCODE; Text = $text; Dir = $dir }
 }
-function Act($dir, $name) { foreach ($r in @(Import-Csv -LiteralPath (Join-Path $dir 'accounts.csv'))) { if ($r.account -eq $name) { return $r.action } }; return '' }
+# Rows dir -> the rows of accounts.txt (a " | " table) as hashtables.
+function Rows($dir) {
+    $lines = @(Get-Content -LiteralPath (Join-Path $dir 'accounts.txt'))
+    $h = @($lines[0] -split '\|' | ForEach-Object { $_.Trim() }); $out = @()
+    foreach ($l in @($lines | Select-Object -Skip 1)) { $v = @($l -split '\|' | ForEach-Object { $_.Trim() }); $r = @{}; for ($i = 0; $i -lt $h.Count; $i++) { $r[$h[$i]] = $v[$i] }; $out += $r }
+    return $out
+}
+function Row1($dir, $name) { foreach ($r in @(Rows $dir)) { if ($r.account -eq $name) { return $r } }; return @{} }
+function Act($dir, $name) { return (Row1 $dir $name).action }
 function SetPw($name) { $p = Join-Path $fake 'set.log'; $last = $null; if (Test-Path -LiteralPath $p) { foreach ($l in [IO.File]::ReadAllLines($p)) { $f = $l -split "`t", 2; if ($f[0] -eq $name) { $last = $f[1] } } }; return $last }
 function Reset {
     Remove-Item -LiteralPath (Join-Path $fake 'set.log') -Force -ErrorAction SilentlyContinue
@@ -71,7 +79,7 @@ T-Eq $r.Code 0 'exits 0'
 T-Has $r.Text 'DRY RUN' 'says it is a dry run'
 T-Eq (Act $r.Dir 'alice') 'would change' 'alice would change'
 T-Eq ([IO.File]::ReadAllText((Join-Path $fake 'set.log'))) '' 'nothing set'
-T-True (-not (Test-Path -LiteralPath (Join-Path $r.Dir 'passwords.csv'))) 'no passwords file in a dry run'
+T-True (-not (Test-Path -LiteralPath (Join-Path $r.Dir 'passwords.txt'))) 'no passwords file in a dry run'
 
 T-Start 'apply with exclusions, a password sheet and the protected list'
 $sheet = Join-Path $tmp 'sheet.csv'
@@ -92,20 +100,20 @@ T-Has $r.Text 'ghost is in -Passwords but is not an account here' 'a sheet name 
 T-Eq (SetPw 'Guest') '' 'Guest never changed'
 T-Eq (SetPw 'DefaultAccount') '' 'DefaultAccount never changed'
 T-Eq (SetPw 'svc_sql') '' 'an account that runs a service is skipped'
-T-Has (Import-Csv -LiteralPath (Join-Path $d 'accounts.csv') | Where-Object { $_.account -eq 'svc_sql' }).note 'service MSSQLSERVER' 'and the service is named'
+T-Has (Row1 $d 'svc_sql').note 'service MSSQLSERVER' 'and the service is named'
 T-Eq (SetPw 'svc_web') '' 'an account with an SPN is skipped'
 T-Eq (SetPw 'scoring') '' 'a protected account is skipped'
 T-Eq (Act $d 'scoring') 'skipped' 'listed as skipped'
 T-Eq (SetPw $me) '' 'the account running the script is skipped'
 T-Eq (Act $d 'picky') 'FAILED' 'a rejected password is FAILED'
 T-Has $r.Text 'does not meet the password policy' "Windows' reason is shown"
-$pf = [IO.File]::ReadAllText((Join-Path $d 'passwords.csv'))
-T-Has $pf ',alice,Team-Alice-Pass-26,' 'passwords.csv has the new password'
-T-Has $pf ',bob,"Has,Comma""Quote-99",' 'a password with a comma or quote is quoted the CSV way'
-T-HasNot $pf 'picky' 'a failed change is not in passwords.csv'
-T-HasNot $pf 'mark.jacobs' 'an excluded account is not in passwords.csv'
-T-True (-not (Test-Path -LiteralPath (Join-Path $d 'pending-password.csv'))) 'no pending file after a normal run'
-T-Has (Import-Csv -LiteralPath (Join-Path $d 'accounts.csv') | Where-Object { $_.account -eq 'alice' }).note 'new password tested' 'each change is tested with a logon check'
+$pf = [IO.File]::ReadAllText((Join-Path $d 'passwords.txt'))
+T-True ($pf -match '(?m)^\S+\s+alice\s+Team-Alice-Pass-26\s') 'passwords.txt has the new password'
+T-True ($pf -match '(?m)^\S+\s+bob\s+Has,Comma"Quote-99\s') 'a password with a comma or quote is written as it is'
+T-HasNot $pf 'picky' 'a failed change is not in passwords.txt'
+T-HasNot $pf 'mark.jacobs' 'an excluded account is not in passwords.txt'
+T-True (-not (Test-Path -LiteralPath (Join-Path $d 'pending-password.txt'))) 'no pending file after a normal run'
+T-Has (Row1 $d 'alice').note 'new password tested' 'each change is tested with a logon check'
 $log = [IO.File]::ReadAllText(@(Get-ChildItem -LiteralPath $out -Filter 'WN-20_*.log' | Sort-Object Name)[-1].FullName)
 T-HasNot $log 'Team-Alice-Pass-26' 'no password in the log'
 T-HasNot $r.Text 'Team-Alice-Pass-26' 'no password on screen'
@@ -129,7 +137,7 @@ Reset
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-IncludeDisabled')
 T-Has $r.Text 'domain accounts (this is a domain controller)' 'says it changes domain accounts'
 T-Eq (SetPw 'krbtgt') '' 'krbtgt is never changed, even with -IncludeDisabled'
-T-Has (Import-Csv -LiteralPath (Join-Path $r.Dir 'accounts.csv') | Where-Object { $_.account -eq 'krbtgt' }).note 'WN-22' 'and points to WN-22'
+T-Has (Row1 $r.Dir 'krbtgt').note 'WN-22' 'and points to WN-22'
 Remove-Item -LiteralPath (Join-Path $fake 'is-dc') -Force
 
 T-Start 'stopped in the middle: the new password is not lost'
@@ -142,9 +150,45 @@ $p = Start-Process -FilePath $psExe -ArgumentList $all -PassThru -RedirectStanda
 Start-Sleep -Seconds 6
 Stop-Process -Id $p.Id -Force
 Remove-Item Env:\BT_WN20_SLOW
-$pend = @(Get-ChildItem -LiteralPath $out -Recurse -Filter 'pending-password.csv' | Sort-Object LastWriteTime)
-T-True ($pend.Count -ge 1) 'pending-password.csv is left behind when the script is killed mid-change'
-if ($pend.Count -ge 1) { T-Has ([IO.File]::ReadAllText($pend[-1].FullName)) ',alice,' 'and it names the account' }
+$pend = @(Get-ChildItem -LiteralPath $out -Recurse -Filter 'pending-password.txt' | Sort-Object LastWriteTime)
+T-True ($pend.Count -ge 1) 'pending-password.txt is left behind when the script is killed mid-change'
+if ($pend.Count -ge 1) { T-True ([IO.File]::ReadAllText($pend[-1].FullName) -match '(?m)^\S+\s+alice\s') 'and it names the account' }
+
+T-Start 'the look and the questions'
+Reset
+$o7 = Join-Path $tmp 'out7'
+$r = Run @('-Out', $o7, '-Protected', $prot, '-Users', 'alice', '-Batch')
+T-Has $r.Text 'WN-20 Windows password rotation | host' 'the title line'
+T-Has $r.Text '==========[ 1/4  accounts' 'numbered headers'
+T-Has $r.Text '[~] alice' 'the planned change is shown'
+T-Has $r.Text '==========[ 3/4  dry run: nothing is changed ]==========' '-Batch without -Apply: a dry run'
+T-True ($r.Dir -match 'passwords-1$') 'a numbered folder passwords-1'
+T-True (@(Get-ChildItem -LiteralPath $r.Dir -Recurse -Filter '*.csv').Count -eq 0) 'no CSV in the results'
+# s: typed twice (a mismatch first), then apply: yes.
+Reset
+$env:BT_TEST_ANSWERS = 's;Typed-Pass-1234;Other-Pass-9999;Typed-Pass-1234;Typed-Pass-1234;y'
+$r = Run @('-Out', $o7, '-Protected', $prot, '-Users', 'alice')
+Remove-Item Env:\BT_TEST_ANSWERS
+T-Has $r.Text '[?] alice (local): new password?' 'each account is asked'
+T-Has $r.Text 'The two did not match: type it again' 'a mismatch is asked again'
+T-Has $r.Text '[?] Apply these 1 change(s)?' 'then: apply?'
+T-Eq (SetPw 'alice') 'Typed-Pass-1234' 's: the typed password is set'
+T-HasNot $r.Text 'Typed-Pass-1234' 'and it is never shown'
+T-HasNot ([IO.File]::ReadAllText((Join-Path $r.Dir 'output.txt'))) 'Typed-Pass-1234' 'nor in output.txt'
+# k: keep - nothing to apply.
+Reset
+$env:BT_TEST_ANSWERS = 'k'
+$r = Run @('-Out', $o7, '-Protected', $prot, '-Users', 'alice')
+Remove-Item Env:\BT_TEST_ANSWERS
+T-Eq (Act $r.Dir 'alice') 'skipped' 'k: kept'
+T-True ($null -eq (SetPw 'alice')) 'and not changed'
+# r, then apply: no.
+Reset
+$env:BT_TEST_ANSWERS = 'r;n'
+$r = Run @('-Out', $o7, '-Protected', $prot, '-Users', 'alice')
+Remove-Item Env:\BT_TEST_ANSWERS
+T-Eq (Act $r.Dir 'alice') 'would change' 'apply: no is a dry run'
+T-True ($null -eq (SetPw 'alice')) 'nothing changed'
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ("  {0} passed, {1} failed" -f $script:pass, $script:fail)
