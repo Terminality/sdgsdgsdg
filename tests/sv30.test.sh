@@ -174,4 +174,15 @@ t_start "nothing to do when no service is present"
 rm -rf "$R"; mkdir -p "$R/etc"
 r=$(run --root "$R" --out "$O" --batch --no-color 2>&1)
 t_has "$r" "nothing to harden" "says there is nothing to harden"
+t_start "telnet someone is logged in through is not turned off by default"
+TB="$T_TMP/tbin"; mkdir -p "$TB"; printf '#!/bin/sh\nexit 0\n' >"$TB/telnetd"; chmod +x "$TB/telnetd"
+printf '23|10.100.102.9\n23|127.0.0.1\n' >"$T_TMP/estab"
+out=$(export BT_TEST_ESTAB="$T_TMP/estab" PATH="$TB:$PATH"; $SH "$C" --out "$O" --no-color --batch --level access --only telnet-disable 2>&1)
+t_has "$out" "IN USE NOW: connected from 10.100.102.9" "the live telnet session is shown (loopback is not counted)"
+t_has "$out" "stop and disable telnet? [y/N] n (default)" "and the default is no, even when named in --only"
+: >"$T_TMP/estab"
+out=$(export BT_TEST_ESTAB="$T_TMP/estab" PATH="$TB:$PATH"; $SH "$C" --out "$O" --no-color --batch --level access --only telnet-disable 2>&1)
+t_hasnt "$out" "IN USE NOW" "no session: no warning"
+t_has "$out" "stop and disable telnet? [Y/n] y (default)" "named in --only: yes, as before"
+
 t_done
