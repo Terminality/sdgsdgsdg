@@ -77,4 +77,60 @@ if [ "${BT_TEST_SVC:-0}" = 1 ] && [ "$(id -u)" = 0 ] && [ -x /usr/sbin/apache2 ]
     t_fail "no CSV files are left" sh -c "find '$O' -name '*.csv' | grep -q ."
     up || service apache2 start >/dev/null 2>&1
 fi
+t_start "stand-ins: Gitea, Samba, firewalld, ufw, OpenRC"
+# Nothing real is touched: init scripts in a test folder (BT_SVC_DIRS),
+# python's web server named gitea on a free port, and firewall-cmd, ufw and
+# rc-update stand-ins that only log their calls.
+PY=$(command -v python3 2>/dev/null)
+if [ -n "$PY" ] && command -v ss >/dev/null 2>&1; then
+    S="$T_TMP/svc"; B="$T_TMP/sbin"; L="$T_TMP/calls"; mkdir -p "$S" "$B" "$T_TMP/www"; : >"$L"
+    GP=""; for _p in 3000 13000 23000 33000; do ss -ltn | grep -q ":$_p " || { GP=$_p; break; }; done
+    for _u in gitea smbd; do printf '#!/bin/sh\necho "init %s $1" >>"%s"\n' "$_u" "$L" >"$S/$_u"; chmod +x "$S/$_u"; done
+    ln -s "$PY" "$B/gitea"
+    (cd "$T_TMP/www" && exec "$B/gitea" -m http.server "$GP" --bind 127.0.0.1 >/dev/null 2>&1) & GPID=$!
+    _i=0; while ! ss -ltn | grep -q ":$GP " && [ "$_i" -lt 20 ]; do sleep 1; _i=$((_i + 1)); done
+    # firewalld that allows only ssh; ufw that allows only 22.
+    printf '#!/bin/sh\necho "firewall-cmd $*" >>"%s"\ncase "$1" in --state) echo running ;; --list-services) echo ssh ;; --info-service=ssh) echo "  ports: 22/tcp" ;; -q) exit 1 ;; esac\nexit 0\n' "$L" >"$B/firewall-cmd"
+    printf '#!/bin/sh\necho "ufw $*" >>"%s"\ncase "$*" in "status") printf "Status: active\\n\\nTo Action From\\n22/tcp ALLOW Anywhere\\n" ;; "status verbose") echo "Default: deny (incoming)" ;; esac\nexit 0\n' "$L" >"$B/ufw"
+    printf '#!/bin/sh\necho "rc-update $*" >>"%s"\n' "$L" >"$B/rc-update"; printf '#!/bin/sh\necho "rc-service $*" >>"%s"\n' "$L" >"$B/rc-service"
+    chmod +x "$B/firewall-cmd" "$B/ufw" "$B/rc-update" "$B/rc-service"
+    mkdir -p "$T_TMP/runlevels/default"
+    # app.ini says which port Gitea serves.
+    srun() { (export BT_SVC_DIRS="$S" BT_SVC_INIT=openrc BT_TEST_RUNLEVELS="$T_TMP/runlevels" PATH="$B:$PATH"; $SH "$C" --out "$O" --no-color --batch --no-protected "$@" 2>&1); }
+    if [ "$GP" != 3000 ]; then t_ok "skip: port 3000 is taken here (the app.ini port is read from a real /etc/gitea only)" true; fi
+    if [ "$GP" = 3000 ]; then
+        out=$(srun --box gitea --services gitea,smbd)
+        t_has "$out" "[!] gitea     gitea" "Gitea is checked"
+        t_has "$out" "HTTP 200 on 3000" "over HTTP on its port"
+        t_has "$out" "firewalld does not allow 3000/tcp" "a port firewalld blocks is found"
+        t_has "$out" "ufw does not allow 3000/tcp" "and one ufw blocks"
+        t_has "$out" "disabled at boot" "OpenRC: not in a runlevel = disabled at boot"
+        t_has "$out" "smb       smbd" "Samba is checked"
+        t_has "$out" "not running" "a stopped Samba is found"
+        t_has "$out" "[~] open 3000/tcp in firewalld (now and after a reboot)" "the firewalld fix is offered"
+        t_has "$out" "[~] allow 3000/tcp in ufw" "the ufw fix is offered"
+        t_has "$out" "Dry run: nothing was changed" "dry run"
+        t_hasnt "$(cat "$L")" "add-port" "a dry run opens nothing"
+        out=$(srun --box gitea --services gitea,smbd --apply)
+        c=$(cat "$L")
+        t_has "$c" "firewall-cmd --add-port=3000/tcp" "--apply opens it in firewalld"
+        t_has "$c" "firewall-cmd --permanent --add-port=3000/tcp" "also after a reboot"
+        t_has "$c" "ufw allow 3000/tcp" "and in ufw"
+        t_has "$c" "rc-update add gitea default" "enabled at boot through OpenRC"
+        t_has "$c" "init smbd start" "Samba started"
+        u=$(cat "$O"/undo-*.log)
+        t_has "$u" "firewall-cmd --remove-port=3000/tcp" "undo closes the port again"
+        t_has "$u" "ufw delete allow 3000/tcp" "in ufw too"
+        t_has "$u" "rc-update -a del" "and takes it out of the runlevel"
+        ln -s /etc/init.d/gitea "$T_TMP/runlevels/default/gitea"
+        out=$(srun --box gitea --services gitea)
+        t_hasnt "$out" "disabled at boot" "in a runlevel: enabled"
+    fi
+    out=$(srun --batch --services gitea 2>&1)
+    t_has "$out" "Which box is this? [s/w/e/f/g/b/O] o (default): other" "the box question offers the new boxes"
+    for _b in fileshare gitea web; do srun --box "$_b" --services gitea >/dev/null; t_eq "$?" 0 "--box $_b is accepted"; done
+    kill "$GPID" 2>/dev/null; pkill -f "$B/gitea" 2>/dev/null
+    # Wait until the port is free again (the next shell's run uses it).
+    _i=0; while ss -ltn | grep -q ":$GP " && [ "$_i" -lt 20 ]; do sleep 1; _i=$((_i + 1)); done
+fi
 t_done
