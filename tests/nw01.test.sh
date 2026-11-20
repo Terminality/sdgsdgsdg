@@ -178,4 +178,106 @@ t_eq "$rc" 0 "exit 0"
 t_has "$(cat "$D/sshpass.log")" "SSHPASS_SET=yes" "password handed over in the environment"
 t_hasnt "$(cat "$D/10.0.0.5.args")" "TopSecret-99" "password never on a command line"
 t_fail "password never in a log" grep -rq "TopSecret-99" "$O"
+t_start "OpenWRT"
+# What an OpenWRT router answers: release, uci export, nft, accounts, keys.
+owrt() { cat <<CFG
+===release
+DISTRIB_ID='OpenWrt'
+DISTRIB_RELEASE='23.05.5'
+===uci
+package dropbear
+
+config dropbear
+	option PasswordAuth 'on'
+	option Port '22'
+
+package firewall
+
+config zone
+	option name 'wan'
+	option input 'REJECT'
+	option forward 'REJECT'
+
+config redirect
+	option name 'web'
+	option src 'wan'
+	option src_dport '80'
+	option dest_ip '192.168.220.10'
+	option dest_port '80'
+	option target 'DNAT'
+$1
+package wireless
+
+config wifi-iface 'default_radio0'
+	option key 'Sup3rS3cretWifi'
+===nft
+table inet fw4 {
+	chain input {
+		type filter hook input priority filter; policy drop;
+		counter packets $2 bytes 1234 accept
+	}
+}
+===addr
+2: br-lan    inet 192.168.220.2/24 brd 192.168.220.255 scope global br-lan\       valid_lft forever preferred_lft forever
+3: wan    inet 10.100.7.2/24 brd 10.100.7.255 scope global wan\       valid_lft $2sec preferred_lft $2sec
+===passwd
+root:x:0:0:root:/root:/bin/ash
+===keys
+===cron
+===startup
+S10boot
+S50dropbear
+CFG
+}
+owrt "" 11 >"$D/192.168.220.2.out"
+out=$(run --out "$O" --device router,192.168.220.2,openwrt,root --no-color 2>&1); rc=$?
+t_eq "$rc" 0 "exit 0"
+t_has "$(cat "$D/192.168.220.2.cmds")" "uci export" "reads every setting with uci export"
+t_has "$(cat "$D/192.168.220.2.cmds")" "nft list ruleset" "and the fw4 firewall"
+t_has "$(cat "$D/192.168.220.2.cmds")" "/etc/dropbear/authorized_keys" "and root's SSH keys"
+t_has "$out" "[ok] router (openwrt, 192.168.220.2): saved" "one plain line per device"
+t_has "$out" "==========[ 2/3  reading each device ]==========" "sections like the other scripts"
+t_has "$out" "Legend:" "with a legend"
+t_hasnt "$out" "Sup3rS3cretWifi" "the Wi-Fi key is never shown"
+# Counters and DHCP lease times change by themselves: not a change.
+owrt "" 99 >"$D/192.168.220.2.out"
+out=$(run --out "$O" --device router,192.168.220.2,openwrt,root --no-color 2>&1)
+t_has "$out" "[ok] router (openwrt, 192.168.220.2): saved" "counters and lease times are not changes"
+# A planted port forward and a forwarded SSH port.
+owrt "config redirect
+	option name 'x'
+	option src 'wan'
+	option src_dport '2222'
+	option dest_ip '192.168.220.44'
+	option dest_port '22'
+	option target 'DNAT'
+" 5 >"$D/192.168.220.2.out"
+out=$(run --out "$O" --device router,192.168.220.2,openwrt,root --no-color 2>&1)
+t_has "$out" "[*] router (openwrt, 192.168.220.2): saved - " "a change is shown on the device line"
+t_has "$out" "HIGH" "a new port forward is HIGH"
+t_has "$out" "option dest_ip '192.168.220.44'" "with the line"
+t_hasnt "$out" "Sup3rS3cretWifi" "still no Wi-Fi key"
+run --device r,1.2.3.4,openwrt --help >/dev/null 2>&1; t_eq "$?" 0 "--help"
+t_has "$(run --help 2>&1)" "openwrt" "openwrt is listed"
+
+t_start "questions"
+if command -v script >/dev/null 2>&1; then
+    owrt "" 11 >"$D/192.168.220.2.out"
+    rm -f "$D/192.168.220.2.args"
+    # address, type (Enter = OpenWRT), name (Enter = router), user (Enter = root), another (Enter = no), login: keys
+    printf '192.168.220.2\n\n\n\n\nk\n' >"$T_TMP/ans"
+    mkdir -p "$T_TMP/empty"; tt=$(cd "$T_TMP/empty" && BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color" /dev/null <"$T_TMP/ans" 2>&1)
+    t_has "$tt" "[o] OpenWRT router" "the device type is asked with every answer spelled out"
+    t_has "$tt" "Log in to router as?" "the login name is asked"
+    t_has "$tt" "How do I log in to the devices?" "and how to log in"
+    t_has "$tt" "router (openwrt, 192.168.220.2): saved" "the typed device is read"
+    t_has "$(cat "$D/192.168.220.2.args")" "root@192.168.220.2" "as root (the default for OpenWRT)"
+    t_has "$(cat "$D/192.168.220.2.args")" "BatchMode=yes" "with keys, as answered"
+    # A host list in config/: offered first.
+    mkdir -p "$T_TMP/q/config"; printf 'router 192.168.220.2 openwrt router ssh 22 root - -\n' >"$T_TMP/q/config/hosts.txt"
+    printf '\nk\n' >"$T_TMP/ans"
+    tt=$(cd "$T_TMP/q" && BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color" /dev/null <"$T_TMP/ans" 2>&1)
+    t_has "$tt" "Use the host list config/hosts.txt" "a host list in config/ is offered"
+    t_has "$tt" "[ok] router (openwrt, 192.168.220.2): saved" "and used"
+fi
 t_done

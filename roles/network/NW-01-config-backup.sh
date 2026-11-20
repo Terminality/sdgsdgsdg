@@ -4,7 +4,7 @@
 # NAME:     Network device config backup and diff
 # ROLE:     Network  (wave 1, first 15 minutes)
 # KIND:     readonly - only runs "show" commands on the devices
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Logs in to each firewall, router and switch over SSH, saves its running
@@ -24,6 +24,15 @@
 #     opnsense    OPNsense               cat /conf/config.xml  (log in as root)
 #     mikrotik    RouterOS               /export
 #     linux       Linux router/firewall  iptables-save, nft list ruleset, ip addr/route
+#     openwrt     OpenWRT router         uci export (every setting), nft list ruleset
+#                                        (fw4), addresses, routes, accounts, root's
+#                                        SSH keys, cron, startup scripts (log in as root)
+#
+#   QUESTIONS (only when no flag answers them; --batch takes the defaults):
+#     use the host list config/hosts.txt?        --hosts FILE
+#     else each device: address, type, name, user  --device NAME,ADDRESS,TYPE[,USER[,PORT]]
+#     how to log in: typed password / BT_NET_PASS / SSH keys
+#                                                --ask-password / --password-env / --keys
 #
 # USAGE
 #   sh NW-01-config-backup.sh --hosts config/hosts.txt            all network devices
@@ -38,13 +47,15 @@
 #   --device SPEC      NAME,ADDRESS,VENDOR[,USER[,PORT]] (repeat)
 #   --user NAME        login name when the list gives none (default admin)
 #   --password-env     log in with the password in $BT_NET_PASS (needs
-#                      sshpass); without it SSH keys are used
+#                      sshpass)
+#   --keys             log in with SSH keys (the default with --batch)
 #   --ask-password     ask for the password once (needs sshpass)
 #   --enable-env       Cisco: send "enable" with the password in
 #                      $BT_NET_ENABLE (when the login is not privilege 15)
 #   --legacy-ssh       allow old SSH algorithms from the start (old Cisco gear;
 #                      tried automatically when a device refuses the modern ones)
 #   --max-flags N      HIGH/MED flags shown on screen (default 30)
+#   --no-color         no colours
 #   --help             this text plus the common options
 #
 # OUTPUTS
@@ -67,7 +78,9 @@
 #   stand-in ssh (the tests use one).
 #
 # TESTED ON
-#   The flow end to end against a real OpenSSH server (vendor "linux"), and
+#   The flow end to end against a real OpenSSH server (vendor "linux"), the
+#   OpenWRT commands against a stand-in device with an OpenWRT-style uci
+#   export, and
 #   every vendor's commands and clean-up against recorded-style sample output,
 #   under dash, bash, busybox sh, ksh93, mksh and yash.  NOT yet against real
 #   Cisco, Palo Alto, FortiGate, VyOS or pfSense devices - run it once on the
@@ -99,7 +112,7 @@ while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$
 . "$_cc_d/lib/lib.sh"
 # <<< BT-LIB
 
-VENDORS="cisco-ios cisco-asa paloalto fortigate vyos pfsense opnsense mikrotik linux"
+VENDORS="cisco-ios cisco-asa paloalto fortigate vyos pfsense opnsense mikrotik linux openwrt"
 
 usage() {
     cat <<'USAGE'
@@ -111,27 +124,32 @@ NW-01 Network device config backup and diff
   --user NAME        default login name (admin)
   --password-env     password from $BT_NET_PASS (needs sshpass)
   --ask-password     ask for the password once (needs sshpass)
+  --keys             log in with SSH keys
   --enable-env       Cisco enable password from $BT_NET_ENABLE
   --legacy-ssh       allow old SSH algorithms
   --max-flags N      HIGH/MED flags on screen (default 30)
+  --no-color         no colours
   --help             show this text
 
-Vendors: cisco-ios cisco-asa paloalto fortigate vyos pfsense opnsense mikrotik linux
+Without --hosts or --device it asks which devices to read, and how to log in.
+Vendors: cisco-ios cisco-asa paloalto fortigate vyos pfsense opnsense mikrotik linux openwrt
 USAGE
     cc_usage_common
 }
 
 NL='
 '
-HOSTS=""; DEVICES=""; DEFUSER="admin"; PWMODE="key"; ENABLE=0; LEGACY=0; MAXFLAGS=30
+HOSTS=""; DEVICES=""; DEFUSER="admin"; USERSET=0; PWMODE="key"; PWSET=0; ENABLE=0; LEGACY=0; MAXFLAGS=30; COLOR=1
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
         --hosts)        [ $# -ge 2 ] || cc_die 2 "--hosts needs a file"; [ -r "$2" ] || cc_die 2 "--hosts: cannot read $2"; HOSTS=$2; shift 2 ;;
         --device)       [ $# -ge 2 ] || cc_die 2 "--device needs NAME,ADDRESS,VENDOR"; DEVICES="$DEVICES$2$NL"; shift 2 ;;
-        --user)         [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; shift 2 ;;
-        --password-env) PWMODE="env"; shift ;;
-        --ask-password) PWMODE="ask"; shift ;;
+        --user)         [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; USERSET=1; shift 2 ;;
+        --password-env) PWMODE="env"; PWSET=1; shift ;;
+        --ask-password) PWMODE="ask"; PWSET=1; shift ;;
+        --keys)         PWMODE="key"; PWSET=1; shift ;;
+        --no-color|--no-colour) COLOR=0; shift ;;
         --enable-env)   ENABLE=1; shift ;;
         --legacy-ssh)   LEGACY=1; shift ;;
         --max-flags)    [ $# -ge 2 ] || cc_die 2 "--max-flags needs a number"; MAXFLAGS=$2; shift 2 ;;
@@ -139,15 +157,66 @@ while [ $# -gt 0 ]; do
         *)              cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-[ -n "$HOSTS$DEVICES" ] || cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
 case "$MAXFLAGS" in ''|*[!0-9]*) cc_die 2 "--max-flags needs a whole number" ;; esac
 
 # shellcheck disable=SC2034  # read by the library: tables as .txt, no CSV
 CC_TABLES=1
 cc_init "NW-01" "Network config backup" readonly
+# shellcheck disable=SC2034  # read by cc_color_init
+[ "$COLOR" = 1 ] || CC_NOCOLOR=1
+cc_color_init
+# Nothing to read and nobody to ask: stop before making a run folder.
+if [ -z "$HOSTS$DEVICES" ] && ! _cc_can_ask; then
+    _hf=""; for _f in config/hosts.txt hosts.txt; do [ -r "$_f" ] && { _hf=$_f; break; }; done
+    [ -n "$_hf" ] || cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
+fi
 cc_use_run_dir
 W="$CC_RUN_DIR/.work"
 mkdir -p "$W" || cc_die 3 "cannot create $W"
+header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
+cc_show "$C_CYN" "NW-01 Network config backup | from $CC_HOST | results in $CC_RUN_DIR"
+cc_show "" "Legend: ${C_GRN}[ok]${C_OFF} saved   ${C_YEL}[*]${C_OFF} saved, something changed since the last copy   ${C_RED}[!]${C_OFF} not saved   (read-only: only show commands are sent)"
+
+# ---- 1/3  Which devices, and how to log in --------------------------------------
+header "1/3  devices and login"
+# The host list, when one is lying around and no flag named the devices.
+if [ -z "$HOSTS$DEVICES" ]; then
+    for _f in config/hosts.txt hosts.txt; do
+        [ -r "$_f" ] || continue
+        if cc_ask "Use the host list $_f (the network devices in it)?" Y "yes, read every network device in it" "no, I will type the devices"; then HOSTS=$_f; fi
+        break
+    done
+fi
+# Otherwise ask device by device.
+if [ -z "$HOSTS$DEVICES" ]; then
+    while :; do
+        cc_ask_text "Device address (IP or name)? Enter when done" "" "like 192.168.220.2"
+        _da=$CC_ANSWER; [ -n "$_da" ] || break
+        case "$_da" in *[!A-Za-z0-9._:-]*) cc_show "$C_YEL" "  [*] '$_da' is not an address: skipped"; continue ;; esac
+        cc_choose "What is $_da?" o "o=OpenWRT router" "l=Linux router" "m=MikroTik" "p=pfSense" "n=OPNsense" \
+            "c=Cisco router or switch (IOS)" "a=Cisco ASA" "x=Palo Alto" "f=FortiGate" "v=VyOS"
+        case "$CC_CHOICE" in o) _dv=openwrt ;; l) _dv=linux ;; m) _dv=mikrotik ;; p) _dv=pfsense ;; n) _dv=opnsense ;;
+            c) _dv=cisco-ios ;; a) _dv=cisco-asa ;; x) _dv=paloalto ;; f) _dv=fortigate ;; *) _dv=vyos ;; esac
+        # OpenWRT, pfSense and OPNsense: root runs the commands.
+        _du=$DEFUSER; [ "$USERSET" = 0 ] && case "$_dv" in openwrt|pfsense|opnsense) _du=root ;; esac
+        _dd=router; case "$_dv" in cisco-asa|paloalto|fortigate|pfsense|opnsense) _dd=firewall ;; esac
+        cc_ask_text "A short name for it (letters, digits, - and _)?" "$_dd"; _dn=$CC_ANSWER
+        case "$_dn" in ''|*[!A-Za-z0-9_.-]*) _dn=$_dd ;; esac
+        cc_ask_text "Log in to $_dn as?" "$_du"; _du=${CC_ANSWER:-$_du}
+        DEVICES="$DEVICES$_dn,$_da,$_dv,$_du$NL"
+        cc_ask "Another device?" N "yes, add one more" "no, that is all" || break
+    done
+    [ -n "$DEVICES" ] || cc_die 2 "no devices given (or use --hosts FILE / --device NAME,ADDRESS,VENDOR)"
+fi
+# How to log in, when no flag said.
+if [ "$PWSET" = 0 ] && _cc_can_ask; then
+    if [ -n "${BT_NET_PASS:-}" ]; then
+        cc_choose "How do I log in to the devices?" e "e=the password in BT_NET_PASS" "p=a password: type it now (hidden, never saved)" "k=SSH keys that are already set up"
+    else
+        cc_choose "How do I log in to the devices?" p "p=a password: type it now (hidden, never saved)" "k=SSH keys that are already set up"
+    fi
+    case "$CC_CHOICE" in e) PWMODE="env" ;; p) PWMODE=ask ;; *) PWMODE=key ;; esac
+fi
 STORE="$CC_OUT/net-configs"
 (umask 077; mkdir -p "$STORE") || cc_die 3 "cannot create $STORE"
 SSH=${BT_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
@@ -181,6 +250,7 @@ vendor_of() {
         /opnsense/ { print "opnsense"; exit }
         /pfsense/ { print "pfsense"; exit }
         /mikrotik|routeros/ { print "mikrotik"; exit }
+        /openwrt|lede|luci/ { print "openwrt"; exit }
         /^linux$/ { print "linux"; exit }
         /cisco/ { print "cisco-ios"; exit }'
 }
@@ -231,6 +301,10 @@ cmd_text() {
         pfsense|opnsense) printf 'cat /conf/config.xml' ;;
         mikrotik)  printf '/export' ;;
         linux)     printf 'S=; [ "$(id -u)" = 0 ] || S="sudo -n"; $S iptables-save 2>/dev/null; $S nft list ruleset 2>/dev/null; ip -o addr 2>/dev/null; ip route 2>/dev/null' ;;
+        # OpenWRT: every setting is in uci; fw4 turns the firewall part into
+        # nftables.  Accounts, root's SSH keys, cron and startup scripts are
+        # where a red team hides on a router.
+        openwrt)   printf 'echo "===release"; cat /etc/openwrt_release 2>/dev/null; echo "===uci"; uci export 2>/dev/null; echo "===nft"; nft list ruleset 2>/dev/null; echo "===addr"; ip -o addr 2>/dev/null; echo "===route"; ip route 2>/dev/null; echo "===passwd"; cat /etc/passwd 2>/dev/null; echo "===keys"; cat /etc/dropbear/authorized_keys /root/.ssh/authorized_keys 2>/dev/null; echo "===cron"; cat /etc/crontabs/* 2>/dev/null; echo "===startup"; ls /etc/rc.d 2>/dev/null; echo "===rc.local"; cat /etc/rc.local 2>/dev/null' ;;
     esac
 }
 # NORMALIZE: drop what changes by itself (timestamps, counters, prompts and
@@ -248,7 +322,9 @@ v == "mikrotik" && /\\$/ { sub(/\\$/, ""); held = held $0; next }
 v == "mikrotik" && held != "" { sub(/^[ \t]+/, ""); $0 = held $0; held = "" }
 v == "linux" && (/^# Generated by iptables-save/ || /^# Completed on/) { next }
 v == "linux" && /^:[A-Z-]+ [A-Z-]+ \[[0-9]+:[0-9]+\]/ { sub(/ \[[0-9]+:[0-9]+\]$/, "") }
-v == "linux" { gsub(/counter packets [0-9]+ bytes [0-9]+ /, "") }
+v == "linux" || v == "openwrt" { gsub(/counter packets [0-9]+ bytes [0-9]+ /, "") }
+v == "openwrt" && /^:[A-Z-]+ [A-Z-]+ \[[0-9]+:[0-9]+\]/ { sub(/ \[[0-9]+:[0-9]+\]$/, "") }
+v == "openwrt" { gsub(/ valid_lft [0-9]+sec preferred_lft [0-9]+sec/, ""); gsub(/ expires [0-9]+sec/, "") }
 { print }'
 # MASK: hide secrets in text shown on screen (the saved files keep them).
 MASK='
@@ -293,6 +369,7 @@ run_ssh() {
 }
 
 : >"$W/summary_rows"
+header "2/3  reading each device"
 while IFS='|' read -r _n _a _v _u _p; do
     cc_info "$_n ($_v, $_a): fetching"
     mkdir -p "$STORE/$_n"; chmod 700 "$STORE/$_n"
@@ -313,7 +390,8 @@ while IFS='|' read -r _n _a _v _u _p; do
         sed 's/^/    /' "$W/err" >>"$CC_LOG"
         cc_flag HIGH "$_n" "$_a" "the device's SSH host key CHANGED since the last backup: device replaced, reinstalled, or someone in the middle. Not backed up. Check, then remove its line from $STORE/known_hosts"
         cc_table_row "$DT" "$_n" "$_a" "$_v" "HOST KEY CHANGED" 0 0 0 ""
-        printf '%s|%s|HOST KEY CHANGED|0|0|0\n' "$_n" "$_v" >>"$W/summary_rows"; CC_N_FAIL=$((CC_N_FAIL + 1)); continue
+        printf '%s|%s|HOST KEY CHANGED|0|0|0\n' "$_n" "$_v" >>"$W/summary_rows"; CC_N_FAIL=$((CC_N_FAIL + 1))
+        cc_show "$C_RED" "  [!] $_n ($_v, $_a): NOT saved - its SSH host key CHANGED since the last backup (replaced? someone in the middle?)"; continue
     fi
     if [ "$_rc" -ne 0 ] || [ "$_lines" -lt 3 ]; then
         { printf '%s: ssh exit %s\n' "$_n" "$_rc"; sed 's/^/    /' "$W/err"; head -n 20 "$W/raw" | awk "$MASK"'{ print "    " mask($0) }'; } >>"$CC_LOG"
@@ -321,7 +399,8 @@ while IFS='|' read -r _n _a _v _u _p; do
         [ -n "$_why" ] || _why="empty answer (no rights to show the config?)"
         cc_flag MED "$_n" "$_a" "backup FAILED: $_why"
         cc_table_row "$DT" "$_n" "$_a" "$_v" "failed: $_why" "$_lines" 0 0 ""
-        printf '%s|%s|failed: %s|%s|0|0\n' "$_n" "$_v" "$_why" "$_lines" >>"$W/summary_rows"; CC_N_FAIL=$((CC_N_FAIL + 1)); continue
+        printf '%s|%s|failed: %s|%s|0|0\n' "$_n" "$_v" "$_why" "$_lines" >>"$W/summary_rows"; CC_N_FAIL=$((CC_N_FAIL + 1))
+        cc_show "$C_RED" "  [!] $_n ($_v, $_a): NOT saved - $_why"; continue
     fi
     # Compare with the newest earlier copy FIRST, then save this one.  Copies
     # are named after this run's folder (time plus -2, -3 for runs in the
@@ -346,7 +425,7 @@ while IFS='|' read -r _n _a _v _u _p; do
             # services or routing are HIGH; any other change is MED.
             awk -v d="$_n" "$MASK"'
                 { sign = substr($0, 1, 1); l = substr($0, 2); low = tolower(l)
-                  sev = (low ~ /(username|user |admin|password|secret|community|snmp|nat|static|permit (ip|tcp|udp) any|any any|allow|accept|telnet|http server|ip http|allowaccess|aaa|crypto|key|tunnel|route|rule|policy|ssh|login)/) ? "HIGH" : "MED"
+                  sev = (low ~ /(username|user |admin|password|secret|community|snmp|nat|static|permit (ip|tcp|udp) any|any any|allow|accept|telnet|http server|ip http|allowaccess|aaa|crypto|key|tunnel|route|rule|policy|ssh|login|redirect|dnat|dest_port|dropbear|uhttpd|upnp|:0:0:|crontab|\/bin\/|wget|curl)/) ? "HIGH" : "MED"
                   print sev "|" d "|" (sign == "+" ? "added: " : "removed: ") mask(l) }' "$W/changed" >"$W/chg"
             while IFS='|' read -r _sev _d _det; do cc_flag "$_sev" "$_d" "config line" "$_det"; done <"$W/chg"
         fi
@@ -358,6 +437,8 @@ while IFS='|' read -r _n _a _v _u _p; do
     [ "$_try" = 1 ] && _st="$_st, old SSH algorithms"
     cc_table_row "$DT" "$_n" "$_a" "$_v" "$_st" "$_lines" "$_add" "$_del" "$_hash"
     printf '%s|%s|%s|%s|%s|%s\n' "$_n" "$_v" "$_st" "$_lines" "$_add" "$_del" >>"$W/summary_rows"
+    if [ "$_add" -gt 0 ] || [ "$_del" -gt 0 ]; then cc_show "$C_YEL" "  [*] $_n ($_v, $_a): saved - $_add line(s) added, $_del removed since the last copy (see below)"
+    else cc_show "$C_GRN" "  [ok] $_n ($_v, $_a): saved, $_lines lines - $_st"; fi
 done <"$W/devices"
 
 # ---- Summary ----------------------------------------------------------------------
@@ -373,6 +454,7 @@ cc_table_sort_flags "$CC_RUN_DIR/flags.txt"
     ls "$CC_RUN_DIR"/*.diff >/dev/null 2>&1 && printf 'Diffs: %s/<device>.diff\n' "$CC_RUN_DIR"
     printf 'All results: %s\n' "$CC_RUN_DIR"
 } >"$CC_RUN_DIR/summary.txt"
+header "3/3  summary"
 cat "$CC_RUN_DIR/summary.txt"
 rm -rf "$W"
 cc_finish
