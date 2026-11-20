@@ -1,0 +1,6 @@
+# 2026-11-20: SH-03 asks the team number and says what each box looks like
+
+- **SH-03** (network scan): new question "Your team number? It adds the outside range 10.100.N.0/24 to the scan" (`--team-number N`, `none` skips; Enter skips). Nobody needs the number before the day. The first question now says its default is the inside network this box is on.
+- **What each box looks like:** a new section, one line per address, with a guess from its open ports and versions: the OpenWRT router (dropbear, LuCI, uhttpd), a Windows domain controller (88 + 389), Gitea (3000 or a Gitea banner), a file share (Samba 445, NFS 2049), a Windows box (RDP, WinRM), RabbitMQ (5672, 15672), Home Assistant (8123), a web app (80, 443), or SSH only. `roles.txt` holds the table; `suggested-hosts.txt` holds host-list rows (os, role, how to connect, a scored service) to copy into `config/hosts.txt`.
+- Ports added to the quick list used without nmap: 2222, 5672, 8123, 15672, with their names.
+- Tested: sh03 under dash, bash, ksh93, mksh, yash and busybox sh; gawk, mawk and busybox awk; the built copy. A fake nmap answering with each kind of box (router, file share, Gitea, domain controller, RabbitMQ, web app); the team number on the command line (the terminal tests answer it with `none`).

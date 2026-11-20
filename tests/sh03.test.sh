@@ -74,6 +74,8 @@ XML
     4-udp) P="69/open|filtered/udp//tftp///, 161/open/udp//snmp//net-snmp/" ;;
 esac
 b=${b%.noscripts}
+# STUB_P: the same ports (with versions) at every stage, to test the box guesses.
+[ -n "${STUB_P:-}" ] && P=$STUB_P
 # The quick scan also sees 10.9.9.6 up, with no open ports.
 case "$(basename "$b")" in 1-quick) printf 'Host: 10.9.9.6 ()%sStatus: Up\n' "$T" >"$b.gnmap" ;; *) : >"$b.gnmap" ;; esac
 printf 'Host: 10.9.9.5 (web01)%sStatus: Up\nHost: 10.9.9.5 (web01)%sPorts: %s%sIgnored State: closed (997)\n' "$T" "$T" "$P" "$T" >>"$b.gnmap"
@@ -179,7 +181,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     # full (n), services (Enter), scripts (n), vuln (y), safe only (n), then
     # OS (n) and UDP (Enter) when root.
     printf '10.9.9.5\n5\n\n100\n8080\nn\n\nn\ny\nn\nn\n\n' >"$T_TMP/answers"
-    BT_NO_TTY=0 PATH="$T_TMP/bin:$PATH" script -qc "$SH $C --out $T_TMP/q --no-color --no-dns" /dev/null <"$T_TMP/answers" >"$T_TMP/tty.out" 2>&1
+    BT_NO_TTY=0 PATH="$T_TMP/bin:$PATH" script -qc "$SH $C --team-number none --out $T_TMP/q --no-color --no-dns" /dev/null <"$T_TMP/answers" >"$T_TMP/tty.out" 2>&1
     t_has "$(cat "$T_TMP/tty.out")" "What should I scan?" "asks for the target"
     t_has "$(cat "$T_TMP/tty.out")" "vuln scripts" "asks about vuln scripts"
     t_has "$(sed -n 1p "$STUBLOG")" "10.9.9.5" "scans the typed target"
@@ -194,7 +196,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     t_has "$(tail -n 1 "$STUBLOG")" "-sV" "versions after Enter (default yes)"
     t_start "nmap check in a terminal"
     printf 'n\n' >"$T_TMP/answers3"
-    BT_NO_TTY=0 PATH="$T_TMP/nonmap" script -qc "$SH $C --out $T_TMP/q3 --no-color --target 127.0.0.1" /dev/null <"$T_TMP/answers3" >"$T_TMP/tty3.out" 2>&1
+    BT_NO_TTY=0 PATH="$T_TMP/nonmap" script -qc "$SH $C --team-number none --out $T_TMP/q3 --no-color --target 127.0.0.1" /dev/null <"$T_TMP/answers3" >"$T_TMP/tty3.out" 2>&1
     t_has "$(cat "$T_TMP/tty3.out")" "Keep going with the" "asks whether to keep going without nmap"
     t_has "$(cat "$T_TMP/tty3.out")" "Install nmap and run again" "stops after 'n'"
     t_fail "and scans nothing" ls -d "$T_TMP"/q3/netscan-*/ 2>/dev/null
@@ -202,7 +204,7 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     t_start "picking hosts for the full scan in a terminal"
     : >"$STUBLOG"
     printf '10.9.9.6\n' >"$T_TMP/answers2"
-    BT_NO_TTY=0 PATH="$T_TMP/bin:$PATH" script -qc "$SH $C --out $T_TMP/q --no-color --target 10.9.9.0/24 --speed 4 --quick --top-ports 10 --no-extra-ports --full --no-services --no-scripts --no-vuln --no-os --no-udp" /dev/null <"$T_TMP/answers2" >"$T_TMP/tty2.out" 2>&1
+    BT_NO_TTY=0 PATH="$T_TMP/bin:$PATH" script -qc "$SH $C --team-number none --out $T_TMP/q --no-color --target 10.9.9.0/24 --speed 4 --quick --top-ports 10 --no-extra-ports --full --no-services --no-scripts --no-vuln --no-os --no-udp" /dev/null <"$T_TMP/answers2" >"$T_TMP/tty2.out" 2>&1
     t_has "$(cat "$T_TMP/tty2.out")" "Full scan which hosts?" "asks which hosts get the full scan"
     t_has "$(cat "$T_TMP/tty2.out")" "up: 10.9.9.5 10.9.9.6" "after showing the hosts that are up"
     t_has "$(sed -n 2p "$STUBLOG")" "-p- --stats-every 60s 10.9.9.6" "full scan only on the typed host"
@@ -257,4 +259,24 @@ for engine in python nmap; do
     t_has "$r" "31337" "open ports shown"
 done
 kill "$LPID" 2>/dev/null
+t_start "this network: the team number, what each box looks like"
+r=$(srun --out "$T_TMP/tn" --target 10.9.9.0/24 --team-number 7 --batch --no-os --no-color 2>&1)
+t_has "$r" "[ok] team 7: the outside range 10.100.7.0/24 is scanned too" "--team-number adds the outside range"
+t_has "$(tail -n 3 "$STUBLOG" | head -n 1)$(cat "$STUBLOG")" "10.100.7.0/24" "and it is scanned"
+srun --target 10.9.9.0/24 --team-number 300 --batch >/dev/null 2>&1; t_eq "$?" 2 "a team number over 254 exits 2"
+guess() { ( export STUB_P="$1"; srun --out "$T_TMP/g" --target 10.9.9.5 --team-number none --batch --no-os --no-color 2>&1 ); }
+r=$(guess "22/open/tcp//ssh//dropbear sshd 2022.82/, 80/open/tcp//http//LuCI Lua http config/")
+t_has "$r" "router (OpenWRT)" "dropbear + LuCI: the OpenWRT router"
+t_has "$(cat "$(ls -d "$T_TMP"/g/netscan-*/ | sort -t- -k2 -n | tail -n 1)suggested-hosts.txt")" "10.9.9.5         openwrt  router" "a host-list row with os openwrt"
+r=$(guess "445/open/tcp//microsoft-ds//Samba smbd 4/, 2049/open/tcp//nfs///, 22/open/tcp//ssh//OpenSSH 9.9/")
+t_has "$r" "file share (Samba + NFS)" "445 + 2049 on Linux: the file share"
+r=$(guess "3000/open/tcp//ppp//Gitea/, 22/open/tcp//ssh//OpenSSH 8.7/")
+t_has "$r" "Gitea (git server)" "Gitea"
+r=$(guess "53/open/tcp//domain///, 88/open/tcp//kerberos-sec///, 389/open/tcp//ldap///, 445/open/tcp//microsoft-ds///")
+t_has "$r" "Windows domain controller (AD)" "88 + 389: the domain controller"
+r=$(guess "5672/open/tcp//amqp//RabbitMQ 3.12/, 15672/open/tcp//http//Cowboy/")
+t_has "$r" "RabbitMQ (message queue)" "RabbitMQ"
+r=$(guess "80/open/tcp//http//nginx/, 22/open/tcp//ssh//OpenSSH/")
+t_has "$r" "web app" "a web app"
+t_has "$r" "==========[ what each box looks like ]==========" "its own section"
 t_done
