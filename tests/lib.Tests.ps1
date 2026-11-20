@@ -259,8 +259,8 @@ T-Eq $r.Code 0 'template exits 0'
 T-Has $r.Text 'READ-ONLY' 'the template starts as a read-only script'
 T-Has $r.Text '==========[ 1/2  questions ]==========' 'the template has the numbered headers'
 $td = @(Get-ChildItem -LiteralPath $out | Where-Object { $_.PSIsContainer -and $_.Name -like 'example-*' })
-T-True ($td.Count -ge 1 -and ([IO.File]::ReadAllText((Join-Path $td[0].FullName 'example.txt'))) -match 'example option \| +hello') 'template table has the option value'
-T-True (@(Get-ChildItem -LiteralPath $out -Recurse -Filter '*.csv').Count -eq 0) 'the template leaves no CSV'
+T-True ($td.Count -ge 1 -and ([IO.File]::ReadAllText((Join-Path $td[0].FullName 'example.txt'))) -match 'example option +\| +hello') 'template table has the option value'
+T-True ($td.Count -ge 1 -and @(Get-ChildItem -LiteralPath $td[0].FullName -Recurse -Filter '*.csv').Count -eq 0) 'the template leaves no CSV'
 
 T-Start 'the look and the questions (the same as lib.sh)'
 $o2 = Join-Path $tmp 'out2'

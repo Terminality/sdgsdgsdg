@@ -3,7 +3,7 @@
 # NAME:     Windows collector
 # ROLE:     Windows / AD  (wave 1)
 # KIND:     readonly - changes nothing on the host
-# VERSION:  1.1.0
+# VERSION:  1.2.0
 #
 # PURPOSE
 #   One run shows what a Windows host is and what is on it: who can log in and
@@ -15,11 +15,18 @@
 #   Output is layered (rule 17):
 #     screen / summary.txt   one page: key facts, a count per section, and only
 #                            the HIGH and MEDIUM flags, worst first
-#     <section>.csv          everything collected, one file per section
-#     flags.csv              every flag including LOW, with the reason
-#     raw\*.csv, raw\*.txt   untouched data as it was read, so a parsing
+#     <section>.txt          everything collected, one table per section
+#     flags.txt              every flag including LOW, with the reason
+#     raw\                   untouched data as it was read, so a parsing
 #                            mistake can be told apart from missing data, and
 #                            so the run can be replayed (-FromRaw)
+#
+#   The look is the same as the Linux scripts: numbered sections
+#   ==========[ 3/9  ports ]==========, a legend, colours, and results in a
+#   numbered folder (windows-enum-1, -2, ...) with output.txt.
+#
+#   QUESTIONS (Enter takes the default in capitals; a parameter answers each):
+#     how much to look at             -Profile card|full|triage (Enter = full)
 #
 # USAGE
 #   powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-collector.ps1 [options]
@@ -44,15 +51,19 @@
 #                    another machine) instead of this host.  Used by the tests
 #                    and for debugging: send the raw folder, replay it anywhere
 #   -List            list the sections and exit
+#   -Batch           no questions: take the defaults
+#   -NoColor         no colours
 #   Common options (-Out, -DebugLog, -Quiet ...) come from the library.
 #
 # OUTPUTS  (under the -Out folder; never next to this script)
-#   SH-06_<host>_<UTC time>.log                  log of the run
-#   SH-06_<host>_<UTC time>\summary.txt          the one-page summary
-#   SH-06_<host>_<UTC time>\flags.csv            severity,section,item,detail,time
-#   SH-06_<host>_<UTC time>\<section>.csv        see the manual for columns
-#   SH-06_<host>_<UTC time>\raw\                 everything as read
-#   SH-06_<host>_<UTC time>\logs\*.evtx          event logs (triage only)
+#   SH-06_<host>_<UTC time>.log           log of the run
+#   windows-enum-N\output.txt             the screen, without colours
+#   windows-enum-N\summary.txt            the one-page summary
+#   windows-enum-N\flags.txt              severity, section, item, detail, time
+#   windows-enum-N\<section>.txt          see the manual for columns
+#   windows-enum-N\run.txt                id, host, time
+#   windows-enum-N\raw\                   everything as read (replay with -FromRaw)
+#   windows-enum-N\logs\*.evtx            event logs (triage only)
 #
 # WHAT IT CHANGES
 #   Nothing.  It only reads.  It never stores a password: registry values
@@ -108,7 +119,9 @@ param(
     [int]$MaxFlags = 30,
     [string]$FromRaw = '',
     [switch]$List,
-    [switch]$Help
+    [switch]$Help,
+    [switch]$Batch,
+    [switch]$NoColor
 )
 
 $SectionHelp = @(
@@ -145,6 +158,8 @@ if ($Help) {
     Write-Host '  -EventHours N              events section look-back (default 24)'
     Write-Host '  -MaxFlags N                HIGH/MED flags shown on screen (default 30)'
     Write-Host '  -FromRaw DIR               replay a saved raw folder instead of this host'
+    Write-Host '  -Batch                     no questions: the defaults'
+    Write-Host '  -NoColor                   no colours'
     Write-Host '  -Out DIR -Quiet -DebugLog  common options'
     exit 0
 }
@@ -1331,7 +1346,9 @@ function Get-CcFlagReport {
     }
     $cut = $hi.Count + $me.Count - $shown
     if ($cut -gt 0) { $out += ('  ... {0} more high/medium not shown' -f $cut) }
-    if ($lo.Count + $cut -gt 0) { $out += ('All flags, including low: ' + $c.FlagsFile) }
+    $ff = $c.FlagsFile
+    if ($c.Numbered) { $ff = Join-Path $c.RunDir 'flags.txt' }   # the CSV becomes this table at the end
+    if ($lo.Count + $cut -gt 0) { $out += ('All flags, including low: ' + $ff) }
     return $out
 }
 
@@ -1428,9 +1445,17 @@ $Run = @($AllSections | Where-Object { ($Run -contains $_) -and -not ($skipList 
 if ($EventHours -lt 1) { Write-Host '-EventHours must be 1 or more'; exit 2 }
 
 # ---- Start ------------------------------------------------------------------
-Initialize-Cc -Id 'SH-06' -Name 'Windows collector' -Kind readonly -Bound $PSBoundParameters
-Use-CcRunDir
+Initialize-Cc -Id 'SH-06' -Name 'Windows enum' -Kind readonly -Bound $PSBoundParameters
+Use-CcNumberedDir 'windows-enum'
 $RawDir = Join-Path $Cc.RunDir 'raw'
+New-Item -ItemType Directory -Path $RawDir -Force | Out-Null
+Write-CcShow -Color Cyan -Text ('SH-06 Windows enum | host {0} | results in {1}' -f $Cc.Host, $Cc.RunDir)
+Write-CcLegend -Marks @('Red=[!] HIGH', 'Yellow=[*] MED', 'Green=[ok] read', 'DarkGray=[-] note')
+# How much to look at: asked unless -Profile, -Only or -Skip said so.
+if (-not $PSBoundParameters.ContainsKey('Level') -and $onlyList.Count -eq 0 -and $skipList.Count -eq 0) {
+    $pc = Read-CcChoice -Question 'How much to look at?' -Default f -Options @('c=card: a quick look, about a minute', 'f=full: everything but the event-log copies', 't=triage: full plus a copy of the event logs (when you think red team is in)')
+    switch ($pc) { 'c' { $Level = 'card'; $Run = @($AllSections | Where-Object { $ProfileCard -contains $_ }) } 't' { $Level = 'triage'; $Run = @($AllSections | Where-Object { $ProfileTriage -contains $_ }) } }
+}
 $Replay = $false
 if ($FromRaw) {
     if (-not (Test-Path -LiteralPath $FromRaw)) { Stop-Cc -Code 2 -Message "-FromRaw: no folder $FromRaw" }
@@ -2619,8 +2644,12 @@ function S-logs {
 # =============================================================================
 # Run the sections and write the summary
 # =============================================================================
+$secN = 0
 foreach ($s in $Run) {
+    $secN++
+    Write-CcHeader ('{0}/{1}  {2}' -f $secN, $Run.Count, $s)
     $script:Sec = $s; $script:SecNote = ''; $script:SecRows = 0
+    $f0 = $Cc.FlagCount
     $t0 = [DateTime]::UtcNow
     try {
         & ('S-' + $s)
@@ -2629,12 +2658,15 @@ foreach ($s in $Run) {
         Write-CcLog -Level WARN -Message ("section {0} stopped early: {1}" -f $s, $_.Exception.Message)
     }
     $secs = ([DateTime]::UtcNow - $t0).TotalSeconds
+    Write-CcShow -Color Green -Text ('  [ok] {0} rows in {1:N1}s' -f $script:SecRows, $secs)
+    if ($Cc.FlagCount -gt $f0) { Write-CcShow -Color Yellow -Text ('  [*] {0} flag(s): in the summary at the end' -f ($Cc.FlagCount - $f0)) }
+    if ($script:SecNote) { Write-CcShow -Color DarkGray -Text ('  [-] ' + $script:SecNote) }
     $script:SecTable += ('{0,-12} {1,6} rows {2,6:N1}s  {3}' -f $s, $script:SecRows, $secs, $script:SecNote)
     Write-CcLog -Level DEBUG -Message ("section {0}: {1} rows in {2:N1}s {3}" -f $s, $script:SecRows, $secs, $script:SecNote)
 }
 
 $sum = @()
-$sum += ('SH-06 Windows collector  {0}  profile {1}' -f [DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm 'UTC'"), $Level)
+$sum += ('SH-06 Windows enum  {0}  profile {1}' -f [DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm 'UTC'"), $Level)
 $sum += ''
 $sum += $script:Facts
 $sum += ''
@@ -2644,6 +2676,13 @@ $sum += ''
 $sum += @(Get-CcFlagReport -Max $MaxFlags)
 $sumFile = Join-Path $Cc.RunDir 'summary.txt'
 [IO.File]::WriteAllLines($sumFile, [string[]]$sum)
-if (-not $Quiet) { foreach ($l in $sum) { Write-Host $l } }
-Write-Host ('All results: ' + $Cc.RunDir)
+Write-CcHeader 'SUMMARY'
+if (-not $Quiet) {
+    $col = ''
+    foreach ($l in $sum) {
+        if ($l -like 'HIGH - *') { $col = 'Red' } elseif ($l -like 'MED - *') { $col = 'Yellow' } elseif ($l -notlike '  *') { $col = '' }
+        if ($l -like 'SH-06 *') { Write-CcShow -Color Cyan -Text $l } else { Write-CcShow -Color $col -Text $l }
+    }
+}
+Write-CcShow -Text ('All results: ' + $Cc.RunDir)
 Complete-Cc
