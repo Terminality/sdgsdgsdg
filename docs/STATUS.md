@@ -1,6 +1,6 @@
 # Build status
 
-47 of 51 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+48 of 52 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -8,7 +8,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | --- | --- | --- |
 | Enum (look only) | 6 | 7 |
 | Backup and prep | 5 | 5 |
-| wave2 | 12 | 12 |
+| wave2 | 13 | 13 |
 | any | 1 | 1 |
 | wave1 | 3 | 3 |
 | Hardening: easy | 3 | 3 |
@@ -51,6 +51,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | SV-42 | Database password rotation | medium | built | `roles/applications/SV-42-db-passwords.sh` |
 | SV-40 | Mail password rotation | medium | built | `roles/applications/SV-40-mail-passwords.sh` |
 | SV-44 | Splunk hardening and passwords | medium | built | `roles/applications/SV-44-splunk-hardening.sh` |
+| SV-45 | Gitea hardening | medium | built | `roles/applications/SV-45-gitea-hardening.sh` |
 | SV-31 | Mail tamper check | medium | built | `roles/applications/SV-31-mail-tamper.sh` |
 | LX-43 | Log shipping to Splunk | medium | built | `roles/linux/LX-43-log-shipping.sh` |
 | LX-45 | Rootkit and malware scan | medium | built | `roles/linux/LX-45-rootkit-scan.sh` |
