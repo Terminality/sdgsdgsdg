@@ -2385,7 +2385,7 @@ sudo sh SV-20-db-hardening.sh --protected p.csv --apply --batch --level safe --u
 
 | Question | Answers | Flag |
 | --- | --- | --- |
-| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [f]ileshare [g]itea [b] web [o]ther` | `--box` |
 | How far should I go? | `[s]afe`, `[v]` service, `[a]ccess` | `--level` |
 | Each fix | `[y]` do it / `[n]` skip it (access-level fixes default to no) | `--only` / `--skip` |
 | Apply these changes? | `[y]` / `[n]` | `--batch` |
@@ -2623,7 +2623,7 @@ In `mail-passwords-N/` (mode 700): `output.txt`, `users.txt`, `plan.txt`, `summa
 
 Run this when a scored service goes red. It checks every service on the box the same way, finds **why** it's down, and offers the fix. A plain restart often fails because red team broke something underneath.
 
-Services: web (apache2, httpd, nginx), php-fpm, database (mariadb, mysql, postgresql), mail (dovecot, postfix), splunk, ssh, time (chrony, ntp). Only the ones installed are checked. With two web servers, only the one in use counts.
+Services: web (apache2, httpd, nginx), php-fpm (also Alpine's `php-fpm83`), database (mariadb, mysql, postgresql), mail (dovecot, postfix), splunk, ssh, time (chrony, ntp), file shares (Samba, NFS), Gitea (or Forgejo; its port from `HTTP_PORT` in `app.ini`, else 3000). Only the ones installed are checked. With two web servers, only the one in use counts. Works with systemd, OpenRC (Alpine) and SysV.
 
 ### How to run it
 
@@ -2647,12 +2647,12 @@ sudo sh SV-50-service-recovery.sh --protected p.csv --watch 30 --auto-restart --
 | Check | Found | Fix offered |
 | --- | --- | --- |
 | Running? | stopped, failed | start / restart (**only if the config test passes**) |
-| Masked / disabled at boot? | masked, or disabled when scored | unmask, enable |
-| Config loads? | `apache2ctl -t`, `nginx -t`, `php-fpm -t`, `postfix check`, `doveconf`, `sshd -t` | none: error lines shown, never restarted on a broken config |
+| Masked / disabled at boot? | masked, or disabled when scored (Alpine: not in an OpenRC runlevel) | unmask, enable (`rc-update add` on Alpine) |
+| Config loads? | `apache2ctl -t`, `nginx -t`, `php-fpm -t`, `postfix check`, `doveconf`, `sshd -t`, `testparm` (Samba) | none: error lines shown, never restarted on a broken config |
 | Port | another program holds it | stop it (default yes if it runs from /tmp, /dev/shm or a deleted file) |
-| Answers? | HTTP status (5xx with a DB error points at the database), IMAP/SMTP/SSH banners, DB ping, chronyc | restart if running but not answering |
-| Firewall | iptables DROP/REJECT on the port; nftables shown | remove the rule |
-| Tampered | config changed in the last 2 hours, systemd override (`ExecStart=/bin/true`), package files changed (`dpkg -V`) | shown with what to do (SV-15 restore, `apt-get install --reinstall`) |
+| Answers? | HTTP status (5xx with a DB error points at the database; Gitea too), IMAP/SMTP/SSH banners, DB ping, chronyc, Samba (`smbclient -L`), NFS (`showmount -e`) | restart if running but not answering |
+| Firewall | iptables DROP/REJECT on the port; nftables shown; a port **firewalld** (Rocky, Fedora) or **ufw** (Ubuntu, Mint) does not allow | remove the rule; open the port in firewalld (now and permanent) or ufw |
+| Tampered | config changed in the last 2 hours (also `/etc/samba`, `/etc/exports`, `/etc/gitea`), systemd override (`ExecStart=/bin/true`), package files changed (`dpkg -V`, `rpm -V`) | shown with what to do (SV-15 restore, `apt-get install --reinstall`, `dnf reinstall`) |
 
 **For the whole box:** disk or inodes full, `/tmp` not writable or wrong mode, programs killed for lack of memory.
 

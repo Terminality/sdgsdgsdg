@@ -4,7 +4,7 @@
 # NAME:     Service recovery (find out why a service is down, bring it back)
 # ROLE:     Applications  (any time a scored service goes red)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   When a scored service goes down, restarting it often fails: red team
@@ -12,7 +12,8 @@
 #   way, finds the reason, and offers the fix:
 #
 #     web (apache2, httpd, nginx), php-fpm, database (mariadb, mysql,
-#     postgresql), mail (dovecot, postfix), splunk, ssh, time (chrony, ntp)
+#     postgresql), mail (dovecot, postfix), splunk, ssh, time (chrony, ntp),
+#     file shares (Samba, NFS), Gitea (or Forgejo; its port from app.ini)
 #
 #   For each one that is installed:
 #     1  running?          stopped / failed / masked / disabled at boot
@@ -23,15 +24,19 @@
 #     4  answers?          tested the way scoring does: HTTP status, IMAP /
 #                          SMTP / SSH banner, database ping, chrony tracking
 #     5  firewall?         iptables DROP/REJECT rules on the service's port
-#                          (nftables: shown)
+#                          (nftables: shown); on Rocky/Fedora a port that
+#                          firewalld does not allow, on Ubuntu/Mint one ufw
+#                          does not allow
 #     6  tampered?         config files changed in the last 2 hours,
 #                          systemd drop-ins (ExecStart=/bin/true), package
 #                          files that no longer match (dpkg -V / rpm -V)
+#   Services start through systemd, OpenRC (Alpine: rc-service, "starts at
+#   boot" from rc-update) or SysV.
 #   And once for the box: disk or inodes full, /tmp not writable, programs
 #   killed for lack of memory.
 #
 #   Fixes offered (each asked, yes/no): unmask, enable at boot, remove a
-#   firewall rule that blocks the port, stop the program holding the port,
+#   firewall rule that blocks the port (or open it in firewalld / ufw), stop the program holding the port,
 #   start / restart (only after the config test passes).  Each fixed service
 #   is tested again.  Reported, never changed: config errors, changed files,
 #   a full disk - with what to do.  Defaced or wiped site: SV-15 --restore.
@@ -57,9 +62,10 @@
 #
 # OPTIONS
 #   --apply            make the fixes (without it, dry run only)
-#   --box NAME         splunk | webmail | ecomm | other (asked)
+#   --box NAME         splunk | webmail | ecomm | fileshare | gitea | web |
+#                      other (asked)
 #   --services a,b     only these: web php-fpm mysql postgres imap smtp splunk
-#                      ssh ntp, or unit names (apache2, nginx ...)
+#                      ssh ntp smb nfs gitea, or unit names (apache2, nginx ...)
 #   --fix KINDS        answer yes for these fix kinds: unmask enable firewall
 #                      kill start (default: each asked; --batch takes the
 #                      default shown)
@@ -75,9 +81,11 @@
 #   summary.txt, run.txt, revert.sh;  watch.txt with --watch
 #
 # DEPENDS ON
-#   ss, systemctl or service; curl or wget; nc or openssl (banners);
-#   iptables (firewall check).  BT_SVC_DIRS (tests) adds folders of
-#   stand-in init scripts.
+#   ss (or netstat / busybox netstat), systemctl, OpenRC or service; curl or wget; nc or openssl (banners);
+#   iptables, firewall-cmd, ufw (firewall check); testparm, smbclient,
+#   showmount when there.  BT_SVC_DIRS (tests) adds folders of stand-in init
+#   scripts; BT_SVC_INIT names the init system, BT_TEST_RUNLEVELS OpenRC's
+#   runlevel folder.
 #
 # TESTED ON
 #   Ubuntu 24.04 (SysV init in a container) with Apache, MariaDB,
@@ -85,6 +93,9 @@
 #   busybox sh, ksh93, mksh and yash: a stopped Apache, a DROP rule on 80,
 #   a program holding port 80 and a broken Apache config were each found;
 #   the first three fixed, the broken config reported and Apache left alone.
+#   Stand-ins (no real service touched): Gitea (python's web server under
+#   that name), a stopped Samba, firewalld and ufw that block the port, and
+#   OpenRC (runlevels, rc-update) - found, fixed, undo lines written.
 #
 # KNOWN LIMITS / WHAT TO WATCH FOR
 #   - "Up" here means it answers on this box.  If scoring still fails, check
@@ -1552,8 +1563,8 @@ SV-50 Service recovery - why is a service down, and bring it back
   sudo sh SV-50-service-recovery.sh --watch 30 --auto-restart --apply
 
   --apply            make the fixes (without it, dry run only)
-  --box NAME         splunk | webmail | ecomm | other
-  --services a,b     web php-fpm mysql postgres imap smtp splunk ssh ntp, or unit names
+  --box NAME         splunk | webmail | ecomm | fileshare | gitea | web | other
+  --services a,b     web php-fpm mysql postgres imap smtp splunk ssh ntp smb nfs gitea, or unit names
   --fix KINDS        yes for these fix kinds: unmask enable firewall kill start
   --watch SECONDS    keep checking, print changes (Ctrl-C to stop)
   --auto-restart     with --watch and --apply: restart what goes down
@@ -1580,7 +1591,7 @@ while [ $# -gt 0 ]; do
         *)              cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
+case "$BOX" in ''|splunk|webmail|ecomm|fileshare|gitea|web|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm, fileshare, gitea, web or other" ;; esac
 for _n in "$WATCH" "$WCOUNT"; do case "$_n" in *[!0-9]*) cc_die 2 "--watch and --watch-count need whole numbers" ;; esac; done
 [ -z "$WATCH" ] || [ "$WATCH" -ge 5 ] || cc_die 2 "--watch must be at least 5 seconds"
 for _k in $(printf '%s' "$FIXK" | tr ',' ' '); do
@@ -1613,7 +1624,7 @@ cc_show "" "Legend: ${C_RED}[!] DOWN / broken${C_OFF}   ${C_YEL}[*] look at it${
 cat >"$W/table" <<'EOF'
 web|apache2 httpd|apache2 httpd|80 443|http
 web|nginx|nginx|80 443|http
-php-fpm|php-fpm php8.4-fpm php8.3-fpm php8.2-fpm php8.1-fpm php8.0-fpm php7.4-fpm php7.3-fpm php7.2-fpm|php-fpm|-|none
+php-fpm|php-fpm php8.4-fpm php8.3-fpm php8.2-fpm php8.1-fpm php8.0-fpm php7.4-fpm php7.3-fpm php7.2-fpm php-fpm84 php-fpm83 php-fpm82 php-fpm81|php-fpm|-|none
 mysql|mariadb mysql mysqld|mariadbd mysqld|3306|mysql
 postgres|postgresql|postgres|5432|pg
 imap|dovecot|dovecot|143 993|imap
@@ -1623,11 +1634,25 @@ splunk|Splunkd splunk|splunkd|8089 8000|splunk
 ssh|ssh sshd|sshd|22|ssh
 ntp|chrony chronyd|chronyd|u123|ntp
 ntp|ntp ntpd ntpsec|ntpd|u123|ntp
+smb|smbd smb samba|smbd|445 139|smb
+nfs|nfs-server nfs-kernel-server nfs|nfsd|2049|nfs
+gitea|gitea forgejo|gitea forgejo|GITEA_PORT|http
 EOF
+# Gitea's web port: HTTP_PORT in its app.ini (3000 when not set).
+GITEA_PORT=""
+for _f in /etc/gitea/app.ini /etc/forgejo/app.ini /var/lib/gitea/custom/conf/app.ini /home/git/gitea/custom/conf/app.ini; do
+    [ -r "$_f" ] || continue
+    GITEA_PORT=$(sed -n 's/^[[:space:]]*HTTP_PORT[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$_f" | head -n 1)
+    [ -n "$GITEA_PORT" ] && break
+done
+sed "s/GITEA_PORT/${GITEA_PORT:-3000}/" "$W/table" >"$W/table.t" && mv "$W/table.t" "$W/table"
+# The init system (BT_SVC_INIT names one in tests).
+INIT=${BT_SVC_INIT:-$CC_INIT}
+RUNLEVELS=${BT_TEST_RUNLEVELS:-/etc/runlevels}
 # unit_exists NAME -> the service is installed under this name.
 unit_exists() {
     case "$1" in Splunkd|splunk) [ -x /opt/splunk/bin/splunk ] && return 0 ;; esac
-    if [ "$CC_INIT" = systemd ]; then
+    if [ "$INIT" = systemd ]; then
         systemctl list-unit-files "$1.service" 2>/dev/null | grep -q "^$1\.service" && return 0
     fi
     [ -x "/etc/init.d/$1" ] && return 0
@@ -1650,14 +1675,16 @@ done
 [ -s "$W/rows" ] || { cc_show "$C_GRY" "None of the services this script knows is installed here."; rm -rf "$W"; cc_finish; exit 0; }
 
 if [ -z "$BOX" ] && [ -z "$WATCH" ]; then
-    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "o=other"
-    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
+    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "f=fileshare: Samba or NFS" "g=gitea" "b=web: a ticket, help-desk or shop site" "o=other"
+    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; f) BOX=fileshare ;; g) BOX=gitea ;; b) BOX=web ;; *) BOX=other ;; esac
 fi
 case "$BOX" in
-    splunk)  SCORED="splunk ssh ntp" ;;
-    webmail) SCORED="imap smtp web ssh php-fpm mysql postgres" ;;
-    ecomm)   SCORED="web php-fpm mysql postgres" ;;
-    *)       SCORED="" ;;
+    splunk)    SCORED="splunk ssh ntp" ;;
+    webmail)   SCORED="imap smtp web ssh php-fpm mysql postgres" ;;
+    ecomm|web) SCORED="web php-fpm mysql postgres" ;;
+    fileshare) SCORED="smb nfs ssh" ;;
+    gitea)     SCORED="gitea web ssh mysql postgres" ;;
+    *)         SCORED="" ;;
 esac
 if [ -z "$ONLY" ] && [ -z "$WATCH" ] && [ "$(grep -c . "$W/rows")" -gt 1 ]; then
     cc_choose "Check which services? (found: $(cut -d'|' -f2 "$W/rows" | tr '\n' ' ' | sed 's/ $//'))" a \
@@ -1672,24 +1699,30 @@ fi
 svc_cmd() {   # svc_cmd UNIT start|stop|restart|status
     case "$1" in Splunkd|splunk) /opt/splunk/bin/splunk "$2" --accept-license --answer-yes --no-prompt; return ;; esac
     for _d in ${BT_SVC_DIRS:-}; do [ -x "$_d/$1" ] && { "$_d/$1" "$2"; return; }; done
-    if [ "$CC_INIT" = systemd ]; then systemctl "$2" "$1"
-    elif cc_have rc-service; then rc-service "$1" "$2"
+    if [ "$INIT" = systemd ]; then systemctl "$2" "$1"
+    elif [ "$INIT" = openrc ] || cc_have rc-service; then rc-service "$1" "$2"
     elif cc_have service; then service "$1" "$2"
     else "/etc/init.d/$1" "$2"; fi
 }
 running() {   # running UNIT PROCS
-    if [ "$CC_INIT" = systemd ] && ! printf '%s' "$1" | grep -q '^Splunkd$\|^splunk$'; then
+    if [ "$INIT" = systemd ] && ! printf '%s' "$1" | grep -q '^Splunkd$\|^splunk$'; then
         systemctl is-active -q "$1" 2>/dev/null && return 0
     fi
+    # nfsd is kernel threads: up when the kernel serves NFS.
+    case "$1" in nfs|nfs-server|nfs-kernel-server) [ -n "$(cat /proc/fs/nfsd/threads 2>/dev/null | grep -v '^0$')" ] && return 0 ;; esac
     for _p in $2; do
         case "$_p" in php-fpm) pgrep -f '^php-fpm' >/dev/null 2>&1 && return 0 ;; *) pgrep -x "$_p" >/dev/null 2>&1 && return 0 ;; esac
     done
     return 1
 }
 unit_state() {   # unit_state UNIT -> "masked" | "disabled" | "enabled" | "-"
-    if [ "$CC_INIT" = systemd ]; then
+    if [ "$INIT" = systemd ]; then
         case "$(systemctl is-enabled "$1" 2>/dev/null)" in
             masked*) echo masked ;; disabled) echo disabled ;; enabled*|static|alias|indirect|generated) echo enabled ;; *) echo - ;; esac
+    elif [ "$INIT" = openrc ]; then
+        # Alpine: started at boot when linked in a runlevel.
+        _rl_on=""; for _rl in "$RUNLEVELS"/*; do { [ -h "$_rl/$1" ] || [ -e "$_rl/$1" ]; } && _rl_on=1; done
+        if [ -n "$_rl_on" ]; then echo enabled; elif unit_exists "$1"; then echo disabled; else echo -; fi
     elif [ -d /etc/rc2.d ] || [ -d /etc/rc3.d ]; then
         if ls /etc/rc[2345].d/S*"$1" >/dev/null 2>&1; then echo enabled; elif [ -x "/etc/init.d/$1" ]; then echo disabled; else echo -; fi
     else echo -; fi
@@ -1701,6 +1734,9 @@ config_test() {   # config_test UNIT -> output in $W/ct, rc 0 ok / 1 broken / 2 
         httpd) _c=$(cc_first httpd apachectl) || return 2; "$_c" -t >"$W/ct" 2>&1 ;;
         nginx) cc_have nginx || return 2; nginx -t >"$W/ct" 2>&1 ;;
         php*-fpm) _v=${1#php}; _v=${_v%-fpm}; _c=$(cc_first "php-fpm$_v" php-fpm) || return 2; "$_c" -t >"$W/ct" 2>&1 ;;
+        # Alpine: php-fpm83 and the like.
+        php-fpm[0-9]*) _c=$(cc_first "$1" php-fpm) || return 2; "$_c" -t >"$W/ct" 2>&1 ;;
+        smbd|smb|samba) cc_have testparm || return 2; testparm -s >/dev/null 2>"$W/ct"; grep -qi 'error\|unknown parameter' "$W/ct" && return 1; return 0 ;;
         postfix) cc_have postfix || return 2; postfix check >"$W/ct" 2>&1 ;;
         dovecot) cc_have doveconf || return 2; doveconf -n >/dev/null 2>"$W/ct" ;;
         ssh|sshd) _c=$(cc_which sshd) || return 2; [ -d /run/sshd ] || mkdir -p /run/sshd 2>/dev/null; "$_c" -t >"$W/ct" 2>&1 ;;
@@ -1710,6 +1746,12 @@ config_test() {   # config_test UNIT -> output in $W/ct, rc 0 ok / 1 broken / 2 
 }
 # Which ports answer.  tcp n, or uN for udp.
 listening() {   # listening PORT -> pid/program on stdout, rc 0 if someone listens
+    if ! cc_have ss; then
+        # Alpine: busybox netstat, "PID/name" last; shown as ss would.
+        case "$1" in u*) _lf=-lunp; _lp=${1#u} ;; *) _lf=-ltnp; _lp=$1 ;; esac
+        { netstat "$_lf" 2>/dev/null || busybox netstat "$_lf" 2>/dev/null; } | awk -v p=":$_lp" '$1 ~ /^(tcp|udp)/ { n = split($4, a, ":"); if (":" a[n] == p) { split($NF, w, "/"); print "users:((\"" w[2] "\",pid=" w[1] "))"; f = 1 } } END { exit !f }'
+        return
+    fi
     case "$1" in
         u*) ss -lunp 2>/dev/null | awk -v p=":${1#u}" '{ n = split($4, a, ":"); if (":" a[n] == p) { print $NF; f = 1 } } END { exit !f }' ;;
         *)  ss -ltnp 2>/dev/null | awk -v p=":$1" '{ n = split($4, a, ":"); if (":" a[n] == p) { print $NF; f = 1 } } END { exit !f }' ;;
@@ -1727,7 +1769,12 @@ http_code() {   # http_code URL
     if cc_have curl; then curl -sk -m 8 -o "$W/page" -w '%{http_code}' "$1" 2>/dev/null
     elif cc_have wget; then wget -q -S -O "$W/page" -T 8 --no-check-certificate "$1" 2>&1 | awk '/HTTP\// { c = $2 } END { print c }'; fi
 }
-probe() {   # probe KIND UNIT PORTS -> "ok TEXT" or "bad TEXT" or "- TEXT"
+# probe KIND UNIT PORTS -> "ok TEXT" or "bad TEXT" or "- TEXT"
+#   ksh93 can lose what probe_raw prints when it is called in $( ) (it runs
+#   curl in a nested $( )), so it writes to a file and probe prints that.
+probe() { probe_raw "$@" >"$W/probe.out" 2>/dev/null; cat "$W/probe.out"; }
+probe_raw() {
+    _pd=""   # a port answered: the loops break (no return inside them)
     case "$1" in
         http)
             for _p in $3; do
@@ -1739,9 +1786,9 @@ probe() {   # probe KIND UNIT PORTS -> "ok TEXT" or "bad TEXT" or "- TEXT"
                     5??) if grep -qiE 'database|SQLSTATE|mysql' "$W/page" 2>/dev/null; then echo "bad HTTP $_c on $_p: a database error (check mysql)"; else echo "bad HTTP $_c on $_p (the app or PHP fails: error.log)"; fi ;;
                     *)   echo "ok HTTP $_c on $_p" ;;
                 esac
-                return
+                _pd=1; break
             done
-            echo "bad nothing answers on $3" ;;
+            [ -n "$_pd" ] || echo "bad nothing answers on $3" ;;
         mysql)
             _c=$(cc_first mariadb-admin mysqladmin) || { echo "- no mysqladmin"; return; }
             if "$_c" --connect-timeout=5 ping >/dev/null 2>&1; then echo "ok answers a ping"
@@ -1755,18 +1802,18 @@ probe() {   # probe KIND UNIT PORTS -> "ok TEXT" or "bad TEXT" or "- TEXT"
                 listening "$_p" >/dev/null || continue
                 if [ "$_p" = 993 ]; then _b=$(banner 993 tls); else _b=$(banner "$_p"); fi
                 case "$_b" in "* OK"*) echo "ok IMAP banner on $_p" ;; '') echo "bad no IMAP banner on $_p" ;; *) echo "bad odd answer on $_p: $(printf '%s' "$_b" | cut -c1-40)" ;; esac
-                return
+                _pd=1; break
             done
-            echo "bad nothing answers on $3" ;;
+            [ -n "$_pd" ] || echo "bad nothing answers on $3" ;;
         smtp)
             for _p in $3; do
                 listening "$_p" >/dev/null || continue
                 [ "$_p" = 465 ] && continue
                 _b=$(banner "$_p")
                 case "$_b" in 220*) echo "ok SMTP banner on $_p" ;; '') echo "bad no SMTP banner on $_p" ;; *) echo "bad odd answer on $_p: $(printf '%s' "$_b" | cut -c1-40)" ;; esac
-                return
+                _pd=1; break
             done
-            echo "bad nothing answers on $3" ;;
+            [ -n "$_pd" ] || echo "bad nothing answers on $3" ;;
         ssh)
             _b=$(banner 22)
             case "$_b" in SSH-*) echo "ok SSH banner" ;; '') echo "bad no SSH banner on 22" ;; *) echo "bad odd answer on 22" ;; esac ;;
@@ -1777,8 +1824,40 @@ probe() {   # probe KIND UNIT PORTS -> "ok TEXT" or "bad TEXT" or "- TEXT"
                 chronyc -n tracking >/dev/null 2>&1 && echo "ok chronyc tracking answers" || echo "bad chronyc gets no answer"
             elif listening u123 >/dev/null; then echo "ok listening on 123/udp"
             else echo "bad nothing on 123/udp"; fi ;;
+        smb)
+            for _p in $3; do
+                listening "$_p" >/dev/null || continue
+                if cc_have smbclient; then
+                    # A refused guest still means Samba answers.
+                    _o=$(timeout 10 smbclient -N -L 127.0.0.1 -p "$_p" 2>&1)
+                    case "$_o" in *Sharename*|*ACCESS_DENIED*|*LOGON_FAILURE*) echo "ok Samba answers on $_p" ;; *) echo "bad listening on $_p but no SMB answer" ;; esac
+                else echo "ok listening on $_p"; fi
+                _pd=1; break
+            done
+            [ -n "$_pd" ] || echo "bad nothing answers on $3" ;;
+        nfs)
+            if listening 2049 >/dev/null; then
+                if cc_have showmount; then _o=$(timeout 10 showmount -e 127.0.0.1 2>&1) && echo "ok NFS answers ($(printf '%s\n' "$_o" | grep -c '^/') export(s))" || echo "bad listening on 2049 but showmount gets no answer"
+                else echo "ok listening on 2049"; fi
+            else echo "bad nothing on 2049"; fi ;;
         *) echo "- not tested" ;;
     esac
+}
+# firewalld (Rocky, Fedora) and ufw (Ubuntu, Mint) drop what they do not
+# allow, whatever iptables shows.
+FWD=0; UFW=0
+cc_have firewall-cmd && [ "$(firewall-cmd --state 2>/dev/null)" = running ] && FWD=1
+cc_have ufw && ufw status 2>/dev/null | head -n 1 | grep -q 'Status: active' && UFW=1
+fwd_allows() {   # fwd_allows PORT PROTO -> firewalld lets it in
+    firewall-cmd -q --query-port="$1/$2" 2>/dev/null && return 0
+    for _fs in $(firewall-cmd --list-services 2>/dev/null); do
+        firewall-cmd --info-service="$_fs" 2>/dev/null | awk -v p="$1/$2" '$1 == "ports:" { for (i = 2; i <= NF; i++) if ($i == p) f = 1 } END { exit !f }' && return 0
+    done
+    return 1
+}
+ufw_allows() {   # ufw_allows PORT PROTO -> ufw lets it in
+    ufw status verbose 2>/dev/null | grep -q '^Default: allow (incoming)' && return 0
+    ufw status 2>/dev/null | awk -v p="$1" -v pp="$1/$2" '($1 == p || $1 == pp) && $2 == "ALLOW" { f = 1 } END { exit !f }'
 }
 # Firewall rules that drop the port: "iptables-spec" lines.
 fw_rules() {   # fw_rules PORT
@@ -1920,6 +1999,18 @@ while IFS='|' read -r _k _u _ps _pt _pr; do
             _probs="$_probs nftables drops ${_p#u} (nft list ruleset);"
         fi
     done
+    for _p in $_pt; do
+        [ "$_p" = - ] && continue
+        _pr2=tcp; case "$_p" in u*) _pr2=udp ;; esac; _pn=${_p#u}
+        if [ "$FWD" = 1 ] && ! fwd_allows "$_pn" "$_pr2"; then
+            _probs="$_probs firewalld does not allow $_pn/$_pr2;"
+            addfix "$_u" firewall "open $_pn/$_pr2 in firewalld (now and after a reboot)" y "firewall-cmd --add-port=$_pn/$_pr2; firewall-cmd --permanent --add-port=$_pn/$_pr2" "firewall-cmd --remove-port=$_pn/$_pr2; firewall-cmd --permanent --remove-port=$_pn/$_pr2"
+        fi
+        if [ "$UFW" = 1 ] && ! ufw_allows "$_pn" "$_pr2"; then
+            _probs="$_probs ufw does not allow $_pn/$_pr2;"
+            addfix "$_u" firewall "allow $_pn/$_pr2 in ufw" y "ufw allow $_pn/$_pr2" "ufw delete allow $_pn/$_pr2"
+        fi
+    done
     pol_drop && ! iptables -S INPUT 2>/dev/null | grep -q -- "--dport ${_pt%% *} .*ACCEPT\|-j ACCEPT$" && _probs="$_probs INPUT policy DROP with no ACCEPT for ${_pt%% *};"
     if [ "$_run" = no ]; then
         _probs="$_probs not running;"
@@ -1937,15 +2028,23 @@ while IFS='|' read -r _k _u _ps _pt _pr; do
     [ "$_ast" = bad ] && [ "$_run" = yes ] && _probs="$_probs $_atx;"
     # Tampering: config changed lately, drop-ins, package files.
     case "$_u" in apache2) _cd=/etc/apache2 ;; httpd) _cd=/etc/httpd ;; nginx) _cd=/etc/nginx ;; php*-fpm) _cd=/etc/php ;; mariadb|mysql|mysqld) _cd=/etc/mysql ;; postgresql) _cd=/etc/postgresql ;;
-        dovecot) _cd=/etc/dovecot ;; postfix) _cd=/etc/postfix ;; ssh|sshd) _cd=/etc/ssh ;; chrony|chronyd) _cd=/etc/chrony ;; *) _cd="" ;; esac
-    _recent=""; [ -n "$_cd" ] && [ -d "$_cd" ] && _recent=$(find "$_cd" -type f -mmin -120 2>/dev/null | head -n 5 | tr '\n' ' ')
-    _drop=""; [ "$CC_INIT" = systemd ] && _drop=$(ls -d "/etc/systemd/system/$_u.service.d" "/etc/systemd/system/$_u.service" 2>/dev/null | tr '\n' ' ')
+        dovecot) _cd=/etc/dovecot ;; postfix) _cd=/etc/postfix ;; ssh|sshd) _cd=/etc/ssh ;; chrony|chronyd) _cd=/etc/chrony ;;
+        smbd|smb|samba) _cd=/etc/samba ;; nfs*) _cd=/etc/exports ;; gitea) _cd=/etc/gitea ;; forgejo) _cd=/etc/forgejo ;; *) _cd="" ;; esac
+    _recent=""; [ -n "$_cd" ] && [ -e "$_cd" ] && _recent=$(find "$_cd" -type f -mmin -120 2>/dev/null | head -n 5 | tr '\n' ' ')
+    _drop=""; [ "$INIT" = systemd ] && _drop=$(ls -d "/etc/systemd/system/$_u.service.d" "/etc/systemd/system/$_u.service" 2>/dev/null | tr '\n' ' ')
     [ -n "$_drop" ] && grep -rqs 'ExecStart=.*\(/bin/true\|/bin/false\|/dev/null\|sleep\)' $_drop && _probs="$_probs systemd override replaces how it starts ($_drop);"
     printf '%s|%s\n' "$_u" "$_recent" >>"$W/recent"
     _pk=""; if cc_have dpkg; then _pk=$(dpkg -S "$(cc_which "$(printf '%s' "$_ps" | cut -d' ' -f1)" 2>/dev/null || echo /nonexistent)" 2>/dev/null | cut -d: -f1 | head -n 1); fi
     if [ -n "$_pk" ]; then
         _bad=$(dpkg -V "$_pk" 2>/dev/null | awk '$2 != "c" && $1 ~ /5/ { print $NF }' | head -n 3 | tr '\n' ' ')
         [ -n "$_bad" ] && _probs="$_probs program files changed ($_bad) - reinstall: apt-get install --reinstall $_pk;"
+    elif cc_have rpm; then
+        # Rocky, Fedora.
+        _bin=$(cc_which "$(printf '%s' "$_ps" | cut -d' ' -f1)" 2>/dev/null)
+        if [ -n "$_bin" ] && _pk=$(rpm -qf "$_bin" 2>/dev/null); then
+            _bad=$(rpm -V "$_pk" 2>/dev/null | awk '$2 != "c" && $1 ~ /5/ { print $NF }' | head -n 3 | tr '\n' ' ')
+            [ -n "$_bad" ] && _probs="$_probs program files changed ($_bad) - reinstall: dnf reinstall $_pk;"
+        fi
     fi
     # Show it.
     _line=$(printf '%-9s %-12s run:%-3s boot:%-8s config:%-6s port:%-12s %s' "$_k" "$_u" "$_run" "$_st" "$_cfg" "${_pinfo# }" "$([ "$_run" = yes ] && printf "%s" "$_atx")")
@@ -1957,7 +2056,9 @@ while IFS='|' read -r _k _u _ps _pt _pr; do
         if [ "$_run" = no ] || [ "$_ast" = bad ]; then
             _lg=""; case "$_u" in apache2) _lg=/var/log/apache2/error.log ;; httpd) _lg=/var/log/httpd/error_log ;; nginx) _lg=/var/log/nginx/error.log ;;
                 mariadb|mysql|mysqld) _lg=$(ls /var/log/mysql/error.log /var/log/mariadb/mariadb.log 2>/dev/null | head -n 1) ;; dovecot|postfix) _lg=$(ls /var/log/mail.log /var/log/maillog 2>/dev/null | head -n 1) ;; esac
-            if [ "$CC_INIT" = systemd ]; then journalctl -u "$_u" -n 3 --no-pager -o cat 2>/dev/null; elif [ -n "$_lg" ]; then tail -n 3 "$_lg" 2>/dev/null; fi | cut -c1-150 | while IFS= read -r _ll; do cc_show "$C_GRY" "        log: $_ll"; done
+            # Alpine (OpenRC): the system log is /var/log/messages.
+            [ -z "$_lg" ] && [ "$INIT" != systemd ] && _lg=/var/log/messages
+            if [ "$INIT" = systemd ]; then journalctl -u "$_u" -n 3 --no-pager -o cat 2>/dev/null; elif [ -n "$_lg" ]; then tail -n 3 "$_lg" 2>/dev/null; fi | cut -c1-150 | while IFS= read -r _ll; do cc_show "$C_GRY" "        log: $_ll"; done
         fi
     fi
     cc_csv_row "$SCSV" "$_k" "$_u" "$_run" "$_st" "$_cfg" "${_pinfo# }" "$_atx" "$(printf '%s' "$_probs" | sed 's/;$//; s/^ //')"
@@ -1992,10 +2093,15 @@ else
         awk -F'|' -v k="$_kd" '$2 == k' "$W/chosen" | while IFS='|' read -r _u _k2 _ds _cmd _un; do
             case "$_kd" in
                 unmask) cc_undo_add "mask $_u again" "systemctl mask $_u"; systemctl unmask "$_u" >>"$CC_LOG" 2>&1; _r=$? ;;
-                enable) if [ "$CC_INIT" = systemd ]; then cc_undo_add "disable $_u at boot again" "systemctl disable $_u"; systemctl enable "$_u" >>"$CC_LOG" 2>&1
+                enable) if [ "$INIT" = systemd ]; then cc_undo_add "disable $_u at boot again" "systemctl disable $_u"; systemctl enable "$_u" >>"$CC_LOG" 2>&1
+                        elif [ "$INIT" = openrc ]; then cc_undo_add "disable $_u at boot again" "$(cc_svc_cmd disable "$_u")"; cc_svc enable "$_u" >>"$CC_LOG" 2>&1
                         else cc_undo_add "disable $_u at boot again" "update-rc.d $_u disable"; update-rc.d "$_u" enable >>"$CC_LOG" 2>&1; fi; _r=$? ;;
-                firewall) # shellcheck disable=SC2086  # the rule's words
-                        { cc_undo_add "put the firewall rule back" "iptables -A $_un"; iptables -D $_cmd >>"$CC_LOG" 2>&1; }; _r=$? ;;
+                firewall) case "$_cmd" in
+                            firewall-cmd*|ufw*) cc_undo_add "close the port again" "$_un"; sh -c "$_cmd" >>"$CC_LOG" 2>&1 ;;
+                            *)  cc_undo_add "put the firewall rule back" "iptables -A $_un"
+                                # shellcheck disable=SC2086  # the rule's words
+                                iptables -D $_cmd >>"$CC_LOG" 2>&1 ;;
+                        esac; _r=$? ;;
                 kill)   kill ${_cmd#kill } 2>>"$CC_LOG"; sleep 1; kill -0 ${_cmd#kill } 2>/dev/null && kill -9 ${_cmd#kill } 2>>"$CC_LOG"; _r=0 ;;
                 start)  svc_cmd "$_u" "$_cmd" >>"$CC_LOG" 2>&1; _r=$? ;;
             esac

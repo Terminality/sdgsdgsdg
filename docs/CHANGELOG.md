@@ -2,6 +2,11 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-20: SV-50 for Samba, NFS, Gitea, firewalld, ufw and OpenRC
+
+- **SV-50** (1.1.0): also checks Samba (`testparm`, `smbclient -L`), NFS (`showmount -e`) and Gitea or Forgejo (HTTP on `HTTP_PORT` from `app.ini`, else 3000), and Alpine's `php-fpm83`-style names. A port that firewalld (Rocky, Fedora) or ufw (Ubuntu, Mint) does not allow is a problem, with a `firewall` fix that opens it (firewalld now and permanent) and an undo line. OpenRC: "starts at boot" read from the runlevels, the enable fix through `rc-update`, start through `rc-service`, logs from `/var/log/messages`. Changed program files on Rocky/Fedora with `rpm -V`. Recently changed configs in `/etc/samba`, `/etc/exports`, `/etc/gitea`. busybox `netstat` when there is no `ss`. **Fixed under ksh93:** the HTTP, IMAP, SMTP and Samba checks lost their answer (every one showed as not answering); the check now writes its answer to a file. The box question has `fileshare` (scored: smb, nfs, ssh), `gitea` (gitea, web, ssh, databases) and `web` too; old answers unchanged.
+- Tested: sv50 under dash, bash, ksh93, mksh, yash and busybox sh; gawk, mawk and busybox awk; the built copy. Stand-ins only (init scripts, python's web server as gitea, firewall-cmd, ufw, rc-update); the real-Apache section (BT_TEST_SVC=1) was not run.
+
 ## 2026-11-20: Linux scripts on Alpine, Rocky/Fedora and Ubuntu/Mint (library 0.4.0)
 
 Same options and questions as before; what differs per box is found by itself.
