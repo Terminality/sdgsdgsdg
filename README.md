@@ -25,6 +25,7 @@ every change**.
 | If you need... | Read... |
 | --- | --- |
 | The WRCCDC competition-day order, roles and commands | [`docs/WRCCDC-INVITATIONAL.md`](docs/WRCCDC-INVITATIONAL.md) |
+| The 2026 Invitational 3 packet-specific environment and first 15 minutes | [`docs/WRCCDC-INVITATIONAL3.md`](docs/WRCCDC-INVITATIONAL3.md) |
 | What to do after a finding and how to roll it back | [`docs/RESPONSE-MATRIX.md`](docs/RESPONSE-MATRIX.md) |
 | Detailed options, output and troubleshooting for each script | [`docs/MANUAL.md`](docs/MANUAL.md) |
 | Known scored services and ports | [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) |
@@ -88,18 +89,20 @@ business service and confirms access-risk changes from a fresh connection.
 
 1. Copy the standalone scripts from `dist/` and verify
    `dist/MANIFEST.sha256`.
-2. Copy the WRCCDC host/protected examples into private working files and fill
+2. For Invitational 3, run `AU-01` with the team number to create the private
+   NAT map, protected list, service matrix, change log and password tracker.
+3. Copy the WRCCDC host/protected examples into private working files and fill
    them from the current packet and Quotient.
-3. Run SH-03 with `--profile wrccdc` from the jump box.
-4. Run SH-05/SH-06 and WN-04 read-only enumeration.
-5. Run LX-31, WN-35, SV-14 and NW-01 backups; copy backups off-host.
-6. Start LX-40/LX-41 and WN-44 monitoring.
-7. Rotate administrator/root/default credentials, then carefully handle other
+4. Run SH-03 with `--profile wrccdc` from the jump box.
+5. Run SH-05/SH-06 and WN-04 read-only enumeration.
+6. Run LX-31, WN-35, SV-14 and NW-01 backups; copy backups off-host.
+7. Start LX-40/LX-41 and WN-44 monitoring.
+8. Rotate administrator/root/default credentials, then carefully handle other
    accounts after documenting service dependencies.
-8. Apply safe fixes in dry-run mode first, then one host at a time.
-9. Apply LX-25/WN-25 firewalling last, with a second session open and rollback
+9. Apply safe fixes in dry-run mode first, then one host at a time.
+10. Apply LX-25/WN-25 firewalling last, with a second session open and rollback
    timers enabled.
-10. After every change, validate locally, from the jump box and in Quotient for
+11. After every change, validate locally, from the jump box and in Quotient for
     at least two scoring cycles.
 
 When a script reports a finding, do not improvise. Use the response matrix to
@@ -120,6 +123,7 @@ Copy `dist/MANIFEST.sha256` too if you want each script to check it wasn't chang
 
 | Script | What it does | How to run it |
 | --- | --- | --- |
+| Invitational 3 controller (AU-01) | Creates a private team-specific internal/external NAT map, host list, starter protected list, service matrix, password-status tracker, change log and first-15 guide. Optionally launches SH-03 read-only discovery. It never stores passwords or changes remote hosts | `sh dist/automation/AU-01-inv3-first15.sh --team 7 --out ~/ccdc-control --kit dist --scan` |
 | Network scan (SH-03) | Live hosts, open ports and service versions. With the host list it checks every scored service is reachable and flags hosts that should not be there. The `wrccdc` profile quickly checks common AD, web, mail, SMB, database and administration ports. Uses nmap, or python, bash or nc when nmap is missing | `sh roles/network/SH-03-network-scan.sh --target 10.0.2.0/24 --hosts config/hosts.csv --profile wrccdc --out ~/ccdc-out` |
 | Scan diff (SH-04) | What changed between two network scans, or two enum runs of one host: new accounts, SSH keys, cron entries, sudo rules, SUID files and listening ports, with the additions flagged first | `sh roles/network/SH-04-scan-diff.sh --type sh05 --out /root/ccdc-out` |
 | Linux enum (SH-05) | Read-only inventory of a Linux or Unix host: accounts, listening ports and their programs, services, cron and other autostart, SSH keys, sudo, processes, risky files, firewall, PAM, credentials files. One-page summary with the problems worst first | `sudo sh roles/linux/SH-05-linux-enum.sh --out /root/ccdc-out` |

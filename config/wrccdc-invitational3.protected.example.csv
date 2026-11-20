@@ -1,0 +1,26 @@
+type,value,note
+host,192.168.220.2,OpenWRT gateway - never block or bulk change
+port,22/tcp,SSH until a tested alternate path exists
+port,53,DNS when discovered or scored - TCP and UDP
+port,80/tcp,HTTP when discovered or scored
+port,88,Kerberos - TCP and UDP
+port,123/udp,time synchronization when present
+port,135/tcp,Windows RPC endpoint mapper
+port,139/tcp,NetBIOS when used
+port,389,LDAP - TCP and UDP
+port,443/tcp,HTTPS when discovered or scored
+port,445/tcp,SMB and Active Directory dependency
+port,464,Kerberos password changes - TCP and UDP
+port,636/tcp,LDAPS when configured
+port,2049,NFS when the fileshare uses it - TCP and UDP
+port,3268/tcp,Active Directory global catalog
+port,3269/tcp,secure global catalog when configured
+port,3389/tcp,RDP or manual interactive check when present
+port,5985/tcp,WinRM for team or scoring access
+port,5986/tcp,WinRM TLS for team or scoring access
+service,NTDS,Active Directory Domain Services
+service,DNS,Active Directory DNS
+service,Netlogon,domain authentication
+service,KDC,Kerberos authentication
+account,ccdc-automation,team automation account if created
+path,C:\Windows\SYSVOL,Group Policy and logon scripts

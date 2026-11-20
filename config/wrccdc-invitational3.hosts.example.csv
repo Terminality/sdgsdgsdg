@@ -1,0 +1,11 @@
+host,ip,os,role,connect,port,user,scored_services,notes
+vigra,192.168.220.2,openwrt,router,ssh,22,admin,,Packet router; external address is 10.100.1XX.2; back up /etc/config NAT routes and firewall first
+kolla,192.168.220.30,alpine,fileshare,ssh,22,root,,Discover SMB NFS FTP and authenticated workflow
+borgar,192.168.220.10,windows,Server 2022 food ordering,winrm,5985,Administrator,,Discover app database IIS tasks and service accounts
+gufu,192.168.220.100,rocky,Gitea,ssh,22,root,,Back up app.ini repositories and database
+vattar,192.168.220.79,windows,Server 2019 Active Directory,winrm,5985,Administrator,,Run SH-06 WN-04 WN-35 WN-44; protect DNS Kerberos LDAP SMB and RPC
+haf,192.168.220.67,lubuntu,Wabbit,ssh,22,root,,Unknown application; inventory its process ports data and workflow
+kvigindis,192.168.220.44,ubuntu,Furniture Help Site,ssh,22,root,,Discover web database and authentication dependencies
+skerja,192.168.220.97,alpine,Employee and Customer Tickets,ssh,22,root,,Discover ticket application database and authentication
+thorska,192.168.220.231,fedora,Home Manager,ssh,22,root,,Discover application database and authentication
+djupi,192.168.220.222,mint,Point of Sale,ssh,22,root,,Discover POS database payment and authentication dependencies

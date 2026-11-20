@@ -1,19 +1,29 @@
 # Build status
 
-28 of 32 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+29 of 33 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
 | Tier | Built | Total |
 | --- | --- | --- |
+| Backup and prep | 5 | 5 |
 | Enum (look only) | 7 | 7 |
-| Backup and prep | 4 | 4 |
 | Hardening: easy | 3 | 3 |
 | Hardening: medium | 2 | 2 |
 | Hardening: hard | 2 | 6 |
 | Management | 3 | 3 |
 | Alerts | 4 | 4 |
 | Kit | 3 | 3 |
+
+## Backup and prep
+
+| ID | Script | Risk | Status | File |
+| --- | --- | --- | --- | --- |
+| AU-01 | Invitational 3 first-15 controller | none | built | `roles/automation/AU-01-inv3-first15.sh` |
+| LX-31 | Linux backup | none | built | `roles/linux/LX-31-backup.sh` |
+| WN-35 | Windows backup | none | built | `roles/windows-ad/WN-35-backup.ps1` |
+| SV-14 | Database backup | none | built | `roles/applications/SV-14-db-backup.sh` |
+| NW-01 | Network config backup and diff | none | built | `roles/network/NW-01-config-backup.sh` |
 
 ## Enum (look only)
 
@@ -26,15 +36,6 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | SH-03 | Network scan | none | built | `roles/network/SH-03-network-scan.sh` |
 | SH-04 | Scan diff | none | built | `roles/network/SH-04-scan-diff.sh` |
 | NW-07 | Network device config audit | none | built | `roles/network/NW-07-config-audit.sh` |
-
-## Backup and prep
-
-| ID | Script | Risk | Status | File |
-| --- | --- | --- | --- | --- |
-| LX-31 | Linux backup | none | built | `roles/linux/LX-31-backup.sh` |
-| WN-35 | Windows backup | none | built | `roles/windows-ad/WN-35-backup.ps1` |
-| SV-14 | Database backup | none | built | `roles/applications/SV-14-db-backup.sh` |
-| NW-01 | Network config backup and diff | none | built | `roles/network/NW-01-config-backup.sh` |
 
 ## Hardening: easy
 
