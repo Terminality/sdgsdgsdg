@@ -3396,10 +3396,27 @@ Run NW-01 before (backup) and after (the changes become the saved copy).
 
 A non-default SNMP community is reported, but its value is never shown or written. The management limit always keeps this box (`--me`, else found with `ip route get`). Linux devices: use LX-22 and LX-25. pfSense / OPNsense: the web GUI places are listed.
 
+**OpenWRT** (log in as root). Every fix is a `uci` setting, committed, and only that service reloaded; every one has an undo line:
+
+| Found | Fix |
+| --- | --- |
+| Web admin (LuCI) over plain HTTP | `uhttpd.main.redirect_https=1` |
+| SSH on every interface; the web admin on every address | SSH on `lan` only; the web admin on the router's lan address (a management change: you confirm a login from another team machine) |
+| UPnP on | off, and `miniupnpd` disabled |
+| Telnet started at boot | stopped and disabled |
+| No SSH idle timeout | `IdleTimeout` = `--timeout` minutes |
+| Logs not sent to `--log-host` / time not from `--ntp` | `log_ip` / added to `system.ntp.server` |
+| No login banner | `/etc/bt-banner` and dropbear's `BannerFile` |
+| Default SNMP community | reported only |
+
 ### The questions
 
 | Question | Answers | Flag |
 | --- | --- | --- |
+| Which devices: the host list `config/hosts.txt`, or each typed (OpenWRT first) | | `--hosts`, `--device` |
+| Device password (hidden) | | `BT_NET_PASS`, `--ask-password` |
+| Your team's addresses? (management is limited to them and this box) | addresses or networks, Enter = do not limit | `--team` |
+| Send the devices' logs to a log server? / Take the time from a time server? | an address, Enter = no | `--log-host`, `--ntp` |
 | Each finding | `[f]ix` (default) / `[l]eave` / `[a]ll the rest default` | `--batch` |
 | Do these? | `[y]` / `[n]` | `--apply` |
 | After a management or telnet change: log in from another team machine, keep? | `[y]` within `--timer` seconds (60), else put back | `--batch` keeps |

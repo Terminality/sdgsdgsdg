@@ -46,8 +46,32 @@ ios() {
             else { f = 0; for (i = 1; i <= n; i++) { print a[i]; if (a[i] == l) f = 1 } if (!f) print l }
         }' "$cfg" >"$cfg.n" && cat "$cfg.n" >"$cfg"
 }
+# OpenWRT model: uci set / delete / add_list / del_list and the telnet init
+# script, applied to the "uci show" lines in the config file.
+owrt() {
+    printf '%s\n' "$1" | sed 's/ && /\n/g; s/; /\n/g' | while IFS= read -r c; do
+        set -- $c
+        case "$1 $2" in
+            "uci set"|"uci add_list"|"uci del_list"|"uci delete")
+                awk -v op="$2" -v a="$3" '
+                    BEGIN { q = sprintf("%c", 39); k = a; v = ""; if (index(a, "=")) { k = substr(a, 1, index(a, "=") - 1); v = substr(a, index(a, "=") + 1) } }
+                    /^===/ { if (insec && !done) emit(); insec = ($0 == "===uci") }
+                    insec && index($0, k "=") == 1 { done = 1; cur = substr($0, length(k) + 2)
+                        if (op == "set") print k "=" q v q
+                        else if (op == "add_list") print k "=" cur " " q v q
+                        else if (op == "del_list") { gsub(" ?" q v q, "", cur); print k "=" cur }
+                        next }
+                    { print }
+                    END { if (insec && !done) emit() }
+                    function emit() { done = 1; if (op == "set" || op == "add_list") print k "=" q v q }' "$cfg" >"$cfg.n" && cat "$cfg.n" >"$cfg" ;;  # awk function, not shell: posix-ok
+            "/etc/init.d/telnet disable") grep -v 'telnet' "$cfg" >"$cfg.n"; cat "$cfg.n" >"$cfg" ;;
+            "/etc/init.d/telnet enable") awk '{ print } $0 == "===rc" { print "S50telnet" }' "$cfg" >"$cfg.n"; cat "$cfg.n" >"$cfg" ;;
+        esac
+    done
+}
 if [ -n "$cmd" ]; then printf '%s\n' "$cmd" | tr ';' '\n'; else cat; fi | while IFS= read -r l; do
     printf '%s\n' "$l" >>"$STUB_DIR/$host.log"
+    [ "$(cat "$STUB_DIR/$host.kind" 2>/dev/null)" = owrt ] && case "$l" in *"uci "*|"/etc/init.d/"*) owrt "$l" ;; esac
     case "$(cat "$STUB_DIR/$host.kind" 2>/dev/null)" in ios)
         case "$l" in
             "configure terminal"|"terminal length 0"|"write memory"|exit|"show running-config") ;;
@@ -267,5 +291,80 @@ if command -v script >/dev/null 2>&1; then
     t_has "$tt" "Not confirmed: putting r1 back" "n: put back"
     t_ok "n: the config is as before" grep -qxF ' transport input telnet ssh' "$D/ios.cfg"
     t_fail "n: the limit is gone" grep -q 'BT-MGMT' "$D/ios.cfg"
+fi
+t_start "OpenWRT"
+printf '%s\n' "$BT_NET_PASS" >"$D/ow.pw"; echo owrt >"$D/ow.kind"; rm -f "$D/ow.log"
+cat >"$D/ow.cfg" <<'EOF'
+===uci
+dropbear.@dropbear[0]=dropbear
+dropbear.@dropbear[0].PasswordAuth='on'
+dropbear.@dropbear[0].Port='22'
+uhttpd.main=uhttpd
+uhttpd.main.listen_http='0.0.0.0:80' '[::]:80'
+uhttpd.main.listen_https='0.0.0.0:443' '[::]:443'
+uhttpd.main.redirect_https='0'
+system.@system[0]=system
+system.@system[0].hostname='router'
+system.ntp=timeserver
+system.ntp.enabled='1'
+system.ntp.server='0.openwrt.pool.ntp.org'
+upnpd.config=upnpd
+upnpd.config.enabled='1'
+snmpd.public=community
+snmpd.public.community='public'
+===lan
+192.168.220.2/24
+===rc
+S10boot
+S50dropbear
+S50telnet
+EOF
+cp "$D/ow.cfg" "$T_TMP/ow.orig"
+OW="--device router,ow,openwrt,root"
+out=$(run $OW --batch 2>&1)
+for x in "[!] web admin (LuCI) over plain HTTP" "[!] telnet starts at boot (/etc/rc.d/S50telnet)" "[!] SSH and the web admin answer on every interface" \
+         "[!] UPnP is on" "[*] SNMP has a default community name" "[*] SSH logins never time out" "[*] logs are not sent to 10.0.0.20" \
+         "[*] time is not taken from 10.0.0.20" "[-] no login banner"; do t_has "$out" "$x" "OpenWRT: $x"; done
+t_has "$out" "Dry run: nothing was changed" "dry run"
+t_fail "a dry run sends no uci change" grep -q '^uci set' "$D/ow.log"
+_u0=$(cat "$O"/undo-*.log 2>/dev/null | grep -c .)
+out=$(run $OW --batch --apply --no-protected 2>&1)
+c=$(cat "$D/ow.cfg")
+t_has "$c" "uhttpd.main.redirect_https='1'" "HTTPS only"
+t_has "$c" "dropbear.@dropbear[0].Interface='lan'" "SSH on lan only"
+t_has "$c" "uhttpd.main.listen_https='192.168.220.2:443'" "the web admin on the lan address"
+t_hasnt "$c" "0.0.0.0" "nothing on every address"
+t_has "$c" "upnpd.config.enabled='0'" "UPnP off"
+t_hasnt "$c" "S50telnet" "telnet disabled"
+t_has "$c" "dropbear.@dropbear[0].IdleTimeout='600'" "idle timeout 10 minutes"
+t_has "$c" "system.@system[0].log_ip='10.0.0.20'" "logs to the log server"
+t_has "$c" "system.ntp.server='0.openwrt.pool.ntp.org' '10.0.0.20'" "time server added"
+t_has "$c" "dropbear.@dropbear[0].BannerFile='/etc/bt-banner'" "banner"
+t_has "$(cat "$D/ow.log")" "uci commit uhttpd" "each package committed"
+t_has "$out" "[+] router: fixed: web admin (LuCI) over plain HTTP" "checked after: fixed"
+t_hasnt "$out" "still there" "every fix checked as gone"
+cat "$O"/undo-*.log | awk -F'\t' -v n="$_u0" 'NR > n { l[NR] = $4 } END { for (i = NR; i > n; i--) print l[i] }' >"$T_TMP/undo.sh"
+sh "$T_TMP/undo.sh" >/dev/null 2>&1
+c=$(cat "$D/ow.cfg")
+t_has "$c" "uhttpd.main.redirect_https='0'" "undo: HTTP again"
+t_has "$c" "S50telnet" "undo: telnet back"
+t_has "$c" "upnpd.config.enabled='1'" "undo: UPnP back"
+t_hasnt "$c" "Interface='lan'" "undo: SSH on every interface again"
+t_has "$c" "uhttpd.main.listen_http='0.0.0.0:80' '[::]:80'" "undo: the old web addresses back"
+
+t_start "questions: devices, password, team, log and time servers"
+if command -v script >/dev/null 2>&1; then
+    cp "$T_TMP/ow.orig" "$D/ow.cfg"
+    # address, type, name, user, another, password, team, log server, time server, then Enter for the rest
+    printf 'ow\n\n\n\n\n%s\n10.0.0.0/24\n10.0.0.20\n\n\n\n\n\n\n\n\n\n\n\n\n' "$BT_NET_PASS" >"$T_TMP/ans"
+    mkdir -p "$T_TMP/empty"
+    tt=$(cd "$T_TMP/empty" && unset BT_NET_PASS && BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --me $ME --wait 1" /dev/null <"$T_TMP/ans" 2>&1)
+    t_has "$tt" "What is ow?" "the device is asked for"
+    t_has "$tt" "Device password (hidden, never saved)" "the password"
+    t_has "$tt" "Your team's addresses?" "the team"
+    t_has "$tt" "Send the devices' logs to a log server?" "the log server"
+    t_has "$tt" "Take the time from a time server?" "the time server"
+    t_has "$tt" "logs are not sent to 10.0.0.20" "the answer is used"
+    t_hasnt "$tt" "time is not taken from" "no time server: not checked"
 fi
 t_done

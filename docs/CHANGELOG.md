@@ -2,6 +2,11 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-20: NW-21 hardens OpenWRT routers; questions
+
+- **NW-21** (1.1.0): new brand `openwrt`, read with `uci show`. Found and fixed, each a uci setting committed with only that service reloaded, each with an undo: LuCI over plain HTTP (redirect to HTTPS); SSH on every interface and LuCI on every address (SSH on lan, LuCI on the lan address: a management change, so a new login is tested and you confirm from another team machine, or it is all put back); UPnP on (off); telnet at boot (stopped, disabled); no SSH idle timeout (`--timeout`); logs to `--log-host`; time from `--ntp`; a login banner (dropbear `BannerFile`). A default SNMP community is reported only. New questions when no flag says: which devices and the password (the library questions), your team's addresses (`--team`), a log server (`--log-host`), a time server (`--ntp`).
+- Tested: nw21 under dash, bash, ksh93, mksh, yash and busybox sh; gawk, mawk and busybox awk; the built copy. OpenWRT with a stand-in router that applies `uci set/delete/add_list/del_list` and the telnet init script to its settings, so the after-check and the undo are real; the questions on a terminal. Not yet on a real OpenWRT router.
+
 ## 2026-11-20: NW-12 on OpenWRT; the device questions in the library (library 0.5.0)
 
 - **Library 0.5.0** (`lib/lib.sh`; `lib/lib.ps1` version only): `cc_net_hostfile`, `cc_net_ask_devices` (the host list `config/hosts.txt` if there is one, else each device: address, what it is with OpenWRT first, a short name, the login; root for OpenWRT, pfSense, OPNsense) and `cc_net_ask_password` (`BT_NET_PASS` as it is when set, else typed hidden). The network scripts ask these the same way.

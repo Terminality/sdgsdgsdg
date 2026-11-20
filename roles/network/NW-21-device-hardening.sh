@@ -4,7 +4,7 @@
 # NAME:     Network device hardening
 # ROLE:     Network  (wave 2, after NW-01 backup and NW-10 passwords)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Locks down how the firewalls, routers and switches themselves are
@@ -29,11 +29,24 @@
 #        it fails -> everything is put back through the open session
 #   Every change has an undo script (needs BT_NET_PASS when run).
 #
-#   Brands: cisco-ios, cisco-asa, paloalto, fortigate, vyos, mikrotik.
+#   Brands: cisco-ios, cisco-asa, paloalto, fortigate, vyos, mikrotik,
+#   openwrt (log in as root; every change is a uci setting, committed and
+#   only that service reloaded):
+#     web admin (LuCI) over plain HTTP     -> redirected to HTTPS
+#     SSH on every interface / web admin   -> SSH on lan only, the web admin
+#       on every address                      on the router's lan address
+#     UPnP on                              -> off
+#     telnet started at boot               -> stopped and disabled
+#     no SSH idle timeout                  -> --timeout minutes
+#     no log server / time server / banner -> --log-host / --ntp / --banner
 #   Linux devices: use LX-22 (SSH) and LX-25 (firewall).  pfSense /
 #   OPNsense: listed with where to do it in the web GUI.
 #
 #   QUESTIONS (Enter takes the default in capitals; a flag answers each):
+#     which devices (the host list, or typed)  --hosts FILE / --device SPEC
+#     the device password (hidden)              $BT_NET_PASS / --ask-password
+#     your team's addresses                     --team CIDR,...
+#     a log server? a time server?              --log-host IP / --ntp IP
 #     each finding               [f]ix (default) / [l]eave / [a]ll the rest default
 #     do these?                  --apply
 #     keep the changes? (after a management change, from another machine)
@@ -103,7 +116,7 @@ while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$
 . "$_cc_d/lib/lib.sh"
 # <<< BT-LIB
 
-VENDORS="cisco-ios cisco-asa paloalto fortigate vyos mikrotik linux pfsense opnsense"
+VENDORS="cisco-ios cisco-asa paloalto fortigate vyos mikrotik linux pfsense opnsense openwrt"
 
 usage() {
     cat <<'USAGE'
@@ -133,7 +146,7 @@ USAGE
 
 NL='
 '
-HOSTS=""; DEVICES=""; DEFUSER="admin"; ASK=0; ENABLE=0; TEAM=""; ME=""; LOGHOST=""; NTP=""
+HOSTS=""; DEVICES=""; DEFUSER="admin"; USERSET=0; ASK=0; ENABLE=0; TEAM=""; ME=""; LOGHOST=""; NTP=""
 BANNER="Authorized access only. Activity is monitored."; TO=10; WAIT=5; CWAIT=120; TIMER=60; CONFIGS=""; LEGACY=0; COLOR=1
 num() { case "$2" in ''|*[!0-9]*) cc_die 2 "$1 needs a whole number" ;; esac; }
 ipv4() { printf '%s' "$2" | grep -q '^[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}$' || cc_die 2 "$1 needs an IPv4 address"; }
@@ -143,7 +156,7 @@ while [ $# -gt 0 ]; do
         --apply)        CC_APPLY=1; shift ;;
         --hosts)        [ $# -ge 2 ] || cc_die 2 "--hosts needs a file"; [ -r "$2" ] || cc_die 2 "--hosts: cannot read $2"; HOSTS=$2; shift 2 ;;
         --device)       [ $# -ge 2 ] || cc_die 2 "--device needs NAME,ADDRESS,VENDOR"; DEVICES="$DEVICES$2$NL"; shift 2 ;;
-        --user)         [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; shift 2 ;;
+        --user)         [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; USERSET=1; shift 2 ;;
         --ask-password) ASK=1; shift ;;
         --enable-env)   ENABLE=1; shift ;;
         --team)         [ $# -ge 2 ] || cc_die 2 "--team needs addresses"; TEAM="$TEAM,$2"; shift 2 ;;
@@ -162,7 +175,6 @@ while [ $# -gt 0 ]; do
         *)              cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-[ -n "$HOSTS$DEVICES" ] || cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
 TEAM=${TEAM#,}
 for _t in $(printf '%s' "$TEAM" | tr ',' ' '); do
     printf '%s' "$_t" | grep -q '^[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\(/[0-9]\{1,2\}\)\{0,1\}$' || cc_die 2 "--team: IPv4 addresses or CIDRs (10.0.0.0/24)"
@@ -175,6 +187,10 @@ cc_init "NW-21" "Network device hardening" changes
 # shellcheck disable=SC2034  # read by cc_color_init
 [ "$COLOR" = 1 ] || CC_NOCOLOR=1
 cc_color_init
+# No device named, no host list and nobody to ask: stop before a run folder.
+if [ -z "$HOSTS$DEVICES" ] && ! _cc_can_ask && ! cc_net_hostfile >/dev/null; then
+    cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
+fi
 cc_use_numbered_dir device-hardening
 rmdir "$CC_RUN_DIR/raw" 2>/dev/null
 OUTF="$CC_RUN_DIR/output.txt"
@@ -192,16 +208,40 @@ mkdir -p "$CONFIGS" 2>/dev/null
 SSH=${BT_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
 SSHPASS_BIN=${BT_SSHPASS:-$(cc_which sshpass)} || cc_die 3 "sshpass not found (apt install sshpass): device logins use the password"
 cc_have mkfifo || cc_die 3 "mkfifo not found"
+cc_show "$C_CYN" "NW-21 Network device hardening | from $CC_HOST | results in $CC_RUN_DIR"
+cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it   ${C_GRN}[ok]${C_OFF} fine   ${C_YEL}[~] would change${C_OFF}   ${C_GRN}[+] changed${C_OFF}   ${C_RED}[x] failed${C_OFF}"
+header "1/4  devices"
+# The questions a flag did not answer.
+if [ -z "$HOSTS$DEVICES" ]; then
+    cc_net_ask_devices "$DEFUSER" "$USERSET" || cc_die 2 "no devices given (or use --hosts FILE / --device NAME,ADDRESS,VENDOR)"
+    HOSTS=$CC_NET_HOSTS; DEVICES=$CC_NET_DEVICES
+fi
 if [ "$ASK" = 1 ]; then
     [ -r /dev/tty ] || cc_die 3 "--ask-password needs a terminal; set BT_NET_PASS"
     printf 'Device password: ' >/dev/tty; stty -echo </dev/tty 2>/dev/null
     read -r BT_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
+else
+    cc_net_ask_password
 fi
 [ -n "${BT_NET_PASS:-}" ] || cc_die 3 "the device password is needed: set BT_NET_PASS or use --ask-password"
 [ "$ENABLE" = 1 ] && [ -z "${BT_NET_ENABLE:-}" ] && cc_die 3 "--enable-env: set BT_NET_ENABLE"
-
-cc_show "$C_CYN" "NW-21 Network device hardening | from $CC_HOST | results in $CC_RUN_DIR"
-cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it   ${C_GRN}[ok]${C_OFF} fine   ${C_YEL}[~] would change${C_OFF}   ${C_GRN}[+] changed${C_OFF}   ${C_RED}[x] failed${C_OFF}"
+if _cc_can_ask; then
+    if [ -z "$TEAM" ]; then
+        cc_ask_text "Your team's addresses? (management is limited to them and this box; Enter = do not limit it)" "" "addresses or networks separated by commas, like 192.168.220.0/24"
+        TEAM=$CC_ANSWER
+        for _t in $(printf '%s' "$TEAM" | tr ',' ' '); do
+            printf '%s' "$_t" | grep -q '^[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\(/[0-9]\{1,2\}\)\{0,1\}$' || cc_die 2 "team: IPv4 addresses or CIDRs (10.0.0.0/24)"
+        done
+    fi
+    if [ -z "$LOGHOST" ]; then
+        cc_ask_text "Send the devices' logs to a log server? Its address" "" "an IPv4 address, like 192.168.220.30 (Enter = no)"
+        [ -n "$CC_ANSWER" ] && { ipv4 "the log server" "$CC_ANSWER"; LOGHOST=$CC_ANSWER; }
+    fi
+    if [ -z "$NTP" ]; then
+        cc_ask_text "Take the time from a time server? Its address" "" "an IPv4 address (Enter = no)"
+        [ -n "$CC_ANSWER" ] && { ipv4 "the time server" "$CC_ANSWER"; NTP=$CC_ANSWER; }
+    fi
+fi
 
 # ---- Devices (same rules as NW-01) ---------------------------------------------------
 vendor_of() {
@@ -214,6 +254,7 @@ vendor_of() {
         /opnsense/ { print "opnsense"; exit }
         /pfsense/ { print "pfsense"; exit }
         /mikrotik|routeros/ { print "mikrotik"; exit }
+        /openwrt|lede|luci/ { print "openwrt"; exit }
         /cisco/ { print "cisco-ios"; exit }'
 }
 : >"$W/devices"
@@ -254,6 +295,8 @@ read_cmds() {
         paloalto)  printf 'set cli pager off\nset cli config-output-format set\nconfigure\nshow deviceconfig\nexit\nexit\n' ;;
         fortigate) printf 'show system interface\nshow system admin\nshow system global\nshow log syslogd setting\nshow system ntp\nshow system snmp community\nexit\n' ;;
         vyos)      printf '/opt/vyatta/bin/vyatta-op-cmd-wrapper show configuration commands' ;;
+        # OpenWRT: the settings as "uci show" lines, in a shell session.
+        openwrt)   printf 'echo ===uci\nuci -q show dropbear\nuci -q show uhttpd\nuci -q show system\nuci -q show upnpd\nuci -q show snmpd\necho ===lan\nuci -q get network.lan.ipaddr\necho ===rc\nls /etc/rc.d\nexit\n' ;;
         mikrotik)  printf ':put "===svc"; /ip service print terse without-paging; :put "===snmp"; /snmp print; /snmp community print terse without-paging; :put "===log"; /system logging action print terse without-paging; :put "===ntp"; /system ntp client print; :put "===mac"; /tool mac-server print; :put "===macwb"; /tool mac-server mac-winbox print; :put "===note"; /system note print' ;;
     esac
 }
@@ -464,9 +507,52 @@ END {
 }
 function svcs(a, n,   s, i) { s = ""; for (i = 1; i <= n; i++) s = s " " a[i]; return s }  # awk, not shell: posix-ok
 '
+# OpenWRT ("uci show" lines: package.section.option='value' ['value' ...]).
+# Every fix commits its package and reloads only that service.
+OW_AWK='
+function q(s) { gsub(/\047/, "", s); return s }  # awk, not shell: posix-ok
+/^===/ { sec = substr($0, 4); next }
+sec == "uci" && index($0, "=") { k = substr($0, 1, index($0, "=") - 1); v = substr($0, index($0, "=") + 1); V[k] = v }
+sec == "lan" && NF { lan = $1; sub(/\/.*/, "", lan); gsub(/\047/, "", lan) }
+sec == "rc" && /telnet/ { tel = $1 }
+END {
+    db = "dropbear.@dropbear[0]"
+    hh = q(V["uhttpd.main.listen_http"]); hs = q(V["uhttpd.main.listen_https"]); rd = q(V["uhttpd.main.redirect_https"])
+    if (hh != "" && rd != "1" && rd != "on") { F("plain", "HIGH", "web admin (LuCI) over plain HTTP: the root password crosses the network in the clear", "f")
+        X("plain", "uci set uhttpd.main.redirect_https=1 && uci commit uhttpd && /etc/init.d/uhttpd reload"); U("plain", "uci set uhttpd.main.redirect_https=" (rd == "" ? "0" : rd) " && uci commit uhttpd && /etc/init.d/uhttpd reload") }
+    else O("web admin: HTTPS only (or off)")
+    if (tel != "") { F("telnet", "HIGH", "telnet starts at boot (/etc/rc.d/" tel ")", "f")
+        X("telnet", "/etc/init.d/telnet stop; /etc/init.d/telnet disable"); U("telnet", "/etc/init.d/telnet enable; /etc/init.d/telnet start") }
+    else O("no telnet at boot")
+    ifc = q(V[db ".Interface"]); anyweb = ((hh " " hs) ~ /(^| )(0\.0\.0\.0:|\[::\]:|[0-9]+( |$))/)
+    if ((ifc == "" || ifc == "wan") || (anyweb && lan != "")) {
+        if (lan != "") { F("mgmt", "HIGH", "SSH" (anyweb ? " and the web admin" : "") " answer on every interface, the outside (wan) too: limit them to the inside (lan)", "f")
+            if (ifc == "" || ifc == "wan") { X("mgmt", "uci set " db ".Interface=lan && uci commit dropbear && /etc/init.d/dropbear restart"); U("mgmt", (ifc == "" ? "uci delete " db ".Interface" : "uci set " db ".Interface=" ifc) " && uci commit dropbear && /etc/init.d/dropbear restart") }
+            if (anyweb) { X("mgmt", "uci delete uhttpd.main.listen_http; uci delete uhttpd.main.listen_https; uci add_list uhttpd.main.listen_https=" lan ":443" (hh != "" ? "; uci add_list uhttpd.main.listen_http=" lan ":80" : "") " && uci commit uhttpd && /etc/init.d/uhttpd restart")
+                u = "uci delete uhttpd.main.listen_http; uci delete uhttpd.main.listen_https"; n = split(hh, L, " "); for (i = 1; i <= n; i++) u = u "; uci add_list uhttpd.main.listen_http=" L[i]
+                n = split(hs, L, " "); for (i = 1; i <= n; i++) u = u "; uci add_list uhttpd.main.listen_https=" L[i]
+                U("mgmt", u " && uci commit uhttpd && /etc/init.d/uhttpd restart") } }
+        else F("mgmt", "HIGH", "SSH answers on every interface: set its Interface to lan (the lan address was not read)", "-") }
+    else O("SSH and the web admin on the inside (lan) only")
+    if (q(V["upnpd.config.enabled"]) == "1") { F("upnp", "HIGH", "UPnP is on: any program inside can open ports on the router to the outside", "f")
+        X("upnp", "uci set upnpd.config.enabled=0 && uci commit upnpd && /etc/init.d/miniupnpd stop; /etc/init.d/miniupnpd disable"); U("upnp", "uci set upnpd.config.enabled=1 && uci commit upnpd && /etc/init.d/miniupnpd enable; /etc/init.d/miniupnpd start") }
+    for (k in V) if (k ~ /^snmpd\..*\.community$/ && dflt(q(V[k]))) snmpd = 1
+    if (snmpd) F("snmp", "MED", "SNMP has a default community name: change it in /etc/config/snmpd", "-")
+    it = q(V[db ".IdleTimeout"]); if (it == "" || it + 0 == 0 || it + 0 > to * 60) { F("timeout", "MED", "SSH logins never time out" (it != "" ? " (IdleTimeout " it ")" : ""), "f")
+        X("timeout", "uci set " db ".IdleTimeout=" (to * 60) " && uci commit dropbear && /etc/init.d/dropbear restart"); U("timeout", (it == "" ? "uci delete " db ".IdleTimeout" : "uci set " db ".IdleTimeout=" it) " && uci commit dropbear && /etc/init.d/dropbear restart") }
+    else O("SSH idle timeout " it " seconds")
+    li = q(V["system.@system[0].log_ip"])
+    if (lh != "" && li != lh) { F("log", "MED", "logs are not sent to " lh, "f")
+        X("log", "uci set system.@system[0].log_ip=" lh " && uci set system.@system[0].log_proto=udp && uci commit system && /etc/init.d/log restart"); U("log", (li == "" ? "uci delete system.@system[0].log_ip" : "uci set system.@system[0].log_ip=" li) " && uci commit system && /etc/init.d/log restart") }
+    sv = " " q(V["system.ntp.server"]) " "
+    if (ntp != "" && (index(sv, " " ntp " ") == 0 || q(V["system.ntp.enabled"]) == "0")) { F("ntp", "MED", "time is not taken from " ntp, "f")
+        X("ntp", "uci set system.ntp.enabled=1 && uci add_list system.ntp.server=" ntp " && uci commit system && /etc/init.d/sysntpd restart"); U("ntp", "uci del_list system.ntp.server=" ntp " && uci set system.ntp.enabled=" (q(V["system.ntp.enabled"]) == "" ? "1" : q(V["system.ntp.enabled"])) " && uci commit system && /etc/init.d/sysntpd restart") }
+    if (q(V[db ".BannerFile"]) == "") { F("banner", "LOW", "no login banner", "f")
+        X("banner", "printf \"%s\\n\" \"" bn "\" >/etc/bt-banner && uci set " db ".BannerFile=/etc/bt-banner && uci commit dropbear && /etc/init.d/dropbear restart"); U("banner", "uci delete " db ".BannerFile && uci commit dropbear && /etc/init.d/dropbear restart; rm -f /etc/bt-banner") }
+}'
 # check VENDOR RAWFILE ALLOWED -> the lines (see above)
 check() {
-    case "$1" in cisco-ios) _ck=$IOS_AWK ;; cisco-asa) _ck=$ASA_AWK ;; paloalto) _ck=$PAN_AWK ;; fortigate) _ck=$FG_AWK ;; vyos) _ck=$VY_AWK ;; mikrotik) _ck=$MT_AWK ;; esac
+    case "$1" in cisco-ios) _ck=$IOS_AWK ;; cisco-asa) _ck=$ASA_AWK ;; paloalto) _ck=$PAN_AWK ;; fortigate) _ck=$FG_AWK ;; vyos) _ck=$VY_AWK ;; mikrotik) _ck=$MT_AWK ;; openwrt) _ck=$OW_AWK ;; esac
     # prompts and echoed commands off the front of each line
     sed 's/^[A-Za-z0-9_.@()-]*[>#] *//' "$2" | awk -v US="$US" -v allowed="$3" -v lh="$LOGHOST" -v ntp="$NTP" -v bn="$BANNER" -v to="$TO" "$CHECK_AWK$_ck"
 }
