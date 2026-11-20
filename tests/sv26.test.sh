@@ -194,4 +194,16 @@ if command -v script >/dev/null 2>&1; then
 else
     t_ok "script(1) not installed - skipped" true
 fi
+t_start "the router (default gateway) is never banned"
+# With NAT every outside client can look like the router: banning it would
+# cut every scored service off.  A stand-in "ip" says the router is 10.6.6.66,
+# the address that brute-forces SSH in the logs.
+: >"$BANNED"; rm -f "$BANNED.table"   # nothing banned from the sections above
+G="$T_TMP/gw"; mkdir -p "$G"
+printf '#!/bin/sh\ncase "$*" in\n  "-o addr") echo "2: eth0    inet 10.0.0.5/24 brd 10.0.0.255 scope global eth0" ;;\n  route) echo "default via 10.6.6.66 dev eth0" ;;\nesac\n' >"$G/ip"; chmod +x "$G/ip"
+i=0; : >"$T_TMP/gw.log"; while [ $i -lt 12 ]; do echo "Nov 11 10:00:0$((i % 10)) web01 sshd[70$i]: Failed password for root from 10.6.6.66 port 6$i ssh2" >>"$T_TMP/gw.log"; i=$((i + 1)); done
+out=$(export PATH="$G:$PATH"; run --out "$O" --state "$T_TMP/stgw" --no-protected --log "$T_TMP/gw.log" --apply 2>&1)
+t_ok "over the limit, but the router: not banned" sh -c "printf '%s\n' \"\$1\" | grep -q 'NOT BANNED *10.6.6.66 '" _ "$out"
+t_hasnt "$(cat "$BANNED")" "10.6.6.66" "and nothing was sent for it"
+t_has "$out" "gateway" "the reason is said"
 t_done
