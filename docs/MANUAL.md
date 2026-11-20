@@ -62,6 +62,7 @@ Contents:
 52. Firewall ruleset, `roles/network/NW-20-firewall-ruleset.sh` (NW-20)
 53. Device change watch, `roles/network/NW-30-device-watch.sh` (NW-30)
 54. Gitea hardening, `roles/applications/SV-45-gitea-hardening.sh` (SV-45)
+55. File share hardening (Samba and NFS), `roles/applications/SV-46-fileshare-hardening.sh` (SV-46)
 
 ---
 
@@ -3651,3 +3652,47 @@ Settings are written in their section with a `; BT SV-45` line above them (Gitea
 ### With the other scripts
 
 LX-22 keeps Gitea's SSH keys and the git user; LX-25 `--box gitea` keeps ports 3000, 2222, 80, 443 open; SV-50 `--box gitea` brings it back if it goes down; SV-16 for web shells. All of them guess `gitea` as the box when they find `app.ini`.
+
+## 55. File share hardening (Samba and NFS), `roles/applications/SV-46-fileshare-hardening.sh` (SV-46)
+
+A file share is scored: someone connects and reads or writes a file. It is also an easy way in. This reads `smb.conf`, `/etc/exports` and `/etc/exports.d/*.exports`, shows every share and what is wrong, and offers the fixes. Run it on the file-share box (Kolla).
+
+### How to run it
+
+```sh
+sudo sh SV-46-fileshare-hardening.sh                                  # look + dry run
+sudo sh SV-46-fileshare-hardening.sh --protected p.csv --apply        # asks about each fix
+sudo sh SV-46-fileshare-hardening.sh --protected p.csv --apply --batch --skip root-squash
+```
+
+### What it shows
+
+| Section | Shows |
+| --- | --- |
+| 1/3 Samba | SMB1 (HIGH), lanman auth (HIGH) and NTLMv1 (MED), who may connect, `include` files, **lines that run programs** (`root preexec`, `postexec`, `magic script`, `add user script` ...: HIGH), wide links, every share (path, read-write or read-only, guests or users), guest shares anyone can write to (HIGH) or read (MED), `force user = root`, `admin users`, share folders anyone can write to, `smb.conf` writable by everyone (HIGH), the Samba users (`pdbedit`) |
+| 2/3 NFS | every export and who gets it, `no_root_squash` (HIGH), `insecure` (MED), read-write to everyone (MED) |
+| 3/3 questions and changes | one question per fix, then apply |
+
+### The fixes (each asked; Enter = the default)
+
+| Fix | Default | What it does |
+| --- | --- | --- |
+| `smb1-off` | yes | `server min protocol = SMB2_02` |
+| `ntlmv1-off` | yes | `ntlm auth = ntlmv2-only`, `lanman auth = no` |
+| `exec-lines` | yes | Comments out each line that runs a program (`# BT SV-46 off: ...`) |
+| `wide-links` | yes | `wide links = no`, `allow insecure wide links = no` in those shares |
+| `guest-write` | **no** | `guest ok = no` on shares anyone can write to. Guests can no longer connect: say yes only if the scoring engine logs in with a user. `--only guest-write` chooses it |
+| `conf-perms` | yes | `smb.conf` not writable by other users |
+| `root-squash` | yes | NFS `no_root_squash` becomes `root_squash` |
+| `nfs-insecure` | yes | NFS `insecure` is dropped |
+
+Who may connect (`hosts allow`, the NFS client list) is **only reported**: only you know the team's addresses.
+
+### Safety
+
+- Dry run unless `--apply`. Revert timer (120 s).
+- After the changes: `testparm` must pass, Samba re-reads its config (`smbcontrol`, else a restart of smbd / smb / samba) and **must still listen on 445**; `exportfs -ra` must work. If not, everything is put back.
+
+### With the other scripts
+
+LX-25 `--box fileshare` keeps 139, 445, 137, 138, 2049, 111 open; SV-50 `--box fileshare` brings Samba and NFS back if they go down; LX-45 scans the shared folders for malware. All of them guess `fileshare` when they find a share.
