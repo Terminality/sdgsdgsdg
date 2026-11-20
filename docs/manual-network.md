@@ -9,9 +9,9 @@ Flókið network:
 | Thing | Address |
 | --- | --- |
 | Inside network | `192.168.220.0/24` |
-| Outside network | `10.100.N.0/24` (N = your team number) |
+| Outside network | `10.100.1XX.0/24`, XX = your team number (team 2: `10.100.102.0/24`). 1:1 NAT: `10.100.1XX.Y` is `192.168.220.Y`, only from outside the router |
 | Router "Vigra" | OpenWRT, `192.168.220.2`; log in as `root` |
-| Boxes | .10 Borgar (Windows), .30 Kolla (file share), .44 Kvígindis, .67 Haf, .79 Vattar (Windows AD), .97 Skerja, .100 Gufu (Gitea), .231 Thorska, Djupi (?) |
+| Boxes | .10 Borgar (Windows), .30 Kolla (file share), .44 Kvígindis, .67 Haf, .79 Vattar (Windows AD), .97 Skerja, .100 Gufu (Gitea), .231 Thorska, .222 Djupi |
 
 ## How every script works
 
@@ -69,6 +69,10 @@ What to look at after each one:
 
 ### Notes for this network
 
+- **A router reset costs -100 points**, and resets only happen at the cutover times (every 30 minutes, e.g. 10:00 or 10:30). Run the read-only scripts first and say "no" when unsure.
+- The packet recommends keeping **syslog** and **WAN configuration access** on: NW-21 leaves SSH from outside, syslog and LuCI on the WAN as they are unless you say otherwise.
+- **1:1 NAT:** from outside, `10.100.1XX.Y` is `192.168.220.Y` (team 2: `10.100.102.10` is Borgar). The scoring engine and your VPN come in from outside.
+
 - Every NW script knows **OpenWRT**: `uci`, fw4/nftables, dropbear, LuCI (uhttpd), `ubus` sessions, busybox `passwd`. None has been run on a real OpenWRT router yet: start with the read-only ones (NW-01, NW-07, NW-12 without `--apply`).
 - **SSH from outside stays on** (NW-21 `sshwan` defaults to leave). LuCI on the WAN is a separate finding (`webany`).
 - NW-20 keeps 22 and 3389 open to every scored box (`--login-ports`; `none` closes them).
@@ -100,7 +104,7 @@ It asks like sqlmap (Enter takes the default, a flag answers in advance):
 | Question | Default | Flag |
 | --- | --- | --- |
 | What to scan: one host, a range or a subnet; several with spaces | your own network | `--target` |
-| Your team number? It adds the outside range `10.100.N.0/24` | skip | `--team-number N` (`none` skips) |
+| Your team number? It adds the outside range `10.100.1XX.0/24` (team 2: `10.100.102.0/24`) | skip | `--team-number N` (`none` skips) |
 | How aggressive: 1-2 slow and quiet, 3 normal, 4 fast, 5 fastest (can miss ports) | 4 | `--speed N` |
 | Quick scan of the top ports | yes | `--quick` / `--no-quick` |
 | How many top ports | 1000 | `--top-ports N` |

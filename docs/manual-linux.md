@@ -4,7 +4,7 @@
 
 For whoever defends the Linux boxes. Every command here uses the standalone scripts in `dist/linux/` (and two from `dist/applications/`). Each one is a single file: copy it to the box and run it with `sh`.
 
-Flókið Linux boxes (inside `192.168.220.x`, outside `10.100.N.x`, N = team number):
+Flókið Linux boxes (inside `192.168.220.x`; from outside `10.100.1XX.x` through the router's 1:1 NAT, XX = team number: team 2 reaches `.44` at `10.100.102.44`):
 
 | Box | Last octet | OS | Scored service |
 | --- | --- | --- | --- |
@@ -14,7 +14,7 @@ Flókið Linux boxes (inside `192.168.220.x`, outside `10.100.N.x`, N = team num
 | Thorska | .231 | Fedora 44 (SELinux, firewalld) | Home Manager |
 | Haf | .67 | Lubuntu 22 | "Wabbit" (RabbitMQ?) |
 | Kolla | .30 | Alpine (OpenRC, busybox) | file share |
-| Djupi | ? | Linux Mint 22.3 | POS |
+| Djupi | .222 | Linux Mint 22.3 | POS |
 
 ## How every script works
 
@@ -48,7 +48,7 @@ Flókið Linux boxes (inside `192.168.220.x`, outside `10.100.N.x`, N = team num
 
    Save it as `/root/bt-out/protected.txt`. `config/protected.example.txt` has more examples.
 
-3. Find your team number (for the `10.100.N.x` addresses): the network person's SH-03 run asks for it.
+3. Find your team number: from outside each box is `10.100.1XX.<last octet>` (team 2: `10.100.102.x`). The network person's SH-03 run asks for it.
 
 ## The first 15 minutes (each Linux box)
 
