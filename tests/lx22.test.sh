@@ -194,7 +194,6 @@ if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&
     printf '\n\n\n\n\n\nzz\nk\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n' >"$T_TMP/ans2"
     BT_NO_TTY=0 script -qc "$SH $C --out $O --root $R --no-color --no-protected --apply --no-timer" /dev/null <"$T_TMP/ans2" >"$T_TMP/tty2.out" 2>&1
     t_has "$(cat "$T_TMP/tty2.out")" '"zz" is not an answer here: type one of [y/n/K/l]' "a wrong answer is refused and asked again"
-    cp "$T_TMP/tty2.out" /tmp/claude-0/-home-claude/3ffb2eda-5138-5d3e-9f99-6d28bba8f70e/scratchpad/tty2.out
     t_has "$(blk)" "PermitRootLogin prohibit-password" "'k' means key-only"
 fi
 t_start "scored boxes, banners, MaxStartups, DebianBanner"
@@ -223,5 +222,39 @@ rm -f "$R/etc/debian_version"
 out=$(run --out "$O" --root "$R" --no-protected --batch --no-color --box ecomm --no-banners 2>&1)
 t_hasnt "$out" "SSH is SCORED" "ecomm: SSH not scored"
 t_hasnt "$out" "DebianBanner" "DebianBanner is not offered off Debian"
+
+t_start "Gitea keys, ssh.socket, the new boxes"
+plant
+mkdir -p "$R/home/git/.ssh"
+printf 'git:x:998:998::/home/git:/bin/bash\n' >>"$R/etc/passwd"
+{ printf 'command="/usr/local/bin/gitea --config=/etc/gitea/app.ini serv key-1",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,no-user-rc,restrict '; cat "$K/team.pub"
+  printf 'command="/usr/local/bin/gitea serv key-2; bash -i",no-pty '; cat "$K/evil.pub"; } >"$R/home/git/.ssh/authorized_keys"
+out=$(run --out "$O" --root "$R" --no-protected --batch --no-color --box gitea --no-banners 2>&1)
+t_has "$out" "[ok] 1 Gitea user key(s) in /home/git/.ssh/authorized_keys (git only, no shell" "a Gitea key is shown as Gitea's"
+t_has "$out" "Gitea keeps 1 user key(s) for git over SSH (they only run git, no shell). What to do with them? [K/o] k (default)" "asked once, default keep"
+t_has "$out" "has a forced command or environment" "a gitea line with more in it is still planted"
+t_has "$out" "Git over SSH may be SCORED on gitea" "gitea: SSH treated as scored"
+out=$(run --out "$O" --root "$R" --no-protected --batch --no-color --box gitea --no-banners --apply --no-timer 2>&1)
+ak=$(cat "$R/home/git/.ssh/authorized_keys")
+t_has "$ak" "serv key-1\"" "--apply --batch keeps the Gitea key"
+t_hasnt "$ak" "bash -i" "and removes the planted one"
+plant; mkdir -p "$R/home/git/.ssh"; printf 'git:x:998:998::/home/git:/bin/bash\n' >>"$R/etc/passwd"
+{ printf 'command="/usr/local/bin/gitea --config=/etc/gitea/app.ini serv key-1",restrict '; cat "$K/team.pub"; } >"$R/home/git/.ssh/authorized_keys"
+out=$(run --out "$O" --root "$R" --no-protected --batch --no-color --gitea-keys ask --remove-all-keys --no-banners 2>&1)
+t_hasnt "$out" "What to do with them?" "--gitea-keys ask: not asked"
+t_has "$out" "Keep key #" "and each one is asked"
+out=$(run --out "$O" --root "$R" --no-protected --batch --no-color --remove-all-keys --allow-users alice --no-banners --apply --no-timer 2>&1)
+t_has "$(cat "$R/home/git/.ssh/authorized_keys")" "serv key-1" "--remove-all-keys leaves Gitea's keys (they follow --gitea-keys)"
+t_has "$(blk)" "AllowUsers alice git" "AllowUsers gets the git account"
+run --gitea-keys maybe >/dev/null 2>&1; t_eq "$?" 2 "a bad --gitea-keys exits 2"
+for _b in fileshare gitea web; do run --out "$O" --root "$R" --no-protected --batch --no-color --box "$_b" >/dev/null 2>&1; t_eq "$?" 0 "--box $_b is accepted"; done
+out=$(run --out "$O" --root "$R" --no-protected --batch --no-color --no-banners 2>&1)
+t_has "$out" "Which box is this? [s/w/e/f/g/b/O] o (default): other" "the box question offers the new boxes"
+# ssh.socket (Ubuntu 24.04, Mint 22): systemd holds the port; no reload.
+plant
+out=$(export BT_SSH_SOCKET=1; run --out "$O" --root "$R" --no-protected --batch --no-color --no-banners --apply --no-timer 2>&1)
+t_has "$out" "(ssh.socket: systemd starts an sshd for each login" "ssh.socket is shown"
+t_has "$out" "[ok] not needed: ssh.socket starts a new sshd for each login" "and no reload is needed"
+t_hasnt "$out" "sshd is not listening" "no false alarm"
 
 t_done
