@@ -2,6 +2,11 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-20: LX-26 for file-share, Gitea, web and desktop boxes
+
+- **LX-26** (1.2.0): the box question has three more answers, the old ones unchanged: `fileshare` (keeps 139, 445, 2049, 111), `gitea` (3000, 2222, 80, 443), `web` for a ticket, help-desk or shop site (80, 443); `--box` takes them too. Also found now: mesh VPNs (Tailscale, ZeroTier) and DNS/ICMP tunnels (iodine, dnscat2, ptunnel), wstunnel and sshx (HIGH); code-server and Jupyter (a shell in a browser, HIGH); Guacamole, DWService, Chrome Remote Desktop and xpra (remote desktops, HIGH); KDE Connect, Barrier, Synergy and Input Leap (keyboard and mouse from another machine, MED). With neither `ss` nor `netstat`, busybox `netstat` gives the ports.
+- Tested: lx26 under dash, bash, ksh93, mksh, yash and busybox sh; gawk, mawk and busybox awk; the built copy. Stand-ins for the new programs; a stand-in busybox `netstat` with Alpine's output.
+
 ## 2026-11-20: Linux scripts on Alpine, Rocky/Fedora and Ubuntu/Mint (library 0.4.0)
 
 Same options and questions as before; what differs per box is found by itself.
