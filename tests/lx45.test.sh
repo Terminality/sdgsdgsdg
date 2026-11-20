@@ -86,4 +86,65 @@ if command -v clamscan >/dev/null 2>&1 && [ -n "$(ls /var/lib/clamav/*.c?d 2>/de
     out=$($SH "$C" --out "$O" --no-color --no-install --batch --scan "$T_TMP/scan" 2>&1)
     t_has "$out" "ClamAV: $T_TMP/scan/eicar.txt is" "ClamAV finds the EICAR test file"
 fi
+
+t_start "no ss: netstat (Alpine)"
+# A PATH with every program but ss; netstat is busybox's when there is no
+# other one.
+NB="$T_TMP/noss"; mkdir -p "$NB"
+for _d in /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
+    for _x in "$_d"/*; do _n=${_x##*/}; [ "$_n" = ss ] && continue; [ -e "$NB/$_n" ] || ln -s "$_x" "$NB/$_n" 2>/dev/null; done
+done
+if [ ! -e "$NB/netstat" ] && command -v busybox >/dev/null 2>&1; then printf '#!/bin/sh\nexec busybox netstat "$@"\n' >"$NB/netstat"; chmod +x "$NB/netstat"; fi
+if [ -e "$NB/netstat" ]; then
+    mkroot
+    out=$(export PATH="$NB"; run --batch 2>&1)
+    t_has "$out" "[ok] every listening TCP port in /proc is shown by netstat" "netstat is the second view"
+    t_hasnt "$out" "hidden-port check skipped" "the port check still runs"
+fi
+
+t_start "Alpine programs (apk)"
+# A stand-in apk database: every program in /usr/bin and /usr/sbin belongs
+# to package "core", except ps (placed by hand); apk audit says grep changed.
+A="$T_TMP/apkb"; mkdir -p "$A"
+_ps=$(command -v ps); _grep=$(command -v grep)
+{ printf 'P:core\n'
+  for _d in /usr/bin /usr/sbin /bin /sbin; do
+      [ -h "$_d" ] && continue
+      printf 'F:%s\n' "${_d#/}"
+      for _x in "$_d"/*; do [ "$_x" = "$_ps" ] && continue; printf 'R:%s\n' "${_x##*/}"; done
+  done; } >"$T_TMP/apkdb"
+cat >"$A/apk" <<EOF
+#!/bin/sh
+echo "apk \$*" >>"$T_TMP/apkcalls"
+case "\$1" in audit) echo "U ${_grep#/}"; echo "A usr/bin/something-new" ;; esac
+EOF
+chmod +x "$A/apk"
+out=$(export BT_TEST_PM=apk BT_TEST_APKDB="$T_TMP/apkdb" PATH="$A:$PATH"; $SH "$C" --out "$O" --no-color --no-install --no-clamav --batch 2>&1)
+t_has "$out" "[!] $_ps belongs to no package: placed there by hand?" "a core program no package owns is HIGH"
+t_has "$out" "[!] $_grep does not match its package (replaced?): reinstall it - apk fix core" "apk audit U is HIGH, with apk fix"
+t_hasnt "$out" "something-new" "an added file that is not a core program is left out"
+t_has "$out" "[*] rkhunter is not installed: skipped. To get it yourself: apk add rkhunter" "a missing scanner: said, with how to get it"
+out=$(export BT_TEST_PM=apk BT_TEST_APKDB="$T_TMP/apkdb" PATH="$A:$PATH"; $SH "$C" --out "$O" --no-color --install --no-clamav --batch 2>&1)
+t_has "$out" "this script never installs anything" "--install is still accepted, and says it does nothing"
+t_hasnt "$(cat "$T_TMP/apkcalls" 2>/dev/null)" "apk add" "nothing is ever installed"
+
+t_start "file shares are scanned"
+mkroot
+mkdir -p "$F/etc/samba" "$F/srv/share" "$F/data/my files" "$F/exp"
+printf '[global]\n   workgroup = X\n[share]\n   path = /srv/share\n[files]\n\tpath = /data/my files \n[homes]\n   path = /home/%%U\n' >"$F/etc/samba/smb.conf"
+printf '/exp 10.0.0.0/24(rw)\n# /nope *(rw)\n' >"$F/etc/exports"
+if command -v clamscan >/dev/null 2>&1; then
+    out=$($SH "$C" --out "$O" --no-color --no-install --batch --root "$F" 2>&1)
+    _l=$(printf '%s\n' "$out" | grep "ClamAV over:")
+    t_has "$_l" "$F/srv " "a Samba share in /srv is scanned with /srv"
+    t_has "$_l" "$F/data/my files" "one with a space in its name"
+    t_has "$_l" "$F/exp" "an NFS export"
+    t_hasnt "$_l" "%U" "per-user paths are left out"
+    t_hasnt "$_l" "/nope" "a commented export is left out"
+    t_has "$out" "[?] Also scan the shared folders (Samba, NFS, Gitea): /data/my files /exp? [Y/n] y (default)" "asked, default yes; /srv/share is in /srv already"
+    [ -z "$(ls /var/lib/clamav/*.c?d 2>/dev/null)" ] && t_has "$out" "ClamAV has no signatures, so it scanned nothing" "no signatures: said plainly"
+    out=$($SH "$C" --out "$O" --no-color --no-install --batch --root "$F" --no-shares 2>&1)
+    t_hasnt "$(printf '%s\n' "$out" | grep "ClamAV over:")" "$F/exp" "--no-shares answers no"
+    t_hasnt "$out" "Also scan the shared folders" "and is not asked"
+fi
 t_done

@@ -4,7 +4,7 @@
 # NAME:     AppArmor confinement for the services
 # ROLE:     Linux  (wave 2, after the services are hardened and backed up)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   AppArmor gives a program a list of what it may touch, and the kernel
@@ -33,8 +33,10 @@
 #   (written to /etc/apparmor.d/bt-*), or the one a package already ships
 #   (php-fpm, mysqld) - then only its mode is changed.  Mail (Postfix,
 #   Dovecot) runs many helper programs: not covered here.
-#   On Red Hat / Rocky / CentOS (SELinux, not AppArmor) the SELinux mode is
-#   shown instead.
+#   On Rocky / Fedora / Red Hat (SELinux, not AppArmor) it says so and shows
+#   SELinux now and after a reboot (/etc/selinux/config), with how to turn
+#   it on; nothing is changed.  On Alpine (AppArmor off unless booted with
+#   it) it says so and stops.
 #
 #   QUESTIONS (Enter takes the default in capitals; a flag answers each):
 #     each service, by its state:
@@ -74,7 +76,9 @@
 # TESTED ON
 #   Profiles checked with AppArmor 4.0's own parser; the questions, the
 #   learning and the undo on a fake root, under dash, bash, busybox sh,
-#   ksh93, mksh and yash with gawk, mawk and busybox awk.  NOT yet run on a
+#   ksh93, mksh and yash with gawk, mawk and busybox awk.  The SELinux and
+#   Alpine messages on a fake root (os-release, /sys/fs/selinux/enforce,
+#   /etc/selinux/config).  NOT yet run on a
 #   kernel with AppArmor switched on (the test box is a container): try the
 #   whole complain - learn - enforce cycle on a practice VM first.
 #
@@ -162,16 +166,34 @@ cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it
 header "1/5  AppArmor on this box"
 AAON=n; [ "$(cat "$(P /sys/module/apparmor/parameters/enabled)" 2>/dev/null)" = Y ] && AAON=y
 if [ "$AAON" != y ]; then
-    if [ -z "$R" ] && cc_have getenforce; then
-        _se=$(getenforce 2>/dev/null)
-        cc_show "$([ "$_se" = Enforcing ] && printf '%s' "$C_GRN" || printf '%s' "$C_RED")" "  This box uses SELinux, not AppArmor: SELinux is $_se."
-        [ "$_se" = Enforcing ] || cc_show "" "  Turn it on: setenforce 1 (now) and SELINUX=enforcing in /etc/selinux/config (after a reboot). Test the services after."
+    # Which kind of box: from --root's os-release in tests, else this one's.
+    _fam=$CC_OS_FAMILY
+    if [ -n "$R" ] && [ -r "$R/etc/os-release" ]; then
+        case " $(sed -n 's/^ID=//p; s/^ID_LIKE=//p' "$R/etc/os-release" | tr -d '"' | tr '\n' ' ') " in
+            *" alpine "*) _fam=alpine ;; *" rhel "*|*" fedora "*|*" rocky "*|*" centos "*) _fam=rhel ;; *) _fam=other ;;
+        esac
+    fi
+    if cc_selinux_on || [ -f "$(P /etc/selinux/config)" ] || [ "$_fam" = rhel ]; then
+        # Rocky, Fedora: SELinux does this job.  Its state now, and after a reboot.
+        if [ -z "$R" ] && cc_have getenforce; then _se=$(getenforce 2>/dev/null)
+        else case "$(cat "$(P /sys/fs/selinux/enforce)" 2>/dev/null)" in 1) _se=Enforcing ;; 0) _se=Permissive ;; *) _se=Disabled ;; esac; fi
+        _sc=$(sed -n 's/^[[:space:]]*SELINUX[[:space:]]*=[[:space:]]*//p' "$(P /etc/selinux/config)" 2>/dev/null | tr -d '"' | tail -n 1)
+        cc_show "" "  This box uses SELinux, not AppArmor: LX-44 has nothing to do here."
+        cc_show "$([ "$_se" = Enforcing ] && printf '%s' "$C_GRN" || printf '%s' "$C_RED")" "  $([ "$_se" = Enforcing ] && echo '[ok]' || echo '[!]') SELinux now: $_se   (after a reboot: ${_sc:-not set in /etc/selinux/config})"
+        case "$_se" in
+            Permissive) cc_show "" "  Turn it on: setenforce 1 (now) and SELINUX=enforcing in /etc/selinux/config. Test the scored services right after; a denial is in /var/log/audit/audit.log (ausearch -m avc -ts recent)." ;;
+            Disabled)   cc_show "" "  It is off in the kernel: turning it on needs SELINUX=permissive in /etc/selinux/config, touch /.autorelabel and a reboot (the relabel can take minutes). Plan it; do not do it mid-round." ;;
+        esac
+        [ "$_se" = Enforcing ] && [ -n "$_sc" ] && [ "$_sc" != enforcing ] && cc_show "$C_YEL" "  [*] /etc/selinux/config says $_sc: a reboot turns enforcing off. Set SELINUX=enforcing there."
+    elif [ "$_fam" = alpine ]; then
+        # Alpine's kernel can run AppArmor, but only when booted with it.
+        cc_show "$C_YEL" "  [*] Alpine: AppArmor is off unless the box is booted with it (apk add apparmor; apparmor=1 security=apparmor on the kernel line; reboot). A reboot mid-round is not worth it: nothing to do here."
     else
         cc_show "$C_YEL" "  [*] AppArmor is not switched on in this kernel (a container, or apparmor=0 at boot). Nothing to do here."
     fi
     rm -rf "$W"; cc_finish; exit 0
 fi
-cc_have "$PARSER" || [ -x "$PARSER" ] || { cc_show "$C_RED" "  [x] apparmor_parser is missing: apt-get install apparmor"; rm -rf "$W"; cc_finish; exit 3; }
+cc_have "$PARSER" || [ -x "$PARSER" ] || { cc_show "$C_RED" "  [x] apparmor_parser is missing: $([ "$CC_PKG" = apk ] && echo apk add apparmor || echo apt-get install apparmor)"; rm -rf "$W"; cc_finish; exit 3; }
 _np=$(grep -c . "$(P /sys/kernel/security/apparmor/profiles)" 2>/dev/null)
 cc_show "$C_GRN" "  [ok] AppArmor is on ($_np profiles loaded)"
 
