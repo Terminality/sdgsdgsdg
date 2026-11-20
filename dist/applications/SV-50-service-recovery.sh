@@ -2015,6 +2015,17 @@ fw_rules() {   # fw_rules PORT
         }'
 }
 pol_drop() { cc_have iptables && iptables -S INPUT 2>/dev/null | grep -q '^-P INPUT DROP'; }
+# SELinux (Rocky, Fedora): enforcing blocks a program whose files carry the
+# wrong label - a config copied from /tmp or a home folder, a moved data folder.
+SEL=""; cc_have getenforce && SEL=$(getenforce 2>/dev/null)
+# se_denial NAME -> the latest denial for that program in the last 10 minutes:
+#   "read on app.ini (labelled user_home_t)"
+se_denial() {
+    { if cc_have ausearch; then ausearch -m avc -ts recent -c "$1" 2>/dev/null
+      else tail -n 2000 /var/log/audit/audit.log 2>/dev/null | grep "comm=\"$1\""; fi; } |
+        grep 'denied' | tail -n 1 |
+        sed -n 's/.*denied *{ *\([^}]*[^ }]\) *}.*name="\([^"]*\)".*tcontext=[^:]*:[^:]*:\([^: ]*\).*/\1 on \2 (labelled \3)/p'
+}
 
 # ---- Watch mode --------------------------------------------------------------------------
 if [ -n "$WATCH" ]; then
@@ -2154,6 +2165,11 @@ while IFS='|' read -r _k _u _ps _pt _pr; do
             addfix "$_u" firewall "allow $_pn/$_pr2 in ufw" y "ufw allow $_pn/$_pr2" "ufw delete allow $_pn/$_pr2"
         fi
     done
+    if [ "$SEL" = Enforcing ]; then
+        _cm=$(printf '%s' "$_ps" | cut -d' ' -f1)
+        _den=$(se_denial "$_cm")
+        [ -n "$_den" ] && _probs="$_probs SELinux blocks it: $_den - put the right label back: restorecon -Rv on that folder (all denials: ausearch -m avc -ts recent -c $_cm; do not turn SELinux off);"
+    fi
     pol_drop && ! iptables -S INPUT 2>/dev/null | grep -q -- "--dport ${_pt%% *} .*ACCEPT\|-j ACCEPT$" && _probs="$_probs INPUT policy DROP with no ACCEPT for ${_pt%% *};"
     if [ "$_run" = no ]; then
         _probs="$_probs not running;"

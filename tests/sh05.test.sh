@@ -106,4 +106,39 @@ before=$(ls -la /etc | cksum)
 run --out "$T_TMP/o5" --only system,users,ssh,sudo,pam >/dev/null 2>&1
 t_eq "$(ls -la /etc | cksum)" "$before" "/etc listing unchanged"
 
+t_start "SELinux (Rocky, Fedora)"
+# Stand-ins: getenforce, semanage and semodule on PATH; a fake root for the files.
+SE="$T_TMP/se"; mkdir -p "$SE/bin" "$SE/root/etc/selinux" "$SE/root/proc" "$SE/root/etc/default"
+printf '#!/bin/sh\necho Permissive\n' >"$SE/bin/getenforce"
+cat >"$SE/bin/semanage" <<'STUB'
+#!/bin/sh
+case "$1 $2" in
+    "permissive -l") echo "httpd_t" ;;
+    "boolean -l") echo "httpd_execmem                  (on   ,  off)  Allow httpd to execmem" ;;
+    "fcontext -l") echo "/tmp/x(/.*)?    all files   system_u:object_r:bin_t:s0" ;;
+esac
+STUB
+printf '#!/bin/sh\nprintf "100 base pp\\n200 container pp\\n400 sshbackdoor pp\\n"\n' >"$SE/bin/semodule"
+chmod +x "$SE/bin/"*
+printf 'SELINUX=enforcing\nSELINUXTYPE=targeted\n' >"$SE/root/etc/selinux/config"
+printf 'BOOT_IMAGE=/vmlinuz root=/dev/sda1 enforcing=0 quiet\n' >"$SE/root/proc/cmdline"
+printf 'GRUB_CMDLINE_LINUX="rhgb quiet selinux=0"\n' >"$SE/root/etc/default/grub"
+r=$(PATH="$SE/bin:$PATH" BT_TEST_ROOT="$SE/root"; export PATH BT_TEST_ROOT; run --out "$T_TMP/ose" --only mac 2>&1); t_eq "$?" 0 "mac exits 0"
+RS=$(ls -d "$T_TMP"/ose/linux-enum-*/ | head -n 1); fl=$(cat "$RS/flags.txt")
+t_has "$fl" "configured as enforcing but currently Permissive" "switched off since boot is HIGH"
+t_has "$fl" "the kernel was started with enforcing=0" "off on the kernel command line is HIGH"
+t_has "$fl" "/etc/default/grub turns SELinux off at boot (selinux=0" "off in GRUB is HIGH"
+t_has "$fl" "permissive domain httpd_t" "a permissive domain is HIGH"
+t_has "$fl" "boolean changed on this box: httpd_execmem = on" "a changed boolean is listed"
+t_has "$fl" "policy module sshbackdoor was added on this box" "a module added by hand is listed"
+t_hasnt "$fl" "policy module base" "the distribution's modules are not"
+t_has "$fl" "1 file label rule(s) added" "local file labels are counted"
+t_has "$(grep '^HIGH' "$RS/flags.txt")" "permissive domain" "HIGH ones first"
+printf 'SELINUX=permissive\n' >"$SE/root/etc/selinux/config"; printf 'BOOT_IMAGE=/vmlinuz\n' >"$SE/root/proc/cmdline"; : >"$SE/root/etc/default/grub"
+printf '#!/bin/sh\necho Enforcing\n' >"$SE/bin/getenforce"
+r=$(PATH="$SE/bin:$PATH" BT_TEST_ROOT="$SE/root"; export PATH BT_TEST_ROOT; run --out "$T_TMP/ose2" --only mac 2>&1)
+fl=$(cat "$(ls -d "$T_TMP"/ose2/linux-enum-*/ | head -n 1)/flags.txt")
+t_has "$fl" "SELINUX=permissive: it goes off at the next boot" "on now but off at the next boot is HIGH"
+t_hasnt "$fl" "kernel was started" "a clean command line is fine"
+
 t_done
