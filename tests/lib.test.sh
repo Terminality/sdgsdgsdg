@@ -233,6 +233,43 @@ t_has "$r" "bob   has, comma" "commas inside a value kept"
 t_has "$r" "a     0123456..." "long values cut with ..."
 t_has "$r" "(nothing found)" "an empty CSV says so"
 
+t_start "text tables (no CSV)"
+mk tables 'while [ $# -gt 0 ]; do cc_common_flag "$@" && { shift "$CC_SHIFT"; continue; }; shift; done
+CC_TABLES=1
+cc_init T-14 "tables" readonly
+cc_use_numbered_dir tab
+f=$(cc_table_new ports ip proto port service)
+cc_table_row "$f" 10.0.0.5 tcp 80 "a|b"
+cc_table_row "$f" 10.0.0.100 udp 53 ""
+cc_table_align "$f"
+echo "file=$f"
+awk "$CC_AWK_TABLE"'"'"'NR > 1 { n = tsplit($0, a); print "row=" n ":" a[1] ":" a[4] ":" }'"'"' "$f"
+cc_flag LOW users bob "low one"
+( cc_flag HIGH ports "4444/tcp" "from a subshell, with, commas" )
+cc_flag MED ssh root "medium"
+cc_table_sort_flags "$CC_RUN_DIR/flags.txt"
+cc_flag_report 30
+echo "flags=$CC_FLAGS"
+cc_finish'
+r=$(run "$S/tables.sh" --out "$T_TMP/tab" 2>/dev/null)
+TF=$(printf '%s\n' "$r" | sed -n 's/^file=//p')
+t_eq "$(sed -n 1p "$TF")" "ip         | proto | port | service" "header line, columns lined up"
+t_eq "$(sed -n 2p "$TF")" "10.0.0.5   | tcp   | 80   | a/b" "a | inside a value becomes /"
+t_has "$r" "row=4:10.0.0.5:a/b:" "tsplit gives the trimmed fields"
+t_has "$r" "row=4:10.0.0.100::" "an empty value stays empty"
+t_fail "no CSV in the run folder" sh -c "ls '$T_TMP/tab'/tab-1 | grep -q 'csv'"
+t_has "$r" "Flags: 1 high, 1 medium, 1 low" "flags.txt: the report counts it, the subshell one too"
+t_has "$r" "[ports] 4444/tcp: from a subshell, with, commas" "commas kept"
+t_eq "$(sed -n 2p "$T_TMP/tab/tab-1/flags.txt" | cut -d'|' -f1 | tr -d ' ')" HIGH "flags sorted: HIGH first"
+mk hostlist 'cc_hosts_rows "$1"'
+printf '# name ip os role connect port user scored notes\nname ip os\nweb01 10.0.0.20 linux web ssh 22 root http:80;https:443 Ubuntu web box\nfw1 10.0.0.1 network edge ssh - admin - Palo Alto\n\n' >"$T_TMP/hosts.txt"
+r=$(run "$S/hostlist.sh" "$T_TMP/hosts.txt")
+t_eq "$(printf '%s\n' "$r" | sed -n 1p)" "web01|10.0.0.20|linux|web|ssh|22|root|http:80;https:443|Ubuntu web box|" "host list: columns, notes are the rest of the line"
+t_eq "$(printf '%s\n' "$r" | sed -n 2p)" "fw1|10.0.0.1|network|edge|ssh||admin||Palo Alto|" "a - is an empty column"
+t_eq "$(printf '%s\n' "$r" | grep -c .)" 2 "comments, a header line and blank lines skipped"
+printf 'host,ip,os,role,connect,port,user,scored_services,notes,vendor\r\nr1,10.0.0.1,network,core,ssh,22,admin,,"Cisco, IOS",cisco-ios\r\n' >"$T_TMP/hosts.csv"
+t_eq "$(run "$S/hostlist.sh" "$T_TMP/hosts.csv")" "r1|10.0.0.1|network|core|ssh|22|admin||Cisco, IOS|cisco-ios" "an older CSV host list is still read"
+
 t_start "questions and the revert timer"
 mk ask 'while [ $# -gt 0 ]; do cc_common_flag "$@" && { shift "$CC_SHIFT"; continue; }; shift; done
 cc_init T-14 "ask" changes

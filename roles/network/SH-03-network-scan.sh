@@ -36,7 +36,7 @@
 #                      network (10.0.2.0/24), a last-octet range
 #                      (10.0.2.1-50) or a host name.  Asked if not given
 #   --targets-file F   one target per line (# comments allowed)
-#   --hosts FILE       host list CSV (config/hosts.example.csv format).
+#   --hosts FILE       host list (config/hosts.example.txt format).
 #                      Turns on the host-list and scored-service checks
 #   Answers in advance (each skips its question):
 #   --quick / --no-quick        top 1000 ports first          (default yes)
@@ -81,7 +81,8 @@
 #   vulns.txt       what the vuln and default scripts found
 #   flags.txt       every flag, HIGH first
 #   scored.txt      scored services reachable or not   (only with --hosts)
-#   csv/            the same tables as CSV (SH-04 reads these)
+#                   (tables: columns separated by " | "; SH-04 and NW-20
+#                   read them.  No CSV.)
 #   raw/            nmap's own output for each stage (.nmap, .gnmap, .xml)
 #   run.txt         ID, host and time
 #
@@ -143,7 +144,7 @@ SH-03 Network scan - live hosts, open ports, services, vulns
 
   --target SPEC        address, network/NN, a.b.c.N-M or name (repeatable)
   --targets-file FILE  one target per line
-  --hosts FILE         host list CSV: check scored services and unknown hosts
+  --hosts FILE         host list: check scored services and unknown hosts
   --quick / --no-quick        top 1000 ports first          (default yes)
   --full / --no-full          all 65535 ports               (default yes)
   --services / --no-services  service and version detection (default yes)
@@ -420,11 +421,10 @@ if [ -n "$EXTRA" ] && { [ -n "$PORTS" ] || [ "$ENGINE" != nmap ]; }; then
 fi
 
 # ---- Start ------------------------------------------------------------------
+# shellcheck disable=SC2034  # read by the library: tables as .txt, no CSV
+CC_TABLES=1
 cc_init "SH-03" "Network scan" readonly
 cc_use_numbered_dir netscan
-# CSV files (for SH-04) go in csv/; the run folder gets readable .txt tables.
-CC_CSV_DIR="$CC_RUN_DIR/csv"
-mkdir -p "$CC_CSV_DIR" || cc_die 3 "cannot create $CC_CSV_DIR"
 W="$CC_RUN_DIR/.work"
 mkdir -p "$W" || cc_die 3 "cannot create $W"
 RAW="$CC_RUN_DIR/raw"
@@ -901,43 +901,35 @@ for _x in "$RAW"/3-details.xml "$RAW"/4-udp.xml; do
 done
 
 # ---- Host list --------------------------------------------------------------
-# Read config/hosts.csv into $W/hl as "ip|name|scored_services".  Lines that
-# start with # are comments.  scored_services looks like http:80;dns:53.
+# Read the host list into $W/hl as "ip|name|scored_services" (scored
+# services look like http:80;dns:53).
 : >"$W/hl"
 if [ -n "$HOSTLIST" ]; then
-    # Columns by their names in the header line (a list with a column added
-    # in the middle still reads right); the usual order if a name is missing.
-    awk "$CC_AWK_CSV"'
-        /^[ \t]*#/ || NF == 0 { next }
-        !hdr { n = csvsplit($0, h); for (i = 1; i <= n; i++) c[tolower(h[i])] = i; hdr = 1
-               ch = ("host" in c) ? c["host"] : 1; ci = ("ip" in c) ? c["ip"] : 2; cs = ("scored_services" in c) ? c["scored_services"] : 8; next }
-        { csvsplit($0, f); if (f[ci] != "") print f[ci] "|" f[ch] "|" f[cs] }' "$HOSTLIST" >"$W/hl"
+    cc_hosts_rows "$HOSTLIST" | awk -F'|' '$2 != "" { print $2 "|" $1 "|" $8 }' >"$W/hl"
     cc_info "host list: $(wc -l <"$W/hl" | tr -d ' ') host(s) from $HOSTLIST"
 fi
 
-# ---- Write CSV files --------------------------------------------------------
-HC=$(cc_csv_new hosts "ip,hostname,status,open_tcp,open_udp,os_guess,in_host_list,host_list_name")
-PC=$(cc_csv_new ports "ip,hostname,proto,port,state,service,version")
-VC=$(cc_csv_new vulns "ip,hostname,proto,port,script,state,title,ids")
+# ---- Tables ---------------------------------------------------------------------
+HC=$(cc_table_new hosts ip hostname status open_tcp open_udp os_guess in_host_list host_list_name)
+PC=$(cc_table_new ports ip hostname proto port state service version)
+VC=$(cc_table_new vulns ip hostname proto port script state title ids)
 awk -F'|' -v upf="$W/up" -v hlf="$W/hl" -v hc="$HC" -v pc="$PC" -v hashl="$( [ -s "$W/hl" ] && echo 1 || echo 0 )" '
-    function q(s) { gsub(/"/, "\"\"", s); return "\"" s "\"" }    # awk: posix-ok
     BEGIN {
         while ((getline l < upf) > 0) { split(l, u, "|"); name[u[1]] = u[2]; os[u[1]] = u[3]; order[++n] = u[1] }
         while ((getline l < hlf) > 0) { split(l, h, "|"); hl[h[1]] = h[2] }
     }
     { if ($2 == "tcp") t[$1] = t[$1] (t[$1] == "" ? "" : " ") $3; else ud[$1] = ud[$1] (ud[$1] == "" ? "" : " ") $3
-      print q($1) "," q(name[$1]) "," q($2) "," q($3) ",\"open\"," q($4) "," q($5) >> pc }
+      print $1 " | " name[$1] " | " $2 " | " $3 " | open | " $4 " | " $5 >> pc }
     END {
         for (i = 1; i <= n; i++) {
             ip = order[i]
             inl = hashl ? ((ip in hl) ? "yes" : "no") : ""
-            print q(ip) "," q(name[ip]) ",\"up\"," q(t[ip]) "," q(ud[ip]) "," q(os[ip]) "," q(inl) "," q(hl[ip]) >> hc
+            print ip " | " name[ip] " | up | " t[ip] " | " ud[ip] " | " os[ip] " | " inl " | " hl[ip] >> hc
         }
     }' "$W/open"
 awk -F'|' -v upf="$W/up" -v vc="$VC" '
-    function q(s) { gsub(/"/, "\"\"", s); return "\"" s "\"" }    # awk: posix-ok
     BEGIN { while ((getline l < upf) > 0) { split(l, u, "|"); name[u[1]] = u[2] } }
-    { print q($1) "," q(name[$1]) "," q($2) "," q($3) "," q($4) "," q($5) "," q($6) "," q($7) >> vc }' "$W/vulns"
+    { print $1 " | " name[$1] " | " $2 " | " $3 " | " $4 " | " $5 " | " $6 " | " $7 >> vc }' "$W/vulns"
 
 # ---- Flags ------------------------------------------------------------------
 show "" ""
@@ -1015,7 +1007,7 @@ done <"$W/vulns"
 
 # Host list checks: unknown hosts, missing hosts, scored services.
 if [ -s "$W/hl" ]; then
-    SC=$(cc_csv_new scored "host,ip,service,port,reachable")
+    SC=$(cc_table_new scored host ip service port reachable)
     while IFS='|' read -r _ip _name _os; do
         grep -q "^$_ip|" "$W/hl" || flag MED hosts "$_ip ${_name:-}" "host is up but not on the host list: find out what it is"
     done <"$W/up"
@@ -1028,9 +1020,9 @@ if [ -s "$W/hl" ]; then
             _svc=${_s%%:*}; _p=${_s##*:}
             case "$_p" in ''|*[!0-9]*) continue ;; esac
             if grep -q "^$_ip|tcp|$_p|" "$W/open" || grep -q "^$_ip|udp|$_p|" "$W/open"; then
-                cc_csv_row "$SC" "$_name" "$_ip" "$_svc" "$_p" yes
+                cc_table_row "$SC" "$_name" "$_ip" "$_svc" "$_p" yes
             else
-                cc_csv_row "$SC" "$_name" "$_ip" "$_svc" "$_p" no
+                cc_table_row "$SC" "$_name" "$_ip" "$_svc" "$_p" no
                 flag HIGH scored "$_name $_ip $_svc:$_p" "scored service is not reachable from here; check it now (it may only be blocked from this machine)"
             fi
         done
@@ -1044,26 +1036,15 @@ if [ -s "$W/hl" ]; then
         done <"$W/open"
     fi
 fi
-_fl="$CC_CSV_DIR/flags.csv"
-[ -f "$_fl" ] || printf 'severity,section,item,detail,time\n' >"$_fl"
-if ! grep -Eq '^"(HIGH|MED)"' "$_fl"; then show "$C_GRN" "  [ok] nothing high or medium"; fi
+_fl="$CC_RUN_DIR/flags.txt"
+[ -f "$_fl" ] || cc_table_line severity section item detail time >"$_fl"
+if ! awk -F'|' 'NR > 1 { gsub(/ /, "", $1); if ($1 == "HIGH" || $1 == "MED") f = 1 } END { exit !f }' "$_fl"; then show "$C_GRN" "  [ok] nothing high or medium"; fi
 
-# ---- Readable tables ----------------------------------------------------------
-# Read by cc_flag_report in the library.
-# shellcheck disable=SC2034
+# ---- Tables lined up ---------------------------------------------------------------
+# shellcheck disable=SC2034  # read by cc_flag_report in the library
 CC_FLAGS=$_fl
-# shellcheck disable=SC2034
-CC_FLAGS_SHOW="$CC_RUN_DIR/flags.txt"
-for _c in "$CC_CSV_DIR"/*.csv; do
-    [ -f "$_c" ] || continue
-    _b=$(basename "$_c" .csv)
-    if [ "$_b" = flags ]; then
-        { head -n 1 "$_c"; for _sv in HIGH MED LOW; do grep "^\"$_sv\"" "$_c"; done; } >"$W/flags_sorted.csv"
-        cc_csv_pretty "$W/flags_sorted.csv" "$CC_RUN_DIR/flags.txt" 200
-    else
-        cc_csv_pretty "$_c" "$CC_RUN_DIR/$_b.txt" 80
-    fi
-done
+cc_table_sort_flags "$_fl"
+for _t in "$HC" "$PC" "$VC" "${SC:-}"; do [ -n "$_t" ] && cc_table_align "$_t"; done
 
 # ---- Summary ----------------------------------------------------------------
 _nup=$(grep -c . "$W/up")
@@ -1099,7 +1080,7 @@ _unknown=""
         awk -F'|' '{ printf "  %-22s %-30s %-17s %s%s\n", $1 " " ($2 == "host" ? "" : $2 "/" $3), substr($4, 1, 30), $5, substr($6, 1, 80), ($7 == "" ? "" : " (" $7 ")") }' "$W/vulns"
     fi
     if [ -n "$HOSTLIST" ] && [ -n "${SC:-}" ]; then
-        _sok=$(grep -c '"yes"$' "$SC"); _sno=$(grep -c '"no"$' "$SC")
+        _sok=$(awk -F'|' 'NR > 1 { gsub(/ /, "", $5); if ($5 == "yes") n++ } END { print n + 0 }' "$SC"); _sno=$(awk -F'|' 'NR > 1 { gsub(/ /, "", $5); if ($5 == "no") n++ } END { print n + 0 }' "$SC")
         printf '\nScored services: %s reachable, %s NOT reachable\n' "$_sok" "$_sno"
     fi
     printf '\n'

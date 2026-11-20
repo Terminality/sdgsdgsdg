@@ -26,12 +26,12 @@
 #     linux       Linux router/firewall  iptables-save, nft list ruleset, ip addr/route
 #
 # USAGE
-#   sh NW-01-config-backup.sh --hosts config/hosts.csv            all network devices
+#   sh NW-01-config-backup.sh --hosts config/hosts.txt            all network devices
 #   sh NW-01-config-backup.sh --device fw01,10.0.2.1,paloalto
-#   BT_NET_PASS='...' sh NW-01-config-backup.sh --hosts hosts.csv --password-env
+#   BT_NET_PASS='...' sh NW-01-config-backup.sh --hosts hosts.txt --password-env
 #
 # OPTIONS
-#   --hosts FILE       host list (config/hosts.example.csv format).  Rows with
+#   --hosts FILE       host list (config/hosts.example.txt format).  Rows with
 #                      os "network" (or a vendor name as os) are devices; the
 #                      vendor comes from a "vendor" column, the os column, or
 #                      the notes ("Palo Alto", "Cisco ASA", "pfSense" ...)
@@ -50,9 +50,9 @@
 # OUTPUTS
 #   <out>/NW-01_<host>_<UTC time>/
 #     summary.txt              each device: status, size, changes; the flags
-#     devices.csv              device,address,vendor,status,lines,added,removed,sha256
+#     devices.txt              device, address, vendor, status, lines, added, removed, sha256
 #     <device>.diff            unified diff against the previous copy
-#     flags.csv                HIGH/MED/LOW changes
+#     flags.txt                HIGH/MED/LOW changes, HIGH first
 #   <out>/net-configs/<device>/<UTC time>.cfg   every saved config (mode 600)
 #   <out>/net-configs/known_hosts               the devices' SSH host keys
 #
@@ -142,6 +142,8 @@ done
 [ -n "$HOSTS$DEVICES" ] || cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
 case "$MAXFLAGS" in ''|*[!0-9]*) cc_die 2 "--max-flags needs a whole number" ;; esac
 
+# shellcheck disable=SC2034  # read by the library: tables as .txt, no CSV
+CC_TABLES=1
 cc_init "NW-01" "Network config backup" readonly
 cc_use_run_dir
 W="$CC_RUN_DIR/.work"
@@ -149,7 +151,7 @@ mkdir -p "$W" || cc_die 3 "cannot create $W"
 STORE="$CC_OUT/net-configs"
 (umask 077; mkdir -p "$STORE") || cc_die 3 "cannot create $STORE"
 SSH=${BT_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
-DCSV=$(cc_csv_new devices "device,address,vendor,status,lines,added,removed,sha256")
+DT=$(cc_table_new devices device address vendor status lines added removed sha256)
 
 # ---- Password (never on a command line, never in the log) --------------------
 if [ "$PWMODE" != key ]; then
@@ -184,12 +186,7 @@ vendor_of() {
 }
 : >"$W/devices"
 if [ -n "$HOSTS" ]; then
-    awk -F',' "$CC_AWK_CSV"'
-        /^[ \t]*#/ || NF < 2 { next }
-        !hdr { n = csvsplit($0, h); for (i = 1; i <= n; i++) c[tolower(h[i])] = i; hdr = 1; next }
-        { csvsplit($0, f)
-          os = tolower(f[c["os"]]); v = ("vendor" in c) ? f[c["vendor"]] : ""
-          print f[c["host"]] "|" f[c["ip"]] "|" os "|" v "|" f[c["notes"]] "|" (("user" in c) ? f[c["user"]] : "") "|" (("port" in c) ? f[c["port"]] : "") }' "$HOSTS" >"$W/rows"
+    cc_hosts_rows "$HOSTS" | awk -F'|' '{ print $1 "|" $2 "|" tolower($3) "|" $10 "|" $9 "|" $7 "|" $6 }' >"$W/rows"
     while IFS='|' read -r _n _a _os _v _notes _u _p; do
         _vend=""
         [ -n "$_v" ] && _vend=$(vendor_of "$_v")
@@ -315,7 +312,7 @@ while IFS='|' read -r _n _a _v _u _p; do
     if grep -q 'REMOTE HOST IDENTIFICATION HAS CHANGED\|Host key verification failed' "$W/err"; then
         sed 's/^/    /' "$W/err" >>"$CC_LOG"
         cc_flag HIGH "$_n" "$_a" "the device's SSH host key CHANGED since the last backup: device replaced, reinstalled, or someone in the middle. Not backed up. Check, then remove its line from $STORE/known_hosts"
-        cc_csv_row "$DCSV" "$_n" "$_a" "$_v" "HOST KEY CHANGED" 0 0 0 ""
+        cc_table_row "$DT" "$_n" "$_a" "$_v" "HOST KEY CHANGED" 0 0 0 ""
         printf '%s|%s|HOST KEY CHANGED|0|0|0\n' "$_n" "$_v" >>"$W/summary_rows"; CC_N_FAIL=$((CC_N_FAIL + 1)); continue
     fi
     if [ "$_rc" -ne 0 ] || [ "$_lines" -lt 3 ]; then
@@ -323,7 +320,7 @@ while IFS='|' read -r _n _a _v _u _p; do
         _why=$(grep -v '^$' "$W/err" | tail -n 1 | cut -c1-80)
         [ -n "$_why" ] || _why="empty answer (no rights to show the config?)"
         cc_flag MED "$_n" "$_a" "backup FAILED: $_why"
-        cc_csv_row "$DCSV" "$_n" "$_a" "$_v" "failed: $_why" "$_lines" 0 0 ""
+        cc_table_row "$DT" "$_n" "$_a" "$_v" "failed: $_why" "$_lines" 0 0 ""
         printf '%s|%s|failed: %s|%s|0|0\n' "$_n" "$_v" "$_why" "$_lines" >>"$W/summary_rows"; CC_N_FAIL=$((CC_N_FAIL + 1)); continue
     fi
     # Compare with the newest earlier copy FIRST, then save this one.  Copies
@@ -359,11 +356,13 @@ while IFS='|' read -r _n _a _v _u _p; do
     fi
     (umask 077; cp "$W/raw" "$STORE/$_n/$_stamp.cfg"; cp "$W/norm" "$STORE/$_n/$_stamp.norm"; printf '%s\n' "$_stamp" >"$STORE/$_n/latest"; printf '%s\n' "$_v" >"$STORE/$_n/vendor")
     [ "$_try" = 1 ] && _st="$_st, old SSH algorithms"
-    cc_csv_row "$DCSV" "$_n" "$_a" "$_v" "$_st" "$_lines" "$_add" "$_del" "$_hash"
+    cc_table_row "$DT" "$_n" "$_a" "$_v" "$_st" "$_lines" "$_add" "$_del" "$_hash"
     printf '%s|%s|%s|%s|%s|%s\n' "$_n" "$_v" "$_st" "$_lines" "$_add" "$_del" >>"$W/summary_rows"
 done <"$W/devices"
 
 # ---- Summary ----------------------------------------------------------------------
+cc_table_align "$DT"
+cc_table_sort_flags "$CC_RUN_DIR/flags.txt"
 {
     printf 'NW-01 Network config backup | %s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf '%-16s %-10s %6s %6s %6s  %s\n' device vendor lines added removed status

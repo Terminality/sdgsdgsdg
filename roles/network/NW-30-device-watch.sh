@@ -39,9 +39,9 @@
 #     new changes on DEVICE: ours?               [N]ot ours / [o]urs / [e]ach
 #
 # USAGE
-#   BT_NET_PASS='pw' sh NW-30-device-watch.sh --hosts config/hosts.csv
+#   BT_NET_PASS='pw' sh NW-30-device-watch.sh --hosts config/hosts.txt
 #   BT_NET_PASS='pw' sh NW-30-device-watch.sh --device fw1,10.0.0.1,paloalto --every 60
-#   BT_NET_PASS='pw' sh NW-30-device-watch.sh --hosts config/hosts.csv --once --batch   (from cron)
+#   BT_NET_PASS='pw' sh NW-30-device-watch.sh --hosts config/hosts.txt --once --batch   (from cron)
 #
 # OPTIONS
 #   --device NAME,ADDRESS,VENDOR[,USER[,PORT]]   a device (repeat)
@@ -196,10 +196,7 @@ vendor_of() {
 }
 : >"$W/devices"
 if [ -n "$HOSTS" ]; then
-    awk -F',' "$CC_AWK_CSV"'
-        /^[ \t]*#/ || NF < 2 { next }
-        !hdr { n = csvsplit($0, h); for (i = 1; i <= n; i++) c[tolower(h[i])] = i; hdr = 1; next }
-        { csvsplit($0, f); print f[c["host"]] "|" f[c["ip"]] "|" tolower(f[c["os"]]) "|" (("vendor" in c) ? f[c["vendor"]] : "") "|" f[c["notes"]] "|" (("user" in c) ? f[c["user"]] : "") "|" (("port" in c) ? f[c["port"]] : "") }' "$HOSTS" >"$W/rows"
+    cc_hosts_rows "$HOSTS" | awk -F'|' '{ print $1 "|" $2 "|" tolower($3) "|" $10 "|" $9 "|" $7 "|" $6 }' >"$W/rows"
     while IFS='|' read -r _n _a _os _v _notes _u _p; do
         _vend=""; [ -n "$_v" ] && _vend=$(vendor_of "$_v")
         [ -z "$_vend" ] && [ "$_os" != linux ] && case " $VENDORS " in *" $_os "*) _vend=$_os ;; esac

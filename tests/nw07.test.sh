@@ -223,7 +223,7 @@ for f in r1-bad asa-bad pa-bad fg-bad vyos-bad pf-bad mt-bad; do set -- "$@" --f
 out=$(run --out "$O" "$@" 2>&1); rc=$?
 t_eq "$rc" 0 "exit 0"
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
-x=$(cat "$d/findings.csv")
+x=$(t_quoted "$d/findings.txt")
 t_has "$x" '"r1-bad","cisco-ios"' "Cisco IOS recognised from the text"
 t_has "$x" '"pa-bad","paloalto"' "Palo Alto recognised from the text"
 t_has "$x" '"HIGH","telnet allowed on remote login lines"' "IOS: telnet on VTY"
@@ -255,6 +255,8 @@ t_has "$x" '"MED","web GUI over plain HTTP"' "pfSense: http GUI"
 t_has "$x" '"MED","telnet not disabled in the export' "MikroTik: telnet default"
 t_has "$x" '"MED","plain HTTP management (www) on"' "MikroTik: www"
 t_hasnt "$x" "cisco123" "secrets masked"
+t_fail "no CSV files in the run" sh -c "ls '$d' | grep -q csv"
+t_eq "$(sed -n 2p "$d/flags.txt" | cut -d'|' -f1 | tr -d ' ')" HIGH "flags.txt: HIGH first"
 t_hasnt "$x" "Passw0rd" "secrets masked (ASA)"
 
 t_start "clean configs: no HIGH or MED"
@@ -262,7 +264,7 @@ set --
 for f in r2-clean asa-clean pa-clean fg-clean vyos-clean pf-clean mt-clean; do set -- "$@" --file "$F/$f.cfg"; done
 out=$(run --out "$O" "$@" 2>&1)
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
-x=$(cat "$d/findings.csv")
+x=$(t_quoted "$d/findings.txt")
 t_hasnt "$x" '"HIGH"' "no HIGH finding on clean configs"
 t_hasnt "$x" '"MED"' "no MED finding on clean configs"
 [ -n "${T_DEBUG:-}" ] && printf '%s\n' "$x" | grep '"MED"' >&2

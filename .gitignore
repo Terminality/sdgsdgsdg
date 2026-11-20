@@ -5,7 +5,9 @@ bt-out/
 *.log
 # Real competition data: host lists, protected lists, credential sheets.
 config/*.csv
+config/*.txt
 !config/*.example.csv
+!config/*.example.txt
 # Editor and OS clutter
 *.swp
 *~

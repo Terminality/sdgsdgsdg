@@ -91,6 +91,18 @@ printf '#config-version=FGT60F-7.2.5\n#conf_file_ver=111\nconfig system global\n
 printf "set system host-name 'vyos1'\nset service ssh port '22'\nset system login user vyos authentication encrypted-password 'x'\n" >"$D/10.0.0.5.out"
 printf '<?xml version="1.0"?>\n<pfsense>\n<system><hostname>pf1</hostname>\n<user><name>admin</name><bcrypt-hash>$2y$abc</bcrypt-hash></user>\n</system>\n<snmpd><rocommunity>public</rocommunity></snmpd>\n</pfsense>\n' >"$D/10.0.0.6.out"
 printf 'hostname old\nline1\nline2\nline3\n' >"$D/oldbox.out"
+cat >"$T_TMP/hosts.txt" <<'H'
+# name   ip          os         role       connect port user  scored  notes
+r1       10.0.0.1    network    core       ssh     22   admin  -       Cisco IOS router
+fw1      10.0.0.2    network    perimeter  ssh     22   admin  -       Palo Alto PA-220
+asa1     10.0.0.3    cisco-asa  firewall   ssh     22   admin  -       -
+fg1      10.0.0.4    network    branch     ssh     22   admin  -       FortiGate 60F
+vyos1    10.0.0.5    network    edge       ssh     22   vyos   -       VyOS
+pf1      10.0.0.6    network    lab        ssh     22   root   -       pfSense CE
+mystery  10.0.0.9    network    ???        ssh     22   admin  -       unknown box
+web01    10.0.0.20   linux      web        ssh     22   root   http:80 -
+H
+# the same list in the older CSV form
 cat >"$T_TMP/hosts.csv" <<'H'
 host,ip,os,role,connect,port,user,scored_services,notes
 r1,10.0.0.1,network,core router,ssh,22,admin,,Cisco IOS router
@@ -110,7 +122,7 @@ run --device 'bad/name,1.2.3.4,vyos' >/dev/null 2>&1; t_eq "$?" 2 "unsafe device
 run --device 'r9,1.2.3.4,vyos,admin,22x' >/dev/null 2>&1; t_eq "$?" 2 "a port that is not a number exits 2"
 
 t_start "first backup of six vendors"
-out=$(run --out "$O" --hosts "$T_TMP/hosts.csv" 2>&1); rc=$?
+out=$(run --out "$O" --hosts "$T_TMP/hosts.txt" 2>&1); rc=$?
 t_eq "$rc" 0 "exit 0"
 for d in r1 fw1 asa1 fg1 vyos1 pf1; do t_has "$out" "$d" "$d in the summary"; done
 t_has "$out" "mystery: os is network but the vendor is unknown" "device with an unknown vendor skipped with a warning"
@@ -131,18 +143,23 @@ t_start "time-only changes are not reported"
 cisco_cfg 2 "" >"$D/10.0.0.1.out"
 # FortiGate shows its encrypted secrets differently on every read
 sed 's/conf_file_ver=111/conf_file_ver=222/; s/ENC SH2aaaa/ENC SH2bbbb/' "$D/10.0.0.4.out" >"$D/fg.t" && mv "$D/fg.t" "$D/10.0.0.4.out"
-out=$(run --out "$O" --hosts "$T_TMP/hosts.csv" 2>&1)
+out=$(run --out "$O" --hosts "$T_TMP/hosts.txt" 2>&1)
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
-t_hasnt "$(cat "$d/devices.csv")" '"changed"' "no device reported as changed"
-t_has "$(cat "$d/devices.csv")" '"no change"' "devices compared"
+t_hasnt "$(cat "$d/devices.txt")" '| changed' "no device reported as changed"
+t_has "$(cat "$d/devices.txt")" '| no change' "devices compared"
+t_fail "no CSV files in the run" sh -c "ls '$d' | grep -q csv"
 
 t_start "a planted admin account"
 cisco_cfg 3 "username backdoor privilege 15 password 0 Hunter2Pass" >"$D/10.0.0.1.out"
-out=$(run --out "$O" --hosts "$T_TMP/hosts.csv" 2>&1)
+out=$(run --out "$O" --hosts "$T_TMP/hosts.txt" 2>&1)
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
 t_has "$out" "[r1] config line: added: username backdoor privilege 15 password 0 ****" "HIGH flag with the password masked"
 t_hasnt "$out" "Hunter2Pass" "password not on screen"
-t_hasnt "$(cat "$d/flags.csv")" "Hunter2Pass" "password not in flags.csv"
+t_file "$d/flags.txt" "flags.txt written"
+t_has "$(cat "$d/flags.txt")" "HIGH" "the flag is in flags.txt"
+t_hasnt "$(cat "$d/flags.txt")" "Hunter2Pass" "password not in flags.txt"
+out=$(run --out "$O" --hosts "$T_TMP/hosts.csv" 2>&1)
+t_has "$out" "pf1" "an older CSV host list is still read"
 t_file "$d/r1.diff" "diff saved"
 
 t_start "failures"

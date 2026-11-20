@@ -123,12 +123,12 @@
 #   findings.txt     the numbered list; csv/findings.csv has the fix column
 # =============================================================================
 
-# >>> BT-LIB  (lib/lib.sh 0.2.1 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.3.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.2.1
+# VERSION:  0.3.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -199,7 +199,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.2.1"
+CC_LIB_VERSION="0.3.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -222,6 +222,8 @@ CC_N_FLAG=0                 # flags written by cc_flag (this shell only; the
 CC_CSV_DIR=""               # when set, CSV files go here instead of CC_OUT
 CC_RUN_DIR=""               # per-run folder, set by cc_use_run_dir
 CC_FLAGS=""                 # path of this run's flags.csv, once one is written
+: "${CC_TABLES:=0}"         # 1 = flags (and the script's own tables) as .txt
+                            # tables, no CSV: see cc_table_new
 CC_TEE=""                   # copy of screen lines, when a script sets it
 : "${CC_BATCH:=0}"          # 1 = never ask: take every default (--batch)
 CC_RUN_UNDO=""              # this run's undo lines, for the revert timer
@@ -1281,6 +1283,17 @@ cc_save() {
 #   Never put a password or other secret in ITEM or DETAIL.
 cc_flag() {
     case "$1" in HIGH|MED|LOW) ;; *) cc_die 1 "cc_flag: severity must be HIGH, MED or LOW (got '$1')" ;; esac
+    # CC_TABLES=1: flags.txt, a text table (the same columns), no CSV.
+    if [ "$CC_TABLES" = 1 ]; then
+        if [ -z "$CC_FLAGS" ]; then
+            if [ -n "$CC_RUN_DIR" ]; then CC_FLAGS="$CC_RUN_DIR/flags.txt"; else CC_FLAGS="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_flags.txt"; fi
+            [ -f "$CC_FLAGS" ] || (umask 077; printf 'severity | section | item | detail | time\n' >"$CC_FLAGS")
+        fi
+        cc_table_row "$CC_FLAGS" "$1" "$2" "$3" "$4" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        CC_N_FLAG=$((CC_N_FLAG + 1))
+        cc_note "FLAG $1 [$2] $3: $4"
+        return 0
+    fi
     if [ -z "$CC_FLAGS" ]; then
         if [ -n "$CC_CSV_DIR" ]; then CC_FLAGS="$CC_CSV_DIR/flags.csv"; else CC_FLAGS="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_flags.csv"; fi
         [ -f "$CC_FLAGS" ] || (umask 077; printf 'severity,section,item,detail,time\n' >"$CC_FLAGS")
@@ -1324,16 +1337,20 @@ cc_flag_report() {
     if [ -z "$CC_FLAGS" ] && [ -n "$CC_CSV_DIR" ] && [ -f "$CC_CSV_DIR/flags.csv" ]; then
         CC_FLAGS="$CC_CSV_DIR/flags.csv"
     fi
+    if [ -z "$CC_FLAGS" ] && [ "$CC_TABLES" = 1 ] && [ -n "$CC_RUN_DIR" ] && [ -f "$CC_RUN_DIR/flags.txt" ]; then
+        CC_FLAGS="$CC_RUN_DIR/flags.txt"
+    fi
     if [ -z "$CC_FLAGS" ] || [ ! -f "$CC_FLAGS" ]; then
         printf 'Flags: none\n'
         return 0
     fi
     # CC_FLAGS_SHOW: the path to name on screen, when a script writes a
     # readable copy of flags.csv (SH-05 writes flags.txt).
-    awk -v max="$_cc_fr_max" -v file="${CC_FLAGS_SHOW:-$CC_FLAGS}" "$CC_AWK_CSV"'
+    _cc_fr_t=0; case "$CC_FLAGS" in *.txt) _cc_fr_t=1 ;; esac
+    awk -v max="$_cc_fr_max" -v file="${CC_FLAGS_SHOW:-$CC_FLAGS}" -v t="$_cc_fr_t" "$CC_AWK_CSV$CC_AWK_TABLE"'
         NR == 1 { next }
         {
-            csvsplit($0, f)
+            if (t) tsplit($0, f); else csvsplit($0, f)
             sev = f[1]; cnt[sev]++
             line = "  [" f[2] "] " f[3] ": " f[4]
             # Screen lines are cut at 200 characters; flags.csv keeps the full text.
@@ -1350,6 +1367,104 @@ cc_flag_report() {
             if (cut > 0) printf "  ... %d more high/medium not shown\n", cut
             if (cnt["LOW"] + cut > 0) printf "All flags, including low: %s\n", file
         }' "$CC_FLAGS"
+}
+
+# -----------------------------------------------------------------------------
+# Text tables (instead of CSV)
+# -----------------------------------------------------------------------------
+# A table is a .txt file people read and scripts parse: the first line names
+# the columns, then one row per line, columns separated by " | ":
+#     ip         | proto | port | service
+#     10.0.0.5   | tcp   | 80   | http
+# A "|" inside a value becomes "/", a line break a space, so every line splits
+# the same way.  cc_table_align lines the columns up once a table is done;
+# the result still splits the same way.
+#   f=$(cc_table_new ports ip proto port service)
+#   cc_table_row "$f" 10.0.0.5 tcp 80 http
+#   cc_table_align "$f"
+#   awk "$CC_AWK_TABLE"'NR > 1 { tsplit($0, a); print a[3] }' "$f"
+
+# cc_table_new NAME COLUMN... -> create <run folder>/NAME.txt (else
+#   <out>/<ID>_<host>_<time>_NAME.txt) with its header line; print the path.
+cc_table_new() {
+    _cc_tn=$1; shift
+    if [ -n "$CC_RUN_DIR" ]; then _cc_tf="$CC_RUN_DIR/$_cc_tn.txt"; else _cc_tf="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_$_cc_tn.txt"; fi
+    (umask 077; cc_table_line "$@" >"$_cc_tf") || { cc_err "cannot write $_cc_tf"; return 1; }
+    printf '%s\n' "$_cc_tf"
+}
+# cc_table_line VALUE... -> one table line on stdout
+cc_table_line() {
+    _cc_tl=""; _cc_t1=1
+    for _cc_tv in "$@"; do
+        case "$_cc_tv" in *'|'*|*'
+'*) _cc_tv=$(printf '%s' "$_cc_tv" | tr '|\n\r' '/  ') ;; esac
+        if [ "$_cc_t1" = 1 ]; then _cc_tl=$_cc_tv; _cc_t1=0; else _cc_tl="$_cc_tl | $_cc_tv"; fi
+    done
+    printf '%s\n' "$_cc_tl"
+}
+# cc_table_row FILE VALUE... -> append one row
+cc_table_row() { _cc_trf=$1; shift; cc_table_line "$@" >>"$_cc_trf"; }
+# cc_table_align FILE -> pad every column to its widest value (in place)
+cc_table_align() {
+    [ -f "$1" ] || return 0
+    awk "$CC_AWK_TABLE"'
+        NR == FNR { n = tsplit($0, f); if (n > nc) nc = n; for (i = 1; i <= n; i++) if (length(f[i]) > w[i]) w[i] = length(f[i]); next }
+        { n = tsplit($0, f); l = ""
+          for (i = 1; i <= nc; i++) l = l (i > 1 ? " | " : "") sprintf("%-" w[i] "s", (i <= n ? f[i] : ""))
+          sub(/ +$/, "", l); print l }' "$1" "$1" >"$1.al" && cat "$1.al" >"$1"
+    rm -f "$1.al"
+}
+# cc_table_sort_flags FILE -> flags.txt with HIGH first, then MED, LOW (aligned)
+cc_table_sort_flags() {
+    [ -f "$1" ] || return 0
+    awk "$CC_AWK_TABLE"'NR == 1 { print; next } { tsplit($0, f); r[f[1]] = r[f[1]] $0 "\n" }
+        END { printf "%s%s%s", r["HIGH"], r["MED"], r["LOW"] }' "$1" >"$1.s" && cat "$1.s" >"$1"
+    rm -f "$1.s"
+    cc_table_align "$1"
+}
+# CC_AWK_TABLE: tsplit(line, a) -> the fields of one table line, trimmed.
+CC_AWK_TABLE='
+function tsplit(s, a,   n, i) {    # awk, not shell: posix-ok
+    n = split(s, a, "|")
+    for (i = 1; i <= n; i++) { sub(/^[ \t]+/, "", a[i]); sub(/[ \t\r]+$/, "", a[i]) }
+    return n
+}'
+
+# -----------------------------------------------------------------------------
+# Host list
+# -----------------------------------------------------------------------------
+# config/hosts.txt (see config/hosts.example.txt): one machine per line,
+# columns separated by spaces, "-" for an empty one, the notes are the rest
+# of the line; lines starting with # are comments:
+#     # name   ip         os       role    connect  port  user   scored_services   notes
+#     web01    10.0.0.20  linux    web     ssh      22    root   http:80;https:443 Ubuntu web box
+#     fw1      10.0.0.1   network  edge    ssh      22    admin  -                 Palo Alto PA-220
+# An older host list in CSV (host,ip,os,... with a header line) is still read.
+# cc_hosts_rows FILE -> one line per machine:
+#     name|ip|os|role|connect|port|user|scored_services|notes|vendor
+#   (vendor: only from an older CSV list's "vendor" column; "|" in a value
+#   becomes "/").
+cc_hosts_rows() {
+    _cc_hf=$1
+    [ -r "$_cc_hf" ] || { cc_err "cannot read the host list $_cc_hf"; return 1; }
+    _cc_hc=$(tr -d '\r' <"$_cc_hf" | awk '/^[ \t]*(#|$)/ { next } { print; exit }')
+    case "$_cc_hc" in
+        host,*|*,ip,*|name,*)
+            tr -d '\r' <"$_cc_hf" | awk -F',' "$CC_AWK_CSV"'
+                function g(k,   v) { v = (k in c) ? f[c[k]] : ""; gsub(/\|/, "/", v); return v }    # awk, not shell: posix-ok
+                /^[ \t]*#/ || NF < 2 { next }
+                !hdr { n = csvsplit($0, h); for (i = 1; i <= n; i++) c[tolower(h[i])] = i; if (!("host" in c) && ("name" in c)) c["host"] = c["name"]; hdr = 1; next }
+                { csvsplit($0, f); print g("host") "|" g("ip") "|" g("os") "|" g("role") "|" g("connect") "|" g("port") "|" g("user") "|" g("scored_services") "|" g("notes") "|" g("vendor") }' ;;
+        *)
+            tr -d '\r' <"$_cc_hf" | awk '
+                /^[ \t]*(#|$)/ { next }
+                NF < 2 { next }
+                tolower($1) ~ /^(name|host)$/ && tolower($2) == "ip" { next }
+                { gsub(/\|/, "/")
+                  for (i = 1; i <= 8; i++) v[i] = (i <= NF && $i != "-") ? $i : ""
+                  nt = ""; for (i = 9; i <= NF; i++) nt = nt (nt == "" ? "" : " ") $i; if (nt == "-") nt = ""
+                  print v[1] "|" v[2] "|" v[3] "|" v[4] "|" v[5] "|" v[6] "|" v[7] "|" v[8] "|" nt "|" }' ;;
+    esac
 }
 
 # -----------------------------------------------------------------------------
