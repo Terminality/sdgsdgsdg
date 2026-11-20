@@ -580,8 +580,8 @@ Finds live hosts and open ports, what runs on them, and what looks vulnerable. R
 ```sh
 sh SH-03-network-scan.sh                                        # asks everything
 sh SH-03-network-scan.sh --target 10.0.2.0/24 --batch            # all defaults, no questions
-sudo sh SH-03-network-scan.sh --target 10.0.2.0/24 --vuln --udp --hosts config/hosts.csv
-sh SH-03-network-scan.sh --targets-file subnets.txt --profile outside --hosts hosts.csv   # from outside the firewall
+sudo sh SH-03-network-scan.sh --target 10.0.2.0/24 --vuln --udp --hosts config/hosts.txt
+sh SH-03-network-scan.sh --targets-file subnets.txt --profile outside --hosts hosts.txt   # from outside the firewall
 ```
 
 It asks like sqlmap (Enter takes the default, a flag answers in advance):
@@ -629,7 +629,8 @@ In `<out>/netscan-N/` (next free number):
 | `vulns.txt` | What the scripts found: `VULNERABLE` results, known CVEs for a version (with the worst score), anonymous FTP, empty database passwords, SMB signing off, PUT/DELETE allowed |
 | `flags.txt` | Every flag, HIGH first |
 | `scored.txt` | With `--hosts`: each scored service and whether it answered |
-| `csv/` | The same tables as CSV (SH-04 reads these) |
+
+The `.txt` tables have their column names on the first line and columns separated by ` | `, so they can be read and also parsed (SH-04 and NW-20 read them). No CSV files.
 | `raw/` | nmap's own output per stage (`1-quick`, `2-full`, `3-details`, `4-udp`) |
 
 ### What it flags
@@ -659,7 +660,7 @@ In `<out>/netscan-N/` (next free number):
 | `nmap produced no results` | A target nmap cannot parse, or no permission | Read `output.txt` |
 | Hosts you know are up are missing | They drop ping and no top-1000 port answered | `--pn`, or `--profile outside` |
 | Service ends in `?` or is `unknown` | nmap was unsure | Check `raw/3-details.nmap`; the fingerprint is there |
-| Every scored service fails | Wrong addresses in the host list, or your workstation is firewalled off | Check `config/hosts.csv`; scan from another machine |
+| Every scored service fails | Wrong addresses in the host list, or your workstation is firewalled off | Check `config/hosts.txt`; scan from another machine |
 
 ---
 
@@ -684,7 +685,7 @@ sh SH-04-scan-diff.sh --old ~/bt-out/netscan-1 --new ~/bt-out/netscan-2
 | `--type sh03` (default) / `sh05` | Which runs to pick when no folders are given |
 | `--host` | With `--type sh05`: whose runs. Default: the host of the newest SH-05 run |
 | `--runs` | Where the run folders are, if not in the `--out` folder (e.g. enum results copied off each box into one folder) |
-| `--max-lines` | Changes listed on screen (default 40; every change is in `changes.csv`) |
+| `--max-lines` | Changes listed on screen (default 40; every change is in `changes.txt`) |
 | `--max-flags` | HIGH and MED flags shown on screen (default 30) |
 
 **Which runs it picks.** Run folders are named `<ID>_<host>_<UTC time>`, so the newest two by time are compared. Folders without `summary.txt` are skipped: those are runs that were stopped part way and would look like everything was removed.
@@ -717,9 +718,10 @@ In a numbered folder: `<out>/diff-1`, `diff-2`, ...
 | File | Contents |
 | --- | --- |
 | `summary.txt` | Per-section counts of added, removed and changed; the changes (added first); the HIGH and MED flags |
-| `changes.txt` | Every difference as a readable table, additions first |
+| `changes.txt` | Every difference as a table (columns separated by ` | `), additions first |
 | `flags.txt` | Every flag, HIGH first |
-| `csv/` | The same as CSV (`changes.csv`, `flags.csv`) |
+
+It reads SH-03's `.txt` tables, or the `csv/` folder of scans made before that change, so an older scan and a newer one still compare.
 
 ### What it flags
 
@@ -749,7 +751,7 @@ Each change gets one flag: a backdoor port that is HIGH is not also listed as ME
 | `comparing two different hosts` warning | `--old`/`--new` point at enum runs of two machines | Usually a mistake; pick two runs of one host |
 | Everything in a section shows as added | The earlier run had that section empty (e.g. not root, or a different profile) | Rerun both the same way; check the warning about root |
 | Lots of port changes between scans | Different targets or engines (the fallbacks check 53 ports, nmap 1000) | Scan the same targets with the same engine and profile |
-| A changed item looks wrong | The comparison is by the columns in the table above | Look up the key in both runs' CSV files; `changes.csv` has the old and new values |
+| A changed item looks wrong | The comparison is by the columns in the table above | Look up the key in both runs' tables; `changes.txt` has the old and new values |
 
 ---
 
@@ -1600,11 +1602,11 @@ It only sends "show" commands. Nothing on the devices changes.
 ### How to run it
 
 ```sh
-sh NW-01-config-backup.sh --out ~/bt-out --hosts config/hosts.csv                        # SSH keys
-BT_NET_PASS='...' sh NW-01-config-backup.sh --out ~/bt-out --hosts config/hosts.csv --password-env
+sh NW-01-config-backup.sh --out ~/bt-out --hosts config/hosts.txt                        # SSH keys
+BT_NET_PASS='...' sh NW-01-config-backup.sh --out ~/bt-out --hosts config/hosts.txt --password-env
 sh NW-01-config-backup.sh --out ~/bt-out --device fw01,10.0.2.1,paloalto,admin --ask-password
 # every 5 minutes:
-while :; do sh NW-01-config-backup.sh --out ~/bt-out --hosts config/hosts.csv --password-env; sleep 300; done
+while :; do sh NW-01-config-backup.sh --out ~/bt-out --hosts config/hosts.txt --password-env; sleep 300; done
 ```
 
 Run it from the admin workstation (a Linux box that can reach the devices' management addresses).
@@ -1641,9 +1643,9 @@ Before comparing, lines that change by themselves are dropped: prompts and echoe
 | Where | What |
 | --- | --- |
 | `<out>/NW-01_<host>_<time>/summary.txt` | Per device: lines, lines added and removed, status; then the flags |
-| `.../devices.csv` | `device,address,vendor,status,lines,added,removed,sha256` |
+| `.../devices.txt` | Table: device, address, vendor, status, lines, added, removed, sha256 |
 | `.../<device>.diff` | Unified diff against the previous copy (holds secrets; mode 600) |
-| `.../flags.csv` | One flag per changed line, secrets masked |
+| `.../flags.txt` | One flag per changed line, secrets masked, HIGH first |
 | `<out>/net-configs/<device>/<time>.cfg` | Every saved config as received (mode 600) |
 | `<out>/net-configs/known_hosts` | The devices' SSH host keys |
 
@@ -1703,7 +1705,7 @@ Default or guessable SNMP communities: `public`, `private`, `cisco`, `community`
 
 ### What it produces
 
-In `<out>/NW-07_<host>_<UTC time>/`: `summary.txt` (per device: vendor, counts, accounts; then the findings worst first), `findings.csv` (`device,vendor,severity,finding,detail`) and `flags.csv`. Every config line shown has its secrets masked.
+In `<out>/NW-07_<host>_<UTC time>/`: `summary.txt` (per device: vendor, counts, accounts; then the findings worst first), `findings.txt` (a table: device, vendor, severity, finding, detail) and `flags.txt`. Every config line shown has its secrets masked.
 
 ### What to watch for
 
@@ -1739,9 +1741,9 @@ If the first session closes early (some devices end the session after a password
 
 ```sh
 export BT_NET_PASS='current password'
-sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.csv                       # dry run
+sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.txt                       # dry run
 sh NW-10-device-passwords.sh --out ~/bt-out --device r1,10.0.0.1,cisco-ios,admin --apply   # ONE device first
-sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.csv --apply --protected protected.csv
+sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.txt --apply --protected protected.csv
 ```
 
 | Option | What it does |
@@ -1749,16 +1751,17 @@ sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.csv --apply --p
 | `--hosts FILE` / `--device SPEC` | The devices, as for NW-01 |
 | `--user NAME` | Default login account (`admin`) |
 | `--ask-password` | Ask for the CURRENT password instead of `$BT_NET_PASS` |
-| `--passwords FILE` | Chosen new passwords: `device,password` lines, by device name or address (same characters as below, 8+). Devices not in the file get a random password. A name that is no device in this run is reported |
+| `--passwords FILE` | Chosen new passwords: `device password` lines (a space between; `#` starts a comment), by device name or address (same characters as below, 8+). Devices not in the file get a random password. A name that is no device in this run is reported. An older `device,password` file is still read |
 | `--new-password-env` | Use `$BT_NET_NEWPASS` for every device (letters, digits and `_ . , @ % + = -`, 12+ characters). Default: a new random password per device |
 | `--enable-env` | Cisco: log in through `enable` with `$BT_NET_ENABLE` |
 | `--enable-too` | Cisco: also set a new enable secret; the test login must reach privilege 15 with it |
 | `--length N` | Random password length (default 16) |
 | `--wait N` / `--commit-wait N` | Seconds before testing a change (default 5) / for a Palo Alto commit (default 120) |
+| `--revert-after N` | MikroTik: the device puts the old password back by itself after N seconds unless the new one was proven (default 90) |
 | `--configs DIR` | NW-01's saved configs (default `<out>/net-configs`) |
 | `--legacy-ssh` | Allow old SSH algorithms |
 
-Password logins need `sshpass` on the admin workstation. Every password travels in an environment variable or on the session's input, never on a command line, and device output is never logged (it can echo the new password).
+Password logins need `sshpass` on the admin workstation. Every password travels in an environment variable, on the session's input, or (MikroTik) in a mode-600 ssh config file that is deleted right after; never on a command line. Device output is never logged (it can echo the new password).
 
 ### What it sends
 
@@ -1769,13 +1772,13 @@ Password logins need `sshpass` on the admin workstation. Every password travels 
 | `paloalto` | `set mgt-config users U phash HASH` (SHA-256 crypt made with `openssl`), `commit` | the commit |
 | `fortigate` | `config system admin` / `edit U` / `set password NEW OLD` | immediate |
 | `vyos` | `set system login user U authentication plaintext-password` (stored hashed), `commit`, `save` | `save` |
-| `mikrotik` | `/user set [find name="U"] password="NEW"` | immediate |
+| `mikrotik` | one command: first `/system scheduler add name="bt-nw10-revert" interval=Ns` (sets the OLD password back), then `/user set [find name="U"] password="NEW"`. New login works: the scheduled job is removed and its removal checked. It fails: the device puts the old password back by itself; the old login is tested after the wait | immediate |
 | `linux` | `chpasswd` (or `sudo -n chpasswd`) | immediate |
 | `pfsense`, `opnsense` | not changed: listed with "change it in the web GUI" | |
 
 ### What it produces
 
-In `<out>/NW-10_<host>_<UTC time>/`: `summary.txt`, `devices.csv` (`device,address,vendor,account,status`) and, with `--apply`, `passwords.csv` (mode 600). Give the passwords to the captain, then delete the file. Run NW-01 again afterwards: the changed account lines show up as expected changes.
+In `<out>/NW-10_<host>_<UTC time>/`: `summary.txt`, `devices.txt` (a table: device, address, vendor, account, status) and, with `--apply`, `passwords.txt` (a table, mode 600). Give the passwords to the captain, then delete the file. Run NW-01 again afterwards: the changed account lines show up as expected changes.
 
 There is no undo-log line: a password cannot be put back without storing it. The previous password is the team's old one.
 
@@ -1785,6 +1788,7 @@ There is no undo-log line: a password cannot be put back without storing it. The
 - **Scored logins.** If the scoring engine logs in to a device, put that device (type `host`, its address) or account on the protected list, or report the new password the way the competition requires.
 - **AAA logins** (TACACS+, RADIUS, LDAP) are changed on the AAA server, not here. A Cisco account that is not in the saved config is skipped for this reason.
 - **`REVERT NOT CONFIRMED`** means the new password failed AND the old one could not be confirmed. Go to that device's console now.
+- **MikroTik:** RouterOS may not read commands from a session's input, so it does not get the open-session revert; the device itself puts the old password back after `--revert-after` seconds. Until the new password is proven, the old one sits in the scheduled job `bt-nw10-revert`. If the job cannot be removed, the summary says so: remove it by hand (`/system scheduler remove [find name=bt-nw10-revert]`) or the old password comes back. A current password with characters RouterOS reads as code (`$`, `\`, quotes) is refused: change that device in WinBox.
 
 ### Problems and fixes
 
@@ -3286,8 +3290,8 @@ A red team's first move on a firewall or router is to log in with an extra admin
 ### How to run it
 
 ```sh
-BT_NET_PASS='pw' sh NW-12-device-sessions.sh --hosts config/hosts.csv --team 10.0.0.0/24            # look, dry run
-BT_NET_PASS='pw' sh NW-12-device-sessions.sh --hosts config/hosts.csv --team 10.0.0.0/24 --apply    # asks each
+BT_NET_PASS='pw' sh NW-12-device-sessions.sh --hosts config/hosts.txt --team 10.0.0.0/24            # look, dry run
+BT_NET_PASS='pw' sh NW-12-device-sessions.sh --hosts config/hosts.txt --team 10.0.0.0/24 --apply    # asks each
 ```
 
 Run it **once early**: that run saves the account names as the baseline (`net-accounts-baseline.txt` in `--out`). Later runs flag an account added since. Then run NW-10: a kicked session can log in again until the password changes.
@@ -3342,7 +3346,7 @@ Locks down how the firewalls, routers and switches themselves are managed: who c
 ### How to run it
 
 ```sh
-BT_NET_PASS='pw' sh NW-21-device-hardening.sh --hosts config/hosts.csv --team 10.0.0.0/24 --log-host 10.0.0.20 --ntp 10.0.0.20            # look, dry run
+BT_NET_PASS='pw' sh NW-21-device-hardening.sh --hosts config/hosts.txt --team 10.0.0.0/24 --log-host 10.0.0.20 --ntp 10.0.0.20            # look, dry run
 BT_NET_PASS='pw' sh NW-21-device-hardening.sh --device fw1,10.0.0.1,paloalto --team 10.0.0.0/24 --log-host 10.0.0.20 --ntp 10.0.0.20 --apply   # ONE device first
 ```
 
@@ -3396,7 +3400,7 @@ Puts a short set of named `bt-` rules at the TOP of the network firewall, so fro
 ### How to run it
 
 ```sh
-sh SH-03-netscan.sh --hosts config/hosts.csv                                     # first: the ports to offer
+sh SH-03-netscan.sh --hosts config/hosts.txt                                     # first: the ports to offer
 BT_NET_PASS='pw' sh NW-20-firewall-ruleset.sh --device fw1,10.0.0.1,paloalto --team 10.0.0.0/24            # look, dry run
 BT_NET_PASS='pw' sh NW-20-firewall-ruleset.sh --device fw1,10.0.0.1,paloalto --team 10.0.0.0/24 --apply    # asks each step
 BT_NET_PASS='pw' sh NW-20-firewall-ruleset.sh --device fw1,10.0.0.1,paloalto --remove --apply              # take it all out
@@ -3483,9 +3487,9 @@ Reads every firewall, router and switch every few minutes and shows what changed
 ### How to run it
 
 ```sh
-BT_NET_PASS='pw' sh NW-30-device-watch.sh --hosts config/hosts.csv                     # asks, then watches until Ctrl-C
+BT_NET_PASS='pw' sh NW-30-device-watch.sh --hosts config/hosts.txt                     # asks, then watches until Ctrl-C
 BT_NET_PASS='pw' sh NW-30-device-watch.sh --device fw1,10.0.0.1,paloalto --every 60
-BT_NET_PASS='pw' sh NW-30-device-watch.sh --hosts config/hosts.csv --once --batch     # one round (cron)
+BT_NET_PASS='pw' sh NW-30-device-watch.sh --hosts config/hosts.txt --once --batch     # one round (cron)
 ```
 
 Run NW-01 first, after your own hardening: its copy is the best baseline.

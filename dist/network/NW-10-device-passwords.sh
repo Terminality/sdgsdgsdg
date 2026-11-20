@@ -25,8 +25,8 @@
 #   safe CLI for it) - change those in the web GUI; they are listed.
 #
 # USAGE
-#   BT_NET_PASS='current' sh NW-10-device-passwords.sh --hosts hosts.csv          dry run
-#   BT_NET_PASS='current' sh NW-10-device-passwords.sh --hosts hosts.csv --apply
+#   BT_NET_PASS='current' sh NW-10-device-passwords.sh --hosts hosts.txt          dry run
+#   BT_NET_PASS='current' sh NW-10-device-passwords.sh --hosts hosts.txt --apply
 #   sh NW-10-device-passwords.sh --device r1,10.0.0.1,cisco-ios,admin --ask-password --apply
 #
 # OPTIONS
@@ -35,8 +35,9 @@
 #   --ask-password       ask for the CURRENT password (else $BT_NET_PASS)
 #   --new-password-env   use $BT_NET_NEWPASS as the new password for every
 #                        device (default: a new random one per device)
-#   --passwords FILE     chosen new passwords: "device,password" lines (the
-#                        device's name or address).  Devices not in the file
+#   --passwords FILE     chosen new passwords: "device password" lines (the
+#                        device's name or address, a space, the password;
+#                        # starts a comment).  Devices not in the file
 #                        get a random one (or $BT_NET_NEWPASS).  Same
 #                        characters as below, 8 or more.  Names in the file
 #                        that are not devices in this run are listed
@@ -46,6 +47,9 @@
 #   --wait N             seconds to let a change apply before testing it
 #                        (default 5; Palo Alto commits use --commit-wait)
 #   --commit-wait N      Palo Alto: seconds for the commit (default 120)
+#   --revert-after N     MikroTik: seconds after which the device puts the old
+#                        password back by itself unless the new one was
+#                        proven (default 90, at least 5)
 #   --configs DIR        NW-01's saved configs (default <out>/net-configs);
 #                        Cisco privilege levels are read from there
 #   --legacy-ssh         allow old SSH algorithms
@@ -53,9 +57,9 @@
 #
 # OUTPUTS  (under --out, in NW-10_<host>_<UTC time>/)
 #   summary.txt     each device: changed / would change / failed (reverted) / skipped
-#   devices.csv     device,address,vendor,account,status
-#   passwords.csv   device,address,account,password,time  (mode 600, --apply only)
-#   pending-password.csv   only while ONE device is being changed, and left
+#   devices.txt     device, address, vendor, account, status
+#   passwords.txt   device, address, account, password, time  (mode 600, --apply only)
+#   pending-password.txt   only while ONE device is being changed, and left
 #                   behind if the script is stopped at that moment (Ctrl-C,
 #                   closed session): that device has either its old password
 #                   or the one in this file (mode 600)
@@ -91,12 +95,12 @@
 #   NOT logged: it can echo the new password.
 # =============================================================================
 
-# >>> BT-LIB  (lib/lib.sh 0.2.1 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.3.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.2.1
+# VERSION:  0.3.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -167,7 +171,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.2.1"
+CC_LIB_VERSION="0.3.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -190,6 +194,8 @@ CC_N_FLAG=0                 # flags written by cc_flag (this shell only; the
 CC_CSV_DIR=""               # when set, CSV files go here instead of CC_OUT
 CC_RUN_DIR=""               # per-run folder, set by cc_use_run_dir
 CC_FLAGS=""                 # path of this run's flags.csv, once one is written
+: "${CC_TABLES:=0}"         # 1 = flags (and the script's own tables) as .txt
+                            # tables, no CSV: see cc_table_new
 CC_TEE=""                   # copy of screen lines, when a script sets it
 : "${CC_BATCH:=0}"          # 1 = never ask: take every default (--batch)
 CC_RUN_UNDO=""              # this run's undo lines, for the revert timer
@@ -1249,6 +1255,17 @@ cc_save() {
 #   Never put a password or other secret in ITEM or DETAIL.
 cc_flag() {
     case "$1" in HIGH|MED|LOW) ;; *) cc_die 1 "cc_flag: severity must be HIGH, MED or LOW (got '$1')" ;; esac
+    # CC_TABLES=1: flags.txt, a text table (the same columns), no CSV.
+    if [ "$CC_TABLES" = 1 ]; then
+        if [ -z "$CC_FLAGS" ]; then
+            if [ -n "$CC_RUN_DIR" ]; then CC_FLAGS="$CC_RUN_DIR/flags.txt"; else CC_FLAGS="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_flags.txt"; fi
+            [ -f "$CC_FLAGS" ] || (umask 077; printf 'severity | section | item | detail | time\n' >"$CC_FLAGS")
+        fi
+        cc_table_row "$CC_FLAGS" "$1" "$2" "$3" "$4" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        CC_N_FLAG=$((CC_N_FLAG + 1))
+        cc_note "FLAG $1 [$2] $3: $4"
+        return 0
+    fi
     if [ -z "$CC_FLAGS" ]; then
         if [ -n "$CC_CSV_DIR" ]; then CC_FLAGS="$CC_CSV_DIR/flags.csv"; else CC_FLAGS="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_flags.csv"; fi
         [ -f "$CC_FLAGS" ] || (umask 077; printf 'severity,section,item,detail,time\n' >"$CC_FLAGS")
@@ -1292,16 +1309,20 @@ cc_flag_report() {
     if [ -z "$CC_FLAGS" ] && [ -n "$CC_CSV_DIR" ] && [ -f "$CC_CSV_DIR/flags.csv" ]; then
         CC_FLAGS="$CC_CSV_DIR/flags.csv"
     fi
+    if [ -z "$CC_FLAGS" ] && [ "$CC_TABLES" = 1 ] && [ -n "$CC_RUN_DIR" ] && [ -f "$CC_RUN_DIR/flags.txt" ]; then
+        CC_FLAGS="$CC_RUN_DIR/flags.txt"
+    fi
     if [ -z "$CC_FLAGS" ] || [ ! -f "$CC_FLAGS" ]; then
         printf 'Flags: none\n'
         return 0
     fi
     # CC_FLAGS_SHOW: the path to name on screen, when a script writes a
     # readable copy of flags.csv (SH-05 writes flags.txt).
-    awk -v max="$_cc_fr_max" -v file="${CC_FLAGS_SHOW:-$CC_FLAGS}" "$CC_AWK_CSV"'
+    _cc_fr_t=0; case "$CC_FLAGS" in *.txt) _cc_fr_t=1 ;; esac
+    awk -v max="$_cc_fr_max" -v file="${CC_FLAGS_SHOW:-$CC_FLAGS}" -v t="$_cc_fr_t" "$CC_AWK_CSV$CC_AWK_TABLE"'
         NR == 1 { next }
         {
-            csvsplit($0, f)
+            if (t) tsplit($0, f); else csvsplit($0, f)
             sev = f[1]; cnt[sev]++
             line = "  [" f[2] "] " f[3] ": " f[4]
             # Screen lines are cut at 200 characters; flags.csv keeps the full text.
@@ -1318,6 +1339,104 @@ cc_flag_report() {
             if (cut > 0) printf "  ... %d more high/medium not shown\n", cut
             if (cnt["LOW"] + cut > 0) printf "All flags, including low: %s\n", file
         }' "$CC_FLAGS"
+}
+
+# -----------------------------------------------------------------------------
+# Text tables (instead of CSV)
+# -----------------------------------------------------------------------------
+# A table is a .txt file people read and scripts parse: the first line names
+# the columns, then one row per line, columns separated by " | ":
+#     ip         | proto | port | service
+#     10.0.0.5   | tcp   | 80   | http
+# A "|" inside a value becomes "/", a line break a space, so every line splits
+# the same way.  cc_table_align lines the columns up once a table is done;
+# the result still splits the same way.
+#   f=$(cc_table_new ports ip proto port service)
+#   cc_table_row "$f" 10.0.0.5 tcp 80 http
+#   cc_table_align "$f"
+#   awk "$CC_AWK_TABLE"'NR > 1 { tsplit($0, a); print a[3] }' "$f"
+
+# cc_table_new NAME COLUMN... -> create <run folder>/NAME.txt (else
+#   <out>/<ID>_<host>_<time>_NAME.txt) with its header line; print the path.
+cc_table_new() {
+    _cc_tn=$1; shift
+    if [ -n "$CC_RUN_DIR" ]; then _cc_tf="$CC_RUN_DIR/$_cc_tn.txt"; else _cc_tf="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_$_cc_tn.txt"; fi
+    (umask 077; cc_table_line "$@" >"$_cc_tf") || { cc_err "cannot write $_cc_tf"; return 1; }
+    printf '%s\n' "$_cc_tf"
+}
+# cc_table_line VALUE... -> one table line on stdout
+cc_table_line() {
+    _cc_tl=""; _cc_t1=1
+    for _cc_tv in "$@"; do
+        case "$_cc_tv" in *'|'*|*'
+'*) _cc_tv=$(printf '%s' "$_cc_tv" | tr '|\n\r' '/  ') ;; esac
+        if [ "$_cc_t1" = 1 ]; then _cc_tl=$_cc_tv; _cc_t1=0; else _cc_tl="$_cc_tl | $_cc_tv"; fi
+    done
+    printf '%s\n' "$_cc_tl"
+}
+# cc_table_row FILE VALUE... -> append one row
+cc_table_row() { _cc_trf=$1; shift; cc_table_line "$@" >>"$_cc_trf"; }
+# cc_table_align FILE -> pad every column to its widest value (in place)
+cc_table_align() {
+    [ -f "$1" ] || return 0
+    awk "$CC_AWK_TABLE"'
+        NR == FNR { n = tsplit($0, f); if (n > nc) nc = n; for (i = 1; i <= n; i++) if (length(f[i]) > w[i]) w[i] = length(f[i]); next }
+        { n = tsplit($0, f); l = ""
+          for (i = 1; i <= nc; i++) l = l (i > 1 ? " | " : "") sprintf("%-" w[i] "s", (i <= n ? f[i] : ""))
+          sub(/ +$/, "", l); print l }' "$1" "$1" >"$1.al" && cat "$1.al" >"$1"
+    rm -f "$1.al"
+}
+# cc_table_sort_flags FILE -> flags.txt with HIGH first, then MED, LOW (aligned)
+cc_table_sort_flags() {
+    [ -f "$1" ] || return 0
+    awk "$CC_AWK_TABLE"'NR == 1 { print; next } { tsplit($0, f); r[f[1]] = r[f[1]] $0 "\n" }
+        END { printf "%s%s%s", r["HIGH"], r["MED"], r["LOW"] }' "$1" >"$1.s" && cat "$1.s" >"$1"
+    rm -f "$1.s"
+    cc_table_align "$1"
+}
+# CC_AWK_TABLE: tsplit(line, a) -> the fields of one table line, trimmed.
+CC_AWK_TABLE='
+function tsplit(s, a,   n, i) {    # awk, not shell: posix-ok
+    n = split(s, a, "|")
+    for (i = 1; i <= n; i++) { sub(/^[ \t]+/, "", a[i]); sub(/[ \t\r]+$/, "", a[i]) }
+    return n
+}'
+
+# -----------------------------------------------------------------------------
+# Host list
+# -----------------------------------------------------------------------------
+# config/hosts.txt (see config/hosts.example.txt): one machine per line,
+# columns separated by spaces, "-" for an empty one, the notes are the rest
+# of the line; lines starting with # are comments:
+#     # name   ip         os       role    connect  port  user   scored_services   notes
+#     web01    10.0.0.20  linux    web     ssh      22    root   http:80;https:443 Ubuntu web box
+#     fw1      10.0.0.1   network  edge    ssh      22    admin  -                 Palo Alto PA-220
+# An older host list in CSV (host,ip,os,... with a header line) is still read.
+# cc_hosts_rows FILE -> one line per machine:
+#     name|ip|os|role|connect|port|user|scored_services|notes|vendor
+#   (vendor: only from an older CSV list's "vendor" column; "|" in a value
+#   becomes "/").
+cc_hosts_rows() {
+    _cc_hf=$1
+    [ -r "$_cc_hf" ] || { cc_err "cannot read the host list $_cc_hf"; return 1; }
+    _cc_hc=$(tr -d '\r' <"$_cc_hf" | awk '/^[ \t]*(#|$)/ { next } { print; exit }')
+    case "$_cc_hc" in
+        host,*|*,ip,*|name,*)
+            tr -d '\r' <"$_cc_hf" | awk -F',' "$CC_AWK_CSV"'
+                function g(k,   v) { v = (k in c) ? f[c[k]] : ""; gsub(/\|/, "/", v); return v }    # awk, not shell: posix-ok
+                /^[ \t]*#/ || NF < 2 { next }
+                !hdr { n = csvsplit($0, h); for (i = 1; i <= n; i++) c[tolower(h[i])] = i; if (!("host" in c) && ("name" in c)) c["host"] = c["name"]; hdr = 1; next }
+                { csvsplit($0, f); print g("host") "|" g("ip") "|" g("os") "|" g("role") "|" g("connect") "|" g("port") "|" g("user") "|" g("scored_services") "|" g("notes") "|" g("vendor") }' ;;
+        *)
+            tr -d '\r' <"$_cc_hf" | awk '
+                /^[ \t]*(#|$)/ { next }
+                NF < 2 { next }
+                tolower($1) ~ /^(name|host)$/ && tolower($2) == "ip" { next }
+                { gsub(/\|/, "/")
+                  for (i = 1; i <= 8; i++) v[i] = (i <= NF && $i != "-") ? $i : ""
+                  nt = ""; for (i = 9; i <= NF; i++) nt = nt (nt == "" ? "" : " ") $i; if (nt == "-") nt = ""
+                  print v[1] "|" v[2] "|" v[3] "|" v[4] "|" v[5] "|" v[6] "|" v[7] "|" v[8] "|" nt "|" }' ;;
+    esac
 }
 
 # -----------------------------------------------------------------------------
@@ -1381,12 +1500,13 @@ NW-10 Network device password rotation - change, prove the new login, then save 
   --user NAME          default login account (admin)
   --ask-password       ask for the current password
   --new-password-env   new password from $BT_NET_NEWPASS (default: random per device)
-  --passwords FILE     "device,password" lines: chosen new passwords
+  --passwords FILE     "device password" lines: chosen new passwords
   --enable-env         Cisco: enable password from $BT_NET_ENABLE
   --enable-too         Cisco: also set a new enable secret
   --length N           random password length (default 16)
   --wait N             seconds before testing a change (default 5)
   --commit-wait N      Palo Alto commit time (default 120)
+  --revert-after N     MikroTik: automatic put-back after N seconds (default 90)
   --configs DIR        NW-01's saved configs (Cisco privilege levels)
   --legacy-ssh         allow old SSH algorithms
   --help               show this text
@@ -1397,7 +1517,7 @@ USAGE
 
 NL='
 '
-HOSTS=""; DEVICES=""; DEFUSER="admin"; ASK=0; NEWENV=0; ENABLE=0; ENTOO=0; LEN=16; WAIT=5; CWAIT=120; CONFIGS=""; LEGACY=0; PWFILE=""
+HOSTS=""; DEVICES=""; DEFUSER="admin"; ASK=0; NEWENV=0; ENABLE=0; ENTOO=0; LEN=16; WAIT=5; CWAIT=120; CONFIGS=""; LEGACY=0; PWFILE=""; MTREV=90
 num() { case "$2" in ''|*[!0-9]*) cc_die 2 "$1 needs a whole number" ;; esac; }
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
@@ -1413,6 +1533,7 @@ while [ $# -gt 0 ]; do
         --length)           num "$1" "${2:-}"; LEN=$2; shift 2 ;;
         --wait)             num "$1" "${2:-}"; WAIT=$2; shift 2 ;;
         --commit-wait)      num "$1" "${2:-}"; CWAIT=$2; shift 2 ;;
+        --revert-after)     num "$1" "${2:-}"; [ "$2" -ge 5 ] || cc_die 2 "--revert-after: at least 5 seconds"; MTREV=$2; shift 2 ;;
         --configs)          [ $# -ge 2 ] || cc_die 2 "--configs needs a folder"; CONFIGS=$2; shift 2 ;;
         --legacy-ssh)       LEGACY=1; shift ;;
         --help|-h)          usage; exit 0 ;;
@@ -1422,6 +1543,8 @@ done
 [ -n "$HOSTS$DEVICES" ] || cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
 [ "$LEN" -ge 12 ] || cc_die 2 "--length must be at least 12"
 
+# shellcheck disable=SC2034  # read by the library: tables as .txt, no CSV
+CC_TABLES=1
 cc_init "NW-10" "Device password rotation" changes
 cc_use_run_dir
 W="$CC_RUN_DIR/.work"
@@ -1429,7 +1552,7 @@ W="$CC_RUN_DIR/.work"
 [ -n "$CONFIGS" ] || CONFIGS="$CC_OUT/net-configs"
 (umask 077; mkdir -p "$CONFIGS") || cc_die 3 "cannot create $CONFIGS"
 ENTEST=""
-DCSV=$(cc_csv_new devices "device,address,vendor,account,status")
+DT=$(cc_table_new devices device address vendor account status)
 SSH=${BT_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
 SSHPASS_BIN=${BT_SSHPASS:-$(cc_which sshpass)} || cc_die 3 "sshpass not found (apt install sshpass): password changes need password logins"
 cc_have mkfifo || cc_die 3 "mkfifo not found"
@@ -1449,10 +1572,13 @@ if [ "$NEWENV" = 1 ]; then
     case "$BT_NET_NEWPASS" in *[!A-Za-z0-9_.,@%+=-]*) cc_die 2 "BT_NET_NEWPASS may only use letters, digits and _ . , @ % + = -" ;; esac
     [ "${#BT_NET_NEWPASS}" -ge 12 ] || cc_die 2 "BT_NET_NEWPASS must be at least 12 characters"
 fi
-# Chosen passwords per device: "device,password" lines -> $W/given.
+# Chosen passwords per device: "device password" lines -> $W/given.
+# (An older file with "device,password" lines is still read.)
 : >"$W/given"
 if [ -n "$PWFILE" ]; then
-    awk -F',' '/^[ \t]*#/ || NF < 2 { next } { d = $1; p = substr($0, length($1) + 2); gsub(/\r/, "", p); gsub(/^[ \t]+|[ \t]+$/, "", d); gsub(/^[ \t]+|[ \t]+$/, "", p); print d "\t" p }' "$PWFILE" >"$W/given"
+    tr -d '\r' <"$PWFILE" | awk '/^[ \t]*(#|$)/ { next }
+        NF >= 2 { if (NF > 2) print $1 "\t" $2 " " $3; else print $1 "\t" $2; next }
+        index($0, ",") { d = substr($0, 1, index($0, ",") - 1); p = substr($0, index($0, ",") + 1); gsub(/^[ \t]+|[ \t]+$/, "", d); gsub(/^[ \t]+|[ \t]+$/, "", p); print d "\t" p }' >"$W/given"
     if awk -F'\t' '$2 ~ /[^A-Za-z0-9_.,@%+=-]/ || length($2) < 8 { bad = 1 } END { exit !bad }' "$W/given"; then
         rm -rf "$W"
         cc_die 2 "--passwords: every password must be 8+ characters from letters, digits and _ . , @ % + = -"
@@ -1478,10 +1604,7 @@ vendor_of() {
 }
 : >"$W/devices"
 if [ -n "$HOSTS" ]; then
-    awk -F',' "$CC_AWK_CSV"'
-        /^[ \t]*#/ || NF < 2 { next }
-        !hdr { n = csvsplit($0, h); for (i = 1; i <= n; i++) c[tolower(h[i])] = i; hdr = 1; next }
-        { csvsplit($0, f); print f[c["host"]] "|" f[c["ip"]] "|" tolower(f[c["os"]]) "|" (("vendor" in c) ? f[c["vendor"]] : "") "|" f[c["notes"]] "|" (("user" in c) ? f[c["user"]] : "") "|" (("port" in c) ? f[c["port"]] : "") }' "$HOSTS" >"$W/rows"
+    cc_hosts_rows "$HOSTS" | awk -F'|' '{ print $1 "|" $2 "|" tolower($3) "|" $10 "|" $9 "|" $7 "|" $6 }' >"$W/rows"
     while IFS='|' read -r _n _a _os _v _notes _u _p; do
         _vend=""; [ -n "$_v" ] && _vend=$(vendor_of "$_v")
         [ -z "$_vend" ] && [ "$_os" != linux ] && case " $VENDORS " in *" $_os "*) _vend=$_os ;; esac
@@ -1562,7 +1685,12 @@ try_login() {
     _tl_u=$2; _tl_a=$3; _tl_p=$4; _tl_pw=$5
     sshopts >"$W/opts"
     set --; while IFS= read -r _o; do set -- "$@" "$_o"; done <"$W/opts"
-    SSHPASS=$_tl_pw "$SSHPASS_BIN" -e "$SSH" "$@" -p "$_tl_p" "$_tl_u@$_tl_a" <"$W/verify.in" >"$W/verify.out" 2>"$W/verify.err"
+    if [ "$1" = mikrotik ]; then
+        # RouterOS: a command on the ssh line (it may not read commands from stdin)
+        SSHPASS=$_tl_pw "$SSHPASS_BIN" -e "$SSH" "$@" -p "$_tl_p" "$_tl_u@$_tl_a" "/system identity print" </dev/null >"$W/verify.out" 2>"$W/verify.err"
+    else
+        SSHPASS=$_tl_pw "$SSHPASS_BIN" -e "$SSH" "$@" -p "$_tl_p" "$_tl_u@$_tl_a" <"$W/verify.in" >"$W/verify.out" 2>"$W/verify.err"
+    fi
     _tl_rc=$?
     [ "$_tl_rc" -eq 0 ] || return 1
     # A level-15 check only when the enable secret was changed.
@@ -1571,11 +1699,16 @@ try_login() {
 }
 
 # ---- Each device ------------------------------------------------------------------
-PWOUT="$CC_RUN_DIR/passwords.csv"
+PWOUT="$CC_RUN_DIR/passwords.txt"
 # The new password is written here BEFORE it is sent, and removed once the
 # device's outcome is known.  If the script is stopped in between (Ctrl-C
 # during a two-minute Palo Alto commit), the password is not lost.
-PEND="$CC_RUN_DIR/pending-password.csv"
+PEND="$CC_RUN_DIR/pending-password.txt"
+# pwrow FILE DEVICE ADDRESS ACCOUNT PASSWORD -> one row in a passwords table (mode 600)
+pwrow() {
+    (umask 077; [ -f "$1" ] || cc_table_line device address account password time >"$1"
+     cc_table_row "$1" "$2" "$3" "$4" "$5" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+}
 pend_done() { rm -f "$PEND"; }
 trap '' PIPE    # a session that dies must not kill this script mid-write
 on_stop() {
@@ -1591,11 +1724,85 @@ trap on_stop INT TERM HUP
 # nap SECONDS -> wait, but stay interruptible: a shell runs a trap only after
 # the command in the foreground ends, and "wait" is the one that ends at once.
 nap() { sleep "$1" & _nap=$!; wait "$_nap"; }
+# ---- MikroTik: a revert the device runs by itself ------------------------------
+# RouterOS may not read commands from a session's input, so the open-session
+# revert used for the other brands cannot be relied on.  Instead the change is
+# one command on the ssh line that FIRST schedules, on the device itself, a job
+# that sets the old password back after --revert-after seconds, THEN sets the
+# new one.  The new login is tested; it works -> the job is removed (with the
+# new password) and its removal checked; it does not -> the device puts the
+# old password back by itself, and the old login is tested after the wait.
+# The old password sits in that scheduled job until it is removed.
+MTJOB=bt-nw10-revert
+# mt_exec USER ADDRESS PORT PASSWORD COMMAND -> output of one RouterOS command line
+#   The command holds passwords, so it is never on a command line (ps would
+#   show it): it goes in a mode-600 ssh config file as RemoteCommand ("%"
+#   doubled: ssh expands %-tokens there).
+mt_exec() {
+    _me_u=$1; _me_a=$2; _me_p=$3; _me_pw=$4; _me_c=$5
+    (umask 077; printf 'Host *\n    RemoteCommand %s\n' "$(printf '%s' "$_me_c" | sed 's/%/%%/g')" >"$W/mt.ssh")
+    sshopts >"$W/opts"; set --; while IFS= read -r _o; do set -- "$@" "$_o"; done <"$W/opts"
+    SSHPASS=$_me_pw "$SSHPASS_BIN" -e "$SSH" -F "$W/mt.ssh" "$@" -p "$_me_p" "$_me_u@$_me_a" </dev/null 2>"$W/mt.err"
+    _me_rc=$?; rm -f "$W/mt.ssh"; return "$_me_rc"
+}
+# mt_refused FILE -> true when RouterOS printed an error
+mt_refused() { grep -qiE 'failure:|syntax error|bad command name|expected end of command|no such item|input does not match|invalid value' "$1"; }
+# mt_change -> the MikroTik flow for the device in $_n $_a $_u $_p (new password $_new)
+mt_change() {
+    _q='"'
+    _job="/user set [find name=\\$_q$_u\\$_q] password=\\$_q$OLDPW\\$_q; /system scheduler remove [find name=\\$_q$MTJOB\\$_q]"
+    _cmd="/system scheduler remove [find name=$_q$MTJOB$_q]; /system scheduler add name=$_q$MTJOB$_q interval=${MTREV}s on-event=$_q$_job$_q; /user set [find name=$_q$_u$_q] password=$_q$_new$_q"
+    mt_exec "$_u" "$_a" "$_p" "$OLDPW" "$_cmd" >"$W/mt.out"; _rc=$?
+    if [ "$_rc" -ne 0 ] || mt_refused "$W/mt.out"; then
+        _why=$(cat "$W/mt.err" "$W/mt.out" | grep -v '^$' | tail -n 1 | cut -c1-80)
+        if try_login "$_v" "$_u" "$_a" "$_p" "$_new"; then
+            pwrow "$PWOUT" "$_n" "$_a" "$_u" "$_new"; CC_N_DONE=$((CC_N_DONE + 1))
+            row "$_n" "$_a" "$_v" "$_u" "changed, but check /system scheduler for $MTJOB (remove it, or the old password comes back)"
+        else
+            CC_N_FAIL=$((CC_N_FAIL + 1))
+            row "$_n" "$_a" "$_v" "$_u" "failed: the change was not taken (${_why:-no answer}); the current password still works or the device puts it back within ${MTREV}s"
+        fi
+        pend_done; return
+    fi
+    nap "$WAIT"
+    if try_login "$_v" "$_u" "$_a" "$_p" "$_new"; then
+        # remove the scheduled put-back, and check it is gone (twice at most)
+        _gone=0
+        for _try in 1 2; do
+            mt_exec "$_u" "$_a" "$_p" "$_new" "/system scheduler remove [find name=$_q$MTJOB$_q]" >/dev/null
+            [ "$(mt_exec "$_u" "$_a" "$_p" "$_new" ":put [:len [/system scheduler find name=$_q$MTJOB$_q]]" | tr -d '\r ' | tail -n 1)" = 0 ] && { _gone=1; break; }
+        done
+        pwrow "$PWOUT" "$_n" "$_a" "$_u" "$_new"; pend_done
+        if [ "$_gone" = 1 ]; then
+            cc_log DO "$_n: password of $_u changed, new login tested, the scheduled put-back removed"
+            CC_N_DONE=$((CC_N_DONE + 1))
+            row "$_n" "$_a" "$_v" "$_u" "changed (new login tested; scheduled put-back removed)$_src"
+        else
+            cc_err "$_n: the new password works, but the scheduled put-back $MTJOB could not be removed: REMOVE IT NOW (/system scheduler remove [find name=$MTJOB]) or the old password comes back"
+            CC_N_FAIL=$((CC_N_FAIL + 1))
+            row "$_n" "$_a" "$_v" "$_u" "new password works, but REMOVE /system scheduler $MTJOB now, or the old password comes back within ${MTREV}s"
+        fi
+        return
+    fi
+    cc_err "$_n: the new password did NOT work - the device puts the old one back by itself within ${MTREV}s; waiting"
+    nap $((MTREV + 10))
+    if try_login "$_v" "$_u" "$_a" "$_p" "$OLDPW"; then
+        _rv="the device put the old password back; tested"
+        mt_exec "$_u" "$_a" "$_p" "$OLDPW" "/system scheduler remove [find name=$_q$MTJOB$_q]" >/dev/null
+    else
+        _rv="REVERT NOT CONFIRMED - check this device NOW from the console (the password that was tried is in passwords.txt, marked UNCONFIRMED)"
+        pwrow "$PWOUT" "$_n" "$_a" "$_u (UNCONFIRMED: old or this)" "$_new"
+    fi
+    pend_done
+    CC_N_FAIL=$((CC_N_FAIL + 1))
+    row "$_n" "$_a" "$_v" "$_u" "failed: new password did not work; $_rv"
+}
+
 # Names in the password file that are not devices in this run.
 awk -F'\t' -v df="$W/devices" 'BEGIN { while ((getline l < df) > 0) { split(l, d, "|"); k[d[1]] = 1; k[d[2]] = 1 } } !($1 in k) { print $1 }' "$W/given" >"$W/given_missing"
 [ -s "$W/given_missing" ] && cc_warn "in --passwords but not a device in this run: $(tr '\n' ' ' <"$W/given_missing")"
 : >"$W/rows_out"
-row() { cc_csv_row "$DCSV" "$1" "$2" "$3" "$4" "$5"; printf '%s|%s|%s|%s\n' "$1" "$3" "$4" "$5" >>"$W/rows_out"; }
+row() { cc_table_row "$DT" "$1" "$2" "$3" "$4" "$5"; printf '%s|%s|%s|%s\n' "$1" "$3" "$4" "$5" >>"$W/rows_out"; }
 while IFS='|' read -r _n _a _v _u _p; do
     case "$_v" in pfsense|opnsense)
         row "$_n" "$_a" "$_v" "$_u" "skipped: change it in the web GUI (System > User Manager)"; continue ;;
@@ -1619,9 +1826,18 @@ while IFS='|' read -r _n _a _v _u _p; do
         row "$_n" "$_a" "$_v" "$_u" "would change$_src"; continue
     fi
     cc_info "$_n ($_v): changing the password of $_u"
+    if [ "$_v" = mikrotik ]; then
+        # The old password and the account name go into a RouterOS command:
+        # only characters it takes literally ("$" and "\" have meaning there).
+        case "$OLDPW$_u" in *[!A-Za-z0-9_.,@%+=-]*)
+            row "$_n" "$_a" "$_v" "$_u" "skipped: the current password or account name has characters RouterOS would read as code; change it in WinBox"; continue ;;
+        esac
+        rm -f "$PEND"; pwrow "$PEND" "$_n" "$_a" "$_u" "$_new"
+        mt_change; _new=""; continue
+    fi
     # 1. The first session: commands go in through a FIFO so it stays open
     #    while the new password is tested from a second session.
-    (umask 077; printf 'device,address,account,password,time\n%s,%s,%s,%s,%s\n' "$_n" "$_a" "$_u" "$_new" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PEND")
+    rm -f "$PEND"; pwrow "$PEND" "$_n" "$_a" "$_u" "$_new"
     rm -f "$W/fifo"; mkfifo "$W/fifo"
     sshopts >"$W/opts"
     set --; while IFS= read -r _o; do set -- "$@" "$_o"; done <"$W/opts"
@@ -1638,7 +1854,7 @@ while IFS='|' read -r _n _a _v _u _p; do
         _why=$(grep -v '^$' "$W/sess.err" | tail -n 1 | cut -c1-80)
         # It may still have applied the change before closing: check.
         if try_login "$_v" "$_u" "$_a" "$_p" "$_new"; then
-            (umask 077; [ -f "$PWOUT" ] || printf 'device,address,account,password,time\n' >"$PWOUT"; printf '%s,%s,%s,%s,%s\n' "$_n" "$_a" "$_u" "$_new" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$PWOUT")
+            pwrow "$PWOUT" "$_n" "$_a" "$_u" "$_new"
             CC_N_DONE=$((CC_N_DONE + 1))
             row "$_n" "$_a" "$_v" "$_u" "changed (session closed early; new password works; config may not be SAVED - save it by hand)"
         else
@@ -1660,9 +1876,8 @@ while IFS='|' read -r _n _a _v _u _p; do
     if [ "$_ok" = 1 ]; then
         { save "$_v"; endsession "$_v"; } >&3 2>/dev/null
         exec 3>&-; wait "$_spid" 2>/dev/null
-        (umask 077; [ -f "$PWOUT" ] || printf 'device,address,account,password,time\n' >"$PWOUT"
-         printf '%s,%s,%s,%s,%s\n' "$_n" "$_a" "$_u" "$_new" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$PWOUT"
-         [ -n "$_newen" ] && printf '%s,%s,(enable secret),%s,%s\n' "$_n" "$_a" "$_newen" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$PWOUT")
+        pwrow "$PWOUT" "$_n" "$_a" "$_u" "$_new"
+        [ -n "$_newen" ] && pwrow "$PWOUT" "$_n" "$_a" "(enable secret)" "$_newen"
         cc_log DO "$_n: password of $_u changed, new login tested, config saved"
         CC_N_DONE=$((CC_N_DONE + 1))
         row "$_n" "$_a" "$_v" "$_u" "changed (new login tested$([ -n "$_newen" ] && echo ', enable secret too'))$_src"
@@ -1675,9 +1890,8 @@ while IFS='|' read -r _n _a _v _u _p; do
         if try_login "$_v" "$_u" "$_a" "$_p" "$OLDPW"; then
             _rv="old password restored and tested"
         else
-            _rv="REVERT NOT CONFIRMED - check this device NOW from the console (the password that was tried is in passwords.csv, marked UNCONFIRMED)"
-            (umask 077; [ -f "$PWOUT" ] || printf 'device,address,account,password,time\n' >"$PWOUT"
-             printf '%s,%s,%s (UNCONFIRMED: old or this),%s,%s\n' "$_n" "$_a" "$_u" "$_new" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$PWOUT")
+            _rv="REVERT NOT CONFIRMED - check this device NOW from the console (the password that was tried is in passwords.txt, marked UNCONFIRMED)"
+            pwrow "$PWOUT" "$_n" "$_a" "$_u (UNCONFIRMED: old or this)" "$_new"
         fi
         pend_done
         CC_N_FAIL=$((CC_N_FAIL + 1))
@@ -1687,6 +1901,7 @@ while IFS='|' read -r _n _a _v _u _p; do
     _new=""; _newen=""
 done <"$W/devices"
 
+cc_table_align "$DT"; [ -f "$PWOUT" ] && (umask 077; cc_table_align "$PWOUT")
 {
     printf 'NW-10 Device password rotation | %s | %s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$([ "$CC_APPLY" = 1 ] && echo APPLIED || echo 'DRY RUN - nothing changed')"
     awk -F'|' '{ printf "  %-14s %-10s %-10s %s\n", $1, $2, $3, $4 }' "$W/rows_out"

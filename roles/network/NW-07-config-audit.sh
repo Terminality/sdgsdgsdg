@@ -34,8 +34,8 @@
 #
 # OUTPUTS  (under --out, in NW-07_<host>_<UTC time>/)
 #   summary.txt      per device: vendor and counts; then the findings, worst first
-#   findings.csv     device,vendor,severity,finding,detail
-#   flags.csv        the same as flags (section = device)
+#   findings.txt     device, vendor, severity, finding, detail
+#   flags.txt        the same as flags (section = device), HIGH first
 #
 # WHAT IT CHANGES
 #   Nothing.  Secrets in config lines are masked in every output.
@@ -105,11 +105,13 @@ while [ $# -gt 0 ]; do
 done
 case "$MAXFLAGS" in ''|*[!0-9]*) cc_die 2 "--max-flags needs a whole number" ;; esac
 
+# shellcheck disable=SC2034  # read by the library: tables as .txt, no CSV
+CC_TABLES=1
 cc_init "NW-07" "Network config audit" readonly
 cc_use_run_dir
 W="$CC_RUN_DIR/.work"
 mkdir -p "$W" || cc_die 3 "cannot create $W"
-FCSV=$(cc_csv_new findings "device,vendor,severity,finding,detail")
+FT=$(cc_table_new findings device vendor severity finding detail)
 
 # detect FILE -> vendor recognised from the text (empty if unknown).
 detect() {
@@ -356,20 +358,22 @@ while IFS='|' read -r _n _v _f; do
     awk -v weak="$WEAKSNMP" "$MASK$(rules_for "$_v")" "$W/cfg" >"$W/found"
     cc_debug "$_n ($_v): $(grep -c . "$W/found") findings from $_f"
     while IFS='|' read -r _sev _what _det; do
-        cc_csv_row "$FCSV" "$_n" "$_v" "$_sev" "$_what" "$_det"
+        cc_table_row "$FT" "$_n" "$_v" "$_sev" "$_what" "$_det"
         case "$_sev" in HIGH|MED|LOW) cc_flag "$_sev" "$_n" "$_what" "$_det" ;; esac
     done <"$W/found"
     printf '%s|%s|%s|%s|%s|%s\n' "$_n" "$_v" "$(grep -c '^HIGH' "$W/found")" "$(grep -c '^MED' "$W/found")" "$(grep -c '^LOW' "$W/found")" \
         "$(awk -F'|' '$1 == "INFO" { print $2 ": " $3 }' "$W/found" | head -n 1 | cut -c1-70)" >>"$W/summary_rows"
 done <"$W/todo"
 
+cc_table_align "$FT"
+cc_table_sort_flags "$CC_RUN_DIR/flags.txt"
 {
     printf 'NW-07 Network config audit | %s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf '%-16s %-10s %4s %4s %4s  %s\n' device vendor high med low accounts
     awk -F'|' '{ printf "%-16s %-10s %4d %4d %4d  %s\n", $1, $2, $3, $4, $5, $6 }' "$W/summary_rows"
     printf '\n'
     cc_flag_report "$MAXFLAGS"
-    printf '\nEvery finding: %s/findings.csv\nAll results: %s\n' "$CC_RUN_DIR" "$CC_RUN_DIR"
+    printf '\nEvery finding: %s/findings.txt\nAll results: %s\n' "$CC_RUN_DIR" "$CC_RUN_DIR"
 } >"$CC_RUN_DIR/summary.txt"
 cat "$CC_RUN_DIR/summary.txt"
 rm -rf "$W"

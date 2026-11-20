@@ -7,6 +7,8 @@
 #      scanned with the python engine and, when installed, real nmap
 # Needs python3 for the listeners.  Nothing outside 127.0.0.1 is scanned.
 . "$(dirname "$0")/helper.sh"
+# q RUN NAME -> NAME.txt of a run as "a","b",... lines (see t_quoted)
+q() { t_quoted "$1/$2.txt" >"$T_TMP/q.$2"; printf '%s' "$T_TMP/q.$2"; }
 SH=${TEST_SHELL:-sh}
 C="$T_ROOT/roles/network/SH-03-network-scan.sh"
 export BT_SKIP_VERIFY=1
@@ -104,14 +106,16 @@ t_has "$r" "==========[ 1/3  quick scan" "stage headings"
 t_has "$r" "Nmap scan report for web01" "nmap's own output is shown"
 t_hasnt "$r" "SF:%r" "service fingerprints are cut from the screen"
 t_has "$(cat "$R/output.txt")" "Nmap scan report for web01" "and saved in output.txt"
-for f in summary.txt hosts.txt ports.txt vulns.txt flags.txt csv/hosts.csv csv/ports.csv csv/vulns.csv csv/flags.csv raw/1-quick.gnmap raw/2-full.gnmap raw/3-details.xml; do t_file "$R/$f" "$f written"; done
-t_ok "versions from the details stage win" grep -q '"10.9.9.5","web01","tcp","21","open","ftp","vsftpd 2.3.4"' "$R/csv/ports.csv"
-t_ok "port only the full scan found is listed" grep -q '"tcp","4444"' "$R/csv/ports.csv"
-t_ok "VULNERABLE script result in vulns.csv" grep -q '"test-vuln","VULNERABLE","Test remote weakness","CVE-2099-0001"' "$R/csv/vulns.csv"
-t_fail "NOT VULNERABLE is not listed" grep -q 'test-notvuln' "$R/csv/vulns.csv"
-t_ok "vulners: count and worst score" grep -q '"vulners","known CVEs","2 known vulnerabilities for this version, worst score 9.8"' "$R/csv/vulns.csv"
-t_ok "anonymous FTP found" grep -q '"ftp-anon","finding","anonymous FTP login allowed"' "$R/csv/vulns.csv"
-F="$R/csv/flags.csv"
+for f in summary.txt hosts.txt ports.txt vulns.txt flags.txt raw/1-quick.gnmap raw/2-full.gnmap raw/3-details.xml; do t_file "$R/$f" "$f written"; done
+t_fail "no CSV files (no csv folder)" test -e "$R/csv"
+t_eq "$(head -n 1 "$R/ports.txt" | tr -s ' ')" "ip | hostname | proto | port | state | service | version" "ports.txt is a table with named columns"
+t_ok "versions from the details stage win" grep -q '"10.9.9.5","web01","tcp","21","open","ftp","vsftpd 2.3.4"' "$(q "$R" ports)"
+t_ok "port only the full scan found is listed" grep -q '"tcp","4444"' "$(q "$R" ports)"
+t_ok "VULNERABLE script result in vulns.txt" grep -q '"test-vuln","VULNERABLE","Test remote weakness","CVE-2099-0001"' "$(q "$R" vulns)"
+t_fail "NOT VULNERABLE is not listed" grep -q 'test-notvuln' "$(q "$R" vulns)"
+t_ok "vulners: count and worst score" grep -q '"vulners","known CVEs","2 known vulnerabilities for this version, worst score 9.8"' "$(q "$R" vulns)"
+t_ok "anonymous FTP found" grep -q '"ftp-anon","finding","anonymous FTP login allowed"' "$(q "$R" vulns)"
+F="$(q "$R" flags)"
 t_ok "VULNERABLE flagged HIGH" grep -q '"HIGH","vulns","10.9.9.5 tcp/4444","test-vuln says VULNERABLE: Test remote weakness (CVE-2099-0001)"' "$F"
 t_ok "CVE score 9.8 flagged HIGH" grep -q '"HIGH","vulns","10.9.9.5 tcp/22","2 known' "$F"
 t_ok "anonymous FTP flagged HIGH" grep -q '"HIGH","vulns","10.9.9.5 tcp/21","anonymous FTP' "$F"
@@ -147,9 +151,9 @@ t_has "$(cat "$STUBLOG")" "-p 21,22 10.9.9.5" "--ports replaces the quick and fu
 t_eq "$(grep -c -- '-p-' "$STUBLOG")" 0 "no full scan with --ports"
 if [ "$(id -u)" = 0 ]; then
     t_has "$(tail -n 1 "$STUBLOG")" "-sU" "UDP scan as root"
-    t_ok "UDP port listed" grep -q '"udp","161"' "$T_TMP/s/netscan-2/csv/ports.csv"
-    t_ok "SNMP flagged" grep -q '"MED","ports","10.9.9.5 udp/161"' "$T_TMP/s/netscan-2/csv/flags.csv"
-    t_fail "a UDP port that is only open|filtered is not listed as open" grep -q '"udp","69"' "$T_TMP/s/netscan-2/csv/ports.csv"
+    t_ok "UDP port listed" grep -q '"udp","161"' "$(q "$T_TMP/s/netscan-2" ports)"
+    t_ok "SNMP flagged" grep -q '"MED","ports","10.9.9.5 udp/161"' "$(q "$T_TMP/s/netscan-2" flags)"
+    t_fail "a UDP port that is only open|filtered is not listed as open" grep -q '"udp","69"' "$(q "$T_TMP/s/netscan-2" ports)"
 else
     t_eq "$(grep -c -- '-sU' "$STUBLOG")" 0 "no UDP scan without root"
 fi
@@ -166,7 +170,7 @@ t_has "$r" "netscan-2" "picks the older run"
 t_has "$r" "netscan-3" "and the newest run"
 r=$($SH "$T_ROOT/roles/network/SH-04-scan-diff.sh" --old "$T_TMP/s/netscan-3" --new "$T_TMP/s/netscan-1" --out "$T_TMP/d" 2>&1)
 t_eq "$?" 0 "SH-04 with --old and --new exits 0"
-t_ok "new vuln between runs flagged HIGH" grep -q '"HIGH","vulns"' "$(ls -d "$T_TMP"/d/diff-*/ | tail -n 1)csv/flags.csv"
+t_ok "new vuln between runs flagged HIGH" grep -q '"HIGH","vulns"' "$(q "$(ls -d "$T_TMP"/d/diff-* | tail -n 1)" flags)"
 
 if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&1; then
     t_start "questions in a terminal (fake nmap)"
@@ -232,23 +236,23 @@ until python3 -c 'import socket,sys
 for p in (18181, 31337): socket.create_connection(("127.0.0.1", p), 1).close()' 2>/dev/null || [ "$_i" -ge 20 ]; do
     sleep 0.5 2>/dev/null || sleep 1; _i=$((_i + 1))
 done
-# (a "vendor" column in the middle: the columns are found by name)
-printf 'host,ip,vendor,os,role,connect,port,user,scored_services,notes\nself,127.0.0.1,,linux,test,ssh,22,u,http:18181;smtp:2526,\nghost,127.0.0.9,,linux,gone,ssh,22,u,,\n' >"$T_TMP/hosts.csv"
+# the host list (config/hosts.example.txt form)
+printf '# name ip os role connect port user scored notes\nself  127.0.0.1 linux test ssh 22 u http:18181;smtp:2526 -\nghost 127.0.0.9 linux gone ssh 22 u - -\n' >"$T_TMP/hosts.txt"
 
 for engine in python nmap; do
     if [ "$engine" = nmap ] && ! command -v nmap >/dev/null 2>&1; then t_start "(skipped: nmap not installed)"; continue; fi
     t_start "$engine engine on 127.0.0.1"
-    r=$(run --out "$T_TMP/o_$engine" --target 127.0.0.1 --target 127.0.0.9 --ports 2526,31337,18181 --hosts "$T_TMP/hosts.csv" --engine "$engine" --no-dns --no-scripts --no-os 2>/dev/null)
+    r=$(run --out "$T_TMP/o_$engine" --target 127.0.0.1 --target 127.0.0.9 --ports 2526,31337,18181 --hosts "$T_TMP/hosts.txt" --engine "$engine" --no-dns --no-scripts --no-os 2>/dev/null)
     t_eq "$?" 0 "exits 0"
     R="$T_TMP/o_$engine/netscan-1"
-    for f in summary.txt output.txt hosts.txt ports.txt flags.txt scored.txt csv/hosts.csv csv/ports.csv csv/flags.csv csv/scored.csv; do t_file "$R/$f" "$f written"; done
-    t_ok "port 18181 found" grep -q '"127.0.0.1","","tcp","18181"' "$R/csv/ports.csv"
-    t_ok "port 31337 found" grep -q '"127.0.0.1","","tcp","31337"' "$R/csv/ports.csv"
-    t_fail "closed port 2526 not listed" grep -q '"2526"' "$R/csv/ports.csv"
-    t_ok "31337 flagged as a backdoor-style port" grep -q '"MED","ports","127.0.0.1 tcp/31337"' "$R/csv/flags.csv"
-    t_ok "missing scored service flagged HIGH" grep -q '"HIGH","scored","self 127.0.0.1 smtp:2526"' "$R/csv/flags.csv"
-    t_ok "reachable scored service recorded" grep -q '"self","127.0.0.1","http","18181","yes"' "$R/csv/scored.csv"
-    t_ok "host on the list that did not answer is flagged" grep -q '"127.0.0.9 ghost"' "$R/csv/flags.csv"
+    for f in summary.txt output.txt hosts.txt ports.txt flags.txt scored.txt; do t_file "$R/$f" "$f written"; done
+    t_ok "port 18181 found" grep -q '"127.0.0.1","","tcp","18181"' "$(q "$R" ports)"
+    t_ok "port 31337 found" grep -q '"127.0.0.1","","tcp","31337"' "$(q "$R" ports)"
+    t_fail "closed port 2526 not listed" grep -q '"2526"' "$(q "$R" ports)"
+    t_ok "31337 flagged as a backdoor-style port" grep -q '"MED","ports","127.0.0.1 tcp/31337"' "$(q "$R" flags)"
+    t_ok "missing scored service flagged HIGH" grep -q '"HIGH","scored","self 127.0.0.1 smtp:2526"' "$(q "$R" flags)"
+    t_ok "reachable scored service recorded" grep -q '"self","127.0.0.1","http","18181","yes"' "$(q "$R" scored)"
+    t_ok "host on the list that did not answer is flagged" grep -q '"127.0.0.9 ghost"' "$(q "$R" flags)"
     t_has "$r" "Scored services: 1 reachable, 1 NOT reachable" "summary counts scored services"
     t_has "$r" "31337" "open ports shown"
 done

@@ -2,6 +2,15 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-19: Network scripts without CSV; host list as text; NW-10 on MikroTik (library 0.3.0)
+
+- **Library 0.3.0** (`lib/lib.sh`; `lib/lib.ps1` version only): text tables instead of CSV (`cc_table_new`, `cc_table_row`, `cc_table_align`, `cc_table_sort_flags`, `CC_AWK_TABLE`): a `.txt` file with the column names on the first line and columns separated by ` | `, readable and parseable. With `CC_TABLES=1` a script's flags go to `flags.txt` the same way. `cc_hosts_rows` reads the host list.
+- **Host list**: `config/hosts.txt` (copy `config/hosts.example.txt`): one machine per line, columns separated by spaces, `-` for an empty one, the notes are the rest of the line. An older `hosts.csv` is still read. Used by SH-03, NW-01, NW-10, NW-12, NW-20, NW-21, NW-30. `config/*.txt` is kept out of git like `config/*.csv`.
+- **NW-01, NW-07, NW-10, SH-03, SH-04**: no CSV files any more. Their tables (`devices.txt`, `findings.txt`, `passwords.txt`, `hosts.txt`, `ports.txt`, `vulns.txt`, `scored.txt`, `changes.txt`, `flags.txt`) are ` | ` tables. SH-04 reads SH-03's new tables or an older scan's `csv/`, so old and new scans compare. NW-20 offers ports from SH-03's `ports.txt` (or an older `csv/ports.csv`), and picks the newest scan by its number.
+- **NW-10 `--passwords`**: `device password` lines (an older `device,password` file is still read).
+- **NW-10 on MikroTik**: RouterOS may not read commands from a session's input, so the open-session revert could not be trusted. Now one command first schedules, on the device, a job that sets the old password back after `--revert-after` seconds (default 90), then sets the new one. New login works: the job is removed and its removal checked. It fails: the device puts the old password back by itself and the old login is tested. The command (it holds passwords) goes in a mode-600 ssh config file as `RemoteCommand`, never on a command line. A current password with characters RouterOS reads as code is refused.
+- Tested: lib, nw01, nw07, nw10, nw12, nw20, nw21, nw30, sh03, sh04 under seven shells and three awks, and the built copies; `RemoteCommand` with `sshpass` live against OpenSSH (a throwaway account, removed after).
+
 ## 2026-11-19: Network scripts, review fixes
 
 - **NW-01**: FortiGate shows its encrypted secrets (`ENC ...`) differently on every read, so every backup showed them as HIGH changes: hidden before comparing (the saved `.cfg` keeps them). Header lines `#config-version`, `#buildno`, `#global_vdom` dropped too. MikroTik's wrapped export lines (ending in `\`) are joined, so a re-wrap is no change. Linux routers: `iptables-save` and `nft` run with `sudo -n` when the login is not root (they showed nothing).

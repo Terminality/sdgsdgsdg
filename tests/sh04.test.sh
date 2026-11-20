@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests for roles/network/SH-04-scan-diff.sh.
-# Builds small SH-03 and SH-05 result folders by hand (the same CSV layout
+# Builds small SH-03 and SH-05 result folders by hand (the same layout
 # the real scripts write), then checks that the diff finds exactly the
 # planted changes, raises the right flags, and picks the right folders.
 . "$(dirname "$0")/helper.sh"
@@ -31,19 +31,31 @@ t_eq "$rc" 0 "exit 0"
 t_has "$out" "Earlier: $A" "picks the older finished run"
 t_has "$out" "Later:   $B" "picks the newest finished run, skips the unfinished one"
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
-f=$(cat "$d/csv/flags.csv"); c=$(cat "$d/csv/changes.csv")
+f=$(t_quoted "$d/flags.txt"); c=$(t_quoted "$d/changes.txt")
 t_has "$c" '"hosts","added","10.0.0.9"' "new host listed"
 t_has "$c" '"hosts","removed","10.0.0.6"' "vanished host listed"
-t_has "$c" '"ports","changed","10.0.0.5 | tcp | 80","http | nginx 1.24","http | nginx 1.25"' "version change listed"
-t_has "$f" '"HIGH","ports","10.0.0.5 | tcp | 4444"' "backdoor port is HIGH"
-t_hasnt "$f" '"MED","ports","10.0.0.5 | tcp | 4444"' "backdoor port is not also MED"
-t_has "$f" '"HIGH","scored","db | 10.0.0.6 | mysql | 3306"' "scored service going down is HIGH"
+t_has "$c" '"ports","changed","10.0.0.5 / tcp / 80","http / nginx 1.24","http / nginx 1.25"' "version change listed"
+t_has "$f" '"HIGH","ports","10.0.0.5 / tcp / 4444"' "backdoor port is HIGH"
+t_hasnt "$f" '"MED","ports","10.0.0.5 / tcp / 4444"' "backdoor port is not also MED"
+t_has "$f" '"HIGH","scored","db / 10.0.0.6 / mysql / 3306"' "scored service going down is HIGH"
 t_hasnt "$c" '"22"' "unchanged port not listed"
 t_file "$d/summary.txt" "summary written"
 t_has "$d" "/diff-" "diff results go in a numbered diff-N folder"
-t_has "$(sed -n 1p "$d/changes.txt")" "SECTION" "changes.txt is a readable table"
-t_has "$(sed -n 3p "$d/changes.txt")" "added" "additions are listed first"
-t_has "$(sed -n 3p "$d/flags.txt")" "HIGH" "flags.txt lists HIGH first"
+t_eq "$(sed -n 1p "$d/changes.txt" | tr -s ' ')" "section | change | key | old | new" "changes.txt is a table with named columns"
+t_has "$(sed -n 2p "$d/changes.txt")" "added" "additions are listed first"
+t_has "$(sed -n 2p "$d/flags.txt")" "HIGH" "flags.txt lists HIGH first"
+t_fail "no CSV files written" sh -c "find '$d' -name '*.csv' | grep -q ."
+
+# ---- an older scan (CSV) against a newer one (text tables) ---------------------
+mkdir -p "$R/netscan-1/csv" "$R/netscan-2"
+printf 'ip,hostname,proto,port,state,service,version\n"10.0.0.5","web","tcp","80","open","http","nginx 1.24"\n' >"$R/netscan-1/csv/ports.csv"
+printf 'ip       | hostname | proto | port | state | service | version\n10.0.0.5 | web      | tcp   | 80   | open  | http    | nginx 1.24\n10.0.0.5 | web      | tcp   | 6666 | open  |         |\n' >"$R/netscan-2/ports.txt"
+: >"$R/netscan-1/summary.txt"; : >"$R/netscan-2/summary.txt"
+out=$(run --old "$R/netscan-1" --new "$R/netscan-2" --out "$O" 2>&1)
+d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
+t_has "$(t_quoted "$d/changes.txt")" '"ports","added","10.0.0.5 / tcp / 6666"' "an older CSV scan and a newer table scan compare"
+t_hasnt "$(t_quoted "$d/changes.txt")" '"80"' "the unchanged port is the same in both forms"
+rm -rf "$R/netscan-1" "$R/netscan-2"
 
 # ---- two collector runs of one host -------------------------------------------
 A="SH-05_web01_20261111T140000Z"; B="SH-05_web01_20261111T150000Z"
@@ -64,12 +76,12 @@ t_has "$out" "Earlier: $A" "older run of the newest run's host"
 t_has "$out" "root and the other was not" "warns about root / non-root runs"
 t_has "$out" "skipped (not in both runs)" "a section missing from both runs is skipped"
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
-f=$(cat "$d/csv/flags.csv")
+f=$(t_quoted "$d/flags.txt")
 t_has "$f" '"HIGH","users","sysupd"' "new account is HIGH"
 t_has "$f" '"MED","users","bob"' "group change is MED"
-t_has "$f" '"HIGH","autostart","/etc/cron.d/x | root | * * * * * /tmp/.x"' "new cron entry is HIGH"
-t_has "$f" '"HIGH","ports","tcp | 0.0.0.0 | 31337"' "backdoor port listening is HIGH"
-t_hasnt "$f" '"ports","tcp | 0.0.0.0 | 22"' "a PID change alone is not a change"
+t_has "$f" '"HIGH","autostart","/etc/cron.d/x / root / * * * * * /tmp/.x"' "new cron entry is HIGH"
+t_has "$f" '"HIGH","ports","tcp / 0.0.0.0 / 31337"' "backdoor port listening is HIGH"
+t_hasnt "$f" '"ports","tcp / 0.0.0.0 / 22"' "a PID change alone is not a change"
 
 t_start "numbered linux-enum-N runs"
 mk linux-enum-1 users.csv 'user,uid,gid,home,shell,can_login,password,groups' '"root","0","0","/root","/bin/bash","yes","set","root"'
@@ -80,7 +92,7 @@ out=$(run --runs "$R" --out "$O" --type sh05 2>&1); t_eq "$?" 0 "exit 0"
 t_has "$out" "Earlier: linux-enum-1" "numbered runs are picked up, older first"
 t_has "$out" "Later:   linux-enum-2" "and the newest is linux-enum-2"
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
-t_has "$(cat "$d/csv/flags.csv")" '"HIGH","users","evil"' "a new root account between numbered runs is HIGH"
+t_has "$(t_quoted "$d/flags.txt")" '"HIGH","users","evil"' "a new root account between numbered runs is HIGH"
 out=$(run --old "$R/linux-enum-1" --new "$R/linux-enum-2" --out "$O" 2>&1); t_eq "$?" 0 "--old/--new with numbered folders works"
 out=$(run --old "$R/$A" --new "$R/linux-enum-2" --out "$O" 2>&1); t_eq "$?" 0 "an old-style and a numbered run can be compared"
 mkdir -p "$R/LX-39_web01_20261111T170000Z"
@@ -91,7 +103,7 @@ mkdir -p "$R/linux-enum-3/csv"; mv "$R/linux-enum-2/users.csv" "$R/linux-enum-3/
 printf 'id=SH-05\nhost=web01\ntime=20261111T180000Z\n' >"$R/linux-enum-3/run.txt"
 out=$(run --old "$R/linux-enum-1" --new "$R/linux-enum-3" --out "$O" 2>&1); t_eq "$?" 0 "CSV files kept in csv/ are found"
 d=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')
-t_has "$(cat "$d/csv/flags.csv")" '"HIGH","users","evil"' "and compared"
+t_has "$(t_quoted "$d/flags.txt")" '"HIGH","users","evil"' "and compared"
 
 t_start "explicit folders and errors"
 out=$(run --old "$R/$A" --new "$R/$B" --out "$O" 2>&1); t_eq "$?" 0 "--old/--new works"

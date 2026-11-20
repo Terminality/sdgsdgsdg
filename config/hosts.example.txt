@@ -1,0 +1,25 @@
+# The host list: one line per machine the team defends.  Copy this file to
+# config/hosts.txt (that name is kept out of git) and fill it in from the scan
+# and the team packet.
+#
+# Columns are separated by spaces.  Put "-" in a column that is empty.  The
+# notes are everything after the scored services, spaces allowed.
+#
+# name             short name, no domain
+# ip               address the admin workstation reaches it on
+# os               linux | windows | bsd | solaris | network, or the vendor of
+#                  a network device: cisco-ios cisco-asa paloalto fortigate
+#                  vyos pfsense opnsense mikrotik  (with "network", name the
+#                  vendor in the notes: "Palo Alto", "Cisco ASA", ...)
+# role             what the box is for, one word (use - or _ for spaces)
+# connect          ssh | winrm | none  (how fan-out reaches it)
+# port             port for that connection
+# user             account it logs in as (never put a password here)
+# scored_services  semicolon-separated type:port, e.g. http:80;dns:53
+# notes            anything the team should know
+#
+# name   ip          os       role             connect  port  user           scored_services            notes
+web01    10.0.2.5    windows  employee-portal  winrm    5985  bt-automation  http:80                    IIS
+dc1      10.0.2.2    windows  domain-ctrl      winrm    5985  bt-automation  dns:53;ldap:389            -
+mail01   10.0.2.20   linux    mail+webmail     ssh      22    bt-automation  smtp:25;imap:143;http:80   -
+fw01     10.0.2.1    network  perimeter-fw     ssh      22    admin          -                          Palo Alto

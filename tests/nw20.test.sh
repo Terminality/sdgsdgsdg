@@ -376,8 +376,10 @@ t_fail "nothing was sent" grep -q 'bt_fw.nft' "$D/lnx.log"
 t_start "the ports offered from an SH-03 scan"
 if command -v script >/dev/null 2>&1; then
     devices
-    mkdir -p "$O/netscan-1/csv"
-    printf 'ip,hostname,proto,port,state,service,version\n"10.0.0.5","web","tcp","80","open","http",""\n"10.0.0.5","web","tcp","6667","open","irc",""\n' >"$O/netscan-1/csv/ports.csv"
+    # an older scan (CSV) and the newest (netscan-10, a " | " table): the newest by number is used
+    mkdir -p "$O/netscan-9/csv" "$O/netscan-10"
+    printf 'ip,hostname,proto,port,state,service,version\n"10.0.0.7","old","tcp","21","open","ftp",""\n' >"$O/netscan-9/csv/ports.csv"
+    printf 'ip       | hostname | proto | port | state | service | version\n10.0.0.5 | web      | tcp   | 80   | open  | http    |\n10.0.0.5 | web      | tcp   | 6667 | open  | irc     |\n' >"$O/netscan-10/ports.txt"
     # 80: Enter (keep), 6667: Enter (block); then: list right, outgoing, threat, rules..., outside: Enters; put on: n
     printf '\n\n\n\n\n\n\n\n\n\nn\n' >"$T_TMP/ans"
     tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --device l1,lnx,linux --team 10.0.0.0/24 --wait 1 --no-protected --apply" /dev/null <"$T_TMP/ans" 2>&1)
@@ -386,7 +388,8 @@ if command -v script >/dev/null 2>&1; then
     t_has "$tt" "Answer [k/B]" "an odd port defaults to block"
     t_has "$tt" "ALLOW any -> 10.0.0.5 tcp 80 (from the scan)" "only the kept port becomes a rule"
     t_hasnt "$tt" "6667 (from" "the blocked one is not allowed"
-    rm -rf "$O/netscan-1"
+    t_hasnt "$tt" "10.0.0.7" "the newest scan by number (10, not 9), read from its table"
+    rm -rf "$O/netscan-9" "$O/netscan-10"
 fi
 
 t_start "questions on a terminal"

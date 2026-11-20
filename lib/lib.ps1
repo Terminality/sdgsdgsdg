@@ -2,7 +2,7 @@
 # ID:       LB-02
 # NAME:     PowerShell library (lib.ps1)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.2.1
+# VERSION:  0.3.0
 #
 # PURPOSE
 #   The jobs every Windows script in this kit repeats, written once.  It is the
@@ -76,7 +76,7 @@
 #     session, because there is no file to hash.
 # =============================================================================
 
-$script:CcLibVersion = '0.2.1'
+$script:CcLibVersion = '0.3.0'
 
 # All library state lives in one hashtable so it is easy to inspect while
 # debugging: type  $Cc  at a prompt after dot-sourcing a script.

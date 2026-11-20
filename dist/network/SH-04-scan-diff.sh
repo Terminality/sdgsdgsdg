@@ -32,7 +32,7 @@
 #   --host NAME     for --type sh05 without folders: which host's runs
 #                   (default: the host of the newest SH-05 run)
 #   --runs DIR      where to look for run folders (default: the --out folder)
-#   --max-lines N   changes listed on screen (default 40; all are in the CSV)
+#   --max-lines N   changes listed on screen (default 40; all are in changes.txt)
 #   --max-flags N   HIGH/MED flags shown on screen (default 30)
 #   --help          this text plus the common options
 #
@@ -41,14 +41,15 @@
 #   summary.txt   counts per section and the changes, newest-relevant first
 #   changes.txt   every change as a readable table (added first)
 #   flags.txt     every flag, HIGH first
-#   csv/          the same as CSV: changes.csv, flags.csv
+#   (tables: columns separated by " | "; no CSV)
 #   run.txt       ID, host and time
 #
 # WHAT IT CHANGES
-#   Nothing.  It only reads CSV files written by SH-03 or SH-05.
+#   Nothing.  It only reads the tables SH-03 or SH-05 wrote (SH-03: .txt
+#   tables, or csv/ from older runs; SH-05: csv/).
 #
 # DEPENDS ON
-#   awk, sort.  The CSV files of the two runs being compared.
+#   awk, sort.  The tables of the two runs being compared.
 #
 # TESTED ON
 #   Ubuntu 24.04 under dash, bash, busybox sh, ksh93, mksh and yash, with
@@ -63,16 +64,16 @@
 #     missing from one run is reported as skipped, not as everything removed.
 #
 # DEBUGGING
-#   --debug shows which folders and files were picked.  changes.csv has every
-#   difference; compare it with the two runs' CSV files if a change looks odd.
+#   --debug shows which folders and files were picked.  changes.txt has every
+#   difference; compare it with the two runs' tables if a change looks odd.
 # =============================================================================
 
-# >>> BT-LIB  (lib/lib.sh 0.2.1 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.3.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.2.1
+# VERSION:  0.3.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -143,7 +144,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.2.1"
+CC_LIB_VERSION="0.3.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -166,6 +167,8 @@ CC_N_FLAG=0                 # flags written by cc_flag (this shell only; the
 CC_CSV_DIR=""               # when set, CSV files go here instead of CC_OUT
 CC_RUN_DIR=""               # per-run folder, set by cc_use_run_dir
 CC_FLAGS=""                 # path of this run's flags.csv, once one is written
+: "${CC_TABLES:=0}"         # 1 = flags (and the script's own tables) as .txt
+                            # tables, no CSV: see cc_table_new
 CC_TEE=""                   # copy of screen lines, when a script sets it
 : "${CC_BATCH:=0}"          # 1 = never ask: take every default (--batch)
 CC_RUN_UNDO=""              # this run's undo lines, for the revert timer
@@ -1225,6 +1228,17 @@ cc_save() {
 #   Never put a password or other secret in ITEM or DETAIL.
 cc_flag() {
     case "$1" in HIGH|MED|LOW) ;; *) cc_die 1 "cc_flag: severity must be HIGH, MED or LOW (got '$1')" ;; esac
+    # CC_TABLES=1: flags.txt, a text table (the same columns), no CSV.
+    if [ "$CC_TABLES" = 1 ]; then
+        if [ -z "$CC_FLAGS" ]; then
+            if [ -n "$CC_RUN_DIR" ]; then CC_FLAGS="$CC_RUN_DIR/flags.txt"; else CC_FLAGS="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_flags.txt"; fi
+            [ -f "$CC_FLAGS" ] || (umask 077; printf 'severity | section | item | detail | time\n' >"$CC_FLAGS")
+        fi
+        cc_table_row "$CC_FLAGS" "$1" "$2" "$3" "$4" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        CC_N_FLAG=$((CC_N_FLAG + 1))
+        cc_note "FLAG $1 [$2] $3: $4"
+        return 0
+    fi
     if [ -z "$CC_FLAGS" ]; then
         if [ -n "$CC_CSV_DIR" ]; then CC_FLAGS="$CC_CSV_DIR/flags.csv"; else CC_FLAGS="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_flags.csv"; fi
         [ -f "$CC_FLAGS" ] || (umask 077; printf 'severity,section,item,detail,time\n' >"$CC_FLAGS")
@@ -1268,16 +1282,20 @@ cc_flag_report() {
     if [ -z "$CC_FLAGS" ] && [ -n "$CC_CSV_DIR" ] && [ -f "$CC_CSV_DIR/flags.csv" ]; then
         CC_FLAGS="$CC_CSV_DIR/flags.csv"
     fi
+    if [ -z "$CC_FLAGS" ] && [ "$CC_TABLES" = 1 ] && [ -n "$CC_RUN_DIR" ] && [ -f "$CC_RUN_DIR/flags.txt" ]; then
+        CC_FLAGS="$CC_RUN_DIR/flags.txt"
+    fi
     if [ -z "$CC_FLAGS" ] || [ ! -f "$CC_FLAGS" ]; then
         printf 'Flags: none\n'
         return 0
     fi
     # CC_FLAGS_SHOW: the path to name on screen, when a script writes a
     # readable copy of flags.csv (SH-05 writes flags.txt).
-    awk -v max="$_cc_fr_max" -v file="${CC_FLAGS_SHOW:-$CC_FLAGS}" "$CC_AWK_CSV"'
+    _cc_fr_t=0; case "$CC_FLAGS" in *.txt) _cc_fr_t=1 ;; esac
+    awk -v max="$_cc_fr_max" -v file="${CC_FLAGS_SHOW:-$CC_FLAGS}" -v t="$_cc_fr_t" "$CC_AWK_CSV$CC_AWK_TABLE"'
         NR == 1 { next }
         {
-            csvsplit($0, f)
+            if (t) tsplit($0, f); else csvsplit($0, f)
             sev = f[1]; cnt[sev]++
             line = "  [" f[2] "] " f[3] ": " f[4]
             # Screen lines are cut at 200 characters; flags.csv keeps the full text.
@@ -1294,6 +1312,104 @@ cc_flag_report() {
             if (cut > 0) printf "  ... %d more high/medium not shown\n", cut
             if (cnt["LOW"] + cut > 0) printf "All flags, including low: %s\n", file
         }' "$CC_FLAGS"
+}
+
+# -----------------------------------------------------------------------------
+# Text tables (instead of CSV)
+# -----------------------------------------------------------------------------
+# A table is a .txt file people read and scripts parse: the first line names
+# the columns, then one row per line, columns separated by " | ":
+#     ip         | proto | port | service
+#     10.0.0.5   | tcp   | 80   | http
+# A "|" inside a value becomes "/", a line break a space, so every line splits
+# the same way.  cc_table_align lines the columns up once a table is done;
+# the result still splits the same way.
+#   f=$(cc_table_new ports ip proto port service)
+#   cc_table_row "$f" 10.0.0.5 tcp 80 http
+#   cc_table_align "$f"
+#   awk "$CC_AWK_TABLE"'NR > 1 { tsplit($0, a); print a[3] }' "$f"
+
+# cc_table_new NAME COLUMN... -> create <run folder>/NAME.txt (else
+#   <out>/<ID>_<host>_<time>_NAME.txt) with its header line; print the path.
+cc_table_new() {
+    _cc_tn=$1; shift
+    if [ -n "$CC_RUN_DIR" ]; then _cc_tf="$CC_RUN_DIR/$_cc_tn.txt"; else _cc_tf="$CC_OUT/${CC_ID}_${CC_HOST}_${CC_TS}_$_cc_tn.txt"; fi
+    (umask 077; cc_table_line "$@" >"$_cc_tf") || { cc_err "cannot write $_cc_tf"; return 1; }
+    printf '%s\n' "$_cc_tf"
+}
+# cc_table_line VALUE... -> one table line on stdout
+cc_table_line() {
+    _cc_tl=""; _cc_t1=1
+    for _cc_tv in "$@"; do
+        case "$_cc_tv" in *'|'*|*'
+'*) _cc_tv=$(printf '%s' "$_cc_tv" | tr '|\n\r' '/  ') ;; esac
+        if [ "$_cc_t1" = 1 ]; then _cc_tl=$_cc_tv; _cc_t1=0; else _cc_tl="$_cc_tl | $_cc_tv"; fi
+    done
+    printf '%s\n' "$_cc_tl"
+}
+# cc_table_row FILE VALUE... -> append one row
+cc_table_row() { _cc_trf=$1; shift; cc_table_line "$@" >>"$_cc_trf"; }
+# cc_table_align FILE -> pad every column to its widest value (in place)
+cc_table_align() {
+    [ -f "$1" ] || return 0
+    awk "$CC_AWK_TABLE"'
+        NR == FNR { n = tsplit($0, f); if (n > nc) nc = n; for (i = 1; i <= n; i++) if (length(f[i]) > w[i]) w[i] = length(f[i]); next }
+        { n = tsplit($0, f); l = ""
+          for (i = 1; i <= nc; i++) l = l (i > 1 ? " | " : "") sprintf("%-" w[i] "s", (i <= n ? f[i] : ""))
+          sub(/ +$/, "", l); print l }' "$1" "$1" >"$1.al" && cat "$1.al" >"$1"
+    rm -f "$1.al"
+}
+# cc_table_sort_flags FILE -> flags.txt with HIGH first, then MED, LOW (aligned)
+cc_table_sort_flags() {
+    [ -f "$1" ] || return 0
+    awk "$CC_AWK_TABLE"'NR == 1 { print; next } { tsplit($0, f); r[f[1]] = r[f[1]] $0 "\n" }
+        END { printf "%s%s%s", r["HIGH"], r["MED"], r["LOW"] }' "$1" >"$1.s" && cat "$1.s" >"$1"
+    rm -f "$1.s"
+    cc_table_align "$1"
+}
+# CC_AWK_TABLE: tsplit(line, a) -> the fields of one table line, trimmed.
+CC_AWK_TABLE='
+function tsplit(s, a,   n, i) {    # awk, not shell: posix-ok
+    n = split(s, a, "|")
+    for (i = 1; i <= n; i++) { sub(/^[ \t]+/, "", a[i]); sub(/[ \t\r]+$/, "", a[i]) }
+    return n
+}'
+
+# -----------------------------------------------------------------------------
+# Host list
+# -----------------------------------------------------------------------------
+# config/hosts.txt (see config/hosts.example.txt): one machine per line,
+# columns separated by spaces, "-" for an empty one, the notes are the rest
+# of the line; lines starting with # are comments:
+#     # name   ip         os       role    connect  port  user   scored_services   notes
+#     web01    10.0.0.20  linux    web     ssh      22    root   http:80;https:443 Ubuntu web box
+#     fw1      10.0.0.1   network  edge    ssh      22    admin  -                 Palo Alto PA-220
+# An older host list in CSV (host,ip,os,... with a header line) is still read.
+# cc_hosts_rows FILE -> one line per machine:
+#     name|ip|os|role|connect|port|user|scored_services|notes|vendor
+#   (vendor: only from an older CSV list's "vendor" column; "|" in a value
+#   becomes "/").
+cc_hosts_rows() {
+    _cc_hf=$1
+    [ -r "$_cc_hf" ] || { cc_err "cannot read the host list $_cc_hf"; return 1; }
+    _cc_hc=$(tr -d '\r' <"$_cc_hf" | awk '/^[ \t]*(#|$)/ { next } { print; exit }')
+    case "$_cc_hc" in
+        host,*|*,ip,*|name,*)
+            tr -d '\r' <"$_cc_hf" | awk -F',' "$CC_AWK_CSV"'
+                function g(k,   v) { v = (k in c) ? f[c[k]] : ""; gsub(/\|/, "/", v); return v }    # awk, not shell: posix-ok
+                /^[ \t]*#/ || NF < 2 { next }
+                !hdr { n = csvsplit($0, h); for (i = 1; i <= n; i++) c[tolower(h[i])] = i; if (!("host" in c) && ("name" in c)) c["host"] = c["name"]; hdr = 1; next }
+                { csvsplit($0, f); print g("host") "|" g("ip") "|" g("os") "|" g("role") "|" g("connect") "|" g("port") "|" g("user") "|" g("scored_services") "|" g("notes") "|" g("vendor") }' ;;
+        *)
+            tr -d '\r' <"$_cc_hf" | awk '
+                /^[ \t]*(#|$)/ { next }
+                NF < 2 { next }
+                tolower($1) ~ /^(name|host)$/ && tolower($2) == "ip" { next }
+                { gsub(/\|/, "/")
+                  for (i = 1; i <= 8; i++) v[i] = (i <= NF && $i != "-") ? $i : ""
+                  nt = ""; for (i = 9; i <= NF; i++) nt = nt (nt == "" ? "" : " ") $i; if (nt == "-") nt = ""
+                  print v[1] "|" v[2] "|" v[3] "|" v[4] "|" v[5] "|" v[6] "|" v[7] "|" v[8] "|" nt "|" }' ;;
+    esac
 }
 
 # -----------------------------------------------------------------------------
@@ -1385,6 +1501,8 @@ case "$MAXFLAGS" in ''|*[!0-9]*) cc_die 2 "--max-flags needs a whole number" ;; 
 case "$TYPE" in ''|sh03|sh05) ;; *) cc_die 2 "--type must be sh03 or sh05" ;; esac
 if [ -n "$OLD$NEW" ] && { [ -z "$OLD" ] || [ -z "$NEW" ]; }; then cc_die 2 "give both --old and --new, or neither"; fi
 
+# shellcheck disable=SC2034  # read by the library: tables as .txt, no CSV
+CC_TABLES=1
 cc_init "SH-04" "Scan diff" readonly
 [ -n "$RUNS" ] || RUNS=$CC_OUT
 
@@ -1457,15 +1575,18 @@ fi
 cc_info "old: $OLD"
 cc_info "new: $NEW"
 cc_use_numbered_dir diff
-CC_CSV_DIR="$CC_RUN_DIR/csv"
-mkdir -p "$CC_CSV_DIR" || cc_die 3 "cannot create $CC_CSV_DIR"
-# cfile DIR FILE -> where FILE is in a run folder: csv/FILE in runs that keep
-#   their CSV files in csv/, DIR/FILE in older runs.
-cfile() { if [ -f "$1/csv/$2" ]; then printf '%s\n' "$1/csv/$2"; else printf '%s\n' "$1/$2"; fi; }
+# cfile DIR NAME -> the file that holds table NAME in a run folder:
+#   NAME.txt when it is a " | " table (SH-03 now), else csv/NAME.csv, else
+#   NAME.csv (older runs).
+cfile() {
+    if [ -f "$1/$2.txt" ] && head -n 1 "$1/$2.txt" | grep -q ' | '; then printf '%s\n' "$1/$2.txt"
+    elif [ -f "$1/csv/$2.csv" ]; then printf '%s\n' "$1/csv/$2.csv"
+    else printf '%s\n' "$1/$2.csv"; fi
+}
 W="$CC_RUN_DIR/.work"; mkdir -p "$W" || cc_die 3 "cannot create $W"
-CH=$(cc_csv_new changes "section,change,key,old,new")
+CH=$(cc_table_new changes section change key old new)
 # Fields inside the work files are separated by the ASCII "unit separator"
-# (octal 037), a character that never appears in the CSV values.  "|" cannot
+# (octal 037), a character that never appears in the values.  "|" cannot
 # be used: keys like "tcp | 0.0.0.0 | 22" contain it.
 US=$(printf '\037')
 
@@ -1476,7 +1597,8 @@ US=$(printf '\037')
 #     SHOWCOLS  columns compared for "changed" and shown in old/new
 #   Rows whose key is only in the new run are "added", only in the old run
 #   "removed", in both with different SHOWCOLS "changed".  Writes rows to
-#   changes.csv and "section|change|key|old|new" lines to $W/d_SECTION.
+#   changes.txt and "section US change US key US old US new" lines to
+#   $W/d_SECTION.
 #   A file missing from either run is reported as skipped.
 diff_csv() {
     _sec=$1; _file=$2
@@ -1485,8 +1607,12 @@ diff_csv() {
         printf '%s|skipped (not in both runs)\n' "$_sec" >>"$W/skipped"
         return 0
     fi
-    awk -v keys="$3" -v show="$4" -v sec="$_sec" -v ch="$CH" "$CC_AWK_CSV"'
-        function q(s) { gsub(/"/, "\"\"", s); return "\"" s "\"" }  # awk, not shell: posix-ok
+    # each file is a " | " table or a CSV file (older runs; SH-05)
+    _ot=0; case "$_of" in *.txt) _ot=1 ;; esac
+    _nt=0; case "$_nf" in *.txt) _nt=1 ;; esac
+    awk -v keys="$3" -v show="$4" -v sec="$_sec" -v ch="$CH" -v ot="$_ot" -v nt="$_nt" "$CC_AWK_CSV$CC_AWK_TABLE"'
+        function sp(s, a) { return ((file == 1 && ot) || (file == 2 && nt)) ? tsplit(s, a) : csvsplit(s, a) }  # awk, not shell: posix-ok
+        function cl(s) { gsub(/\|/, "/", s); gsub(/[\r\n]/, " ", s); return s }  # awk, not shell: posix-ok
         function cols(spec, hdr, out,   n, k, i, j) {  # awk, not shell: posix-ok
             n = split(spec, k, ",")
             for (i = 1; i <= n; i++) { out[i] = 0; for (j = 1; j <= hdr[0]; j++) if (hdr[j] == k[i]) out[i] = j }
@@ -1494,12 +1620,12 @@ diff_csv() {
         }
         function pick(f, c,   i, s) { s = ""; for (i = 1; i <= c[0]; i++) s = s (i > 1 ? " | " : "") (c[i] ? f[c[i]] : ""); return s }  # awk, not shell: posix-ok
         FNR == 1 {
-            file++; n = csvsplit($0, h); h[0] = n
+            file++; n = sp($0, h); h[0] = n
             cols(keys, h, kc); cols(show, h, sc)
             next
         }
         {
-            csvsplit($0, f); k = pick(f, kc); v = pick(f, sc)
+            sp($0, f); k = pick(f, kc); v = pick(f, sc)
             if (file == 1) { old[k] = v } else { new[k] = v; order[++m] = k }
         }
         END {
@@ -1511,7 +1637,7 @@ diff_csv() {
             for (k in old) if (!(k in new)) out("removed", k, old[k], "")
         }
         function out(c, k, o, n) {  # awk, not shell: posix-ok
-            print q(sec) "," q(c) "," q(k) "," q(o) "," q(n) >> ch
+            print cl(sec) " | " cl(c) " | " cl(k) " | " cl(o) " | " cl(n) >> ch
             print sec "\037" c "\037" k "\037" o "\037" n
         }' "$_of" "$_nf" >"$W/d_$_sec"
     cat "$W/d_$_sec" >>"$W/all"
@@ -1559,10 +1685,10 @@ flag_where() {
 BACKDOOR_PORTS='^(1337|4444|4445|5555|6666|12345|31337|54321|2375)$'
 
 if [ "$TYPE" = sh03 ]; then
-    diff_csv hosts hosts.csv "ip" "hostname"
-    diff_csv ports ports.csv "ip,proto,port" "service,version"
-    diff_csv scored scored.csv "host,ip,service,port" "reachable"
-    [ -f "$(cfile "$OLD" vulns.csv)" ] && diff_csv vulns vulns.csv "ip,proto,port,script" "state,title"
+    diff_csv hosts hosts "ip" "hostname"
+    diff_csv ports ports "ip,proto,port" "service,version"
+    diff_csv scored scored "host,ip,service,port" "reachable"
+    [ -f "$(cfile "$OLD" vulns)" ] && diff_csv vulns vulns "ip,proto,port,script" "state,title"
     # HIGH first.  The awk conditions are single-quoted on purpose: $2, $5
     # are awk fields, not shell variables.
     # ports keys are "ip | proto | port"; scored keys "host | ip | service | port".
@@ -1579,17 +1705,17 @@ if [ "$TYPE" = sh03 ]; then
     flag_rule ports removed MED "port closed since the earlier scan; if it is a scored service, it is down"
     flag_rule ports changed LOW "service or version changed"
 else
-    diff_csv users users.csv "user" "uid,shell,can_login,password,groups"
-    diff_csv ports ports.csv "proto,address,port" "process,program"
-    diff_csv services services.csv "name" "enabled,active"
-    diff_csv autostart autostart.csv "source,user,entry" ""
-    diff_csv ssh_keys ssh_keys.csv "user,file,fingerprint" "type,comment,options"
-    diff_csv sudo sudo.csv "file,entry" ""
-    diff_csv suid suid.csv "path" "mode,owner"
-    diff_csv capabilities capabilities.csv "path" "capabilities"
-    diff_csv immutable immutable.csv "path" "attributes"
-    diff_csv pam pam.csv "file,entry" ""
-    diff_csv firewall firewall.csv "tool" "status,detail"
+    diff_csv users users "user" "uid,shell,can_login,password,groups"
+    diff_csv ports ports "proto,address,port" "process,program"
+    diff_csv services services "name" "enabled,active"
+    diff_csv autostart autostart "source,user,entry" ""
+    diff_csv ssh_keys ssh_keys "user,file,fingerprint" "type,comment,options"
+    diff_csv sudo sudo "file,entry" ""
+    diff_csv suid suid "path" "mode,owner"
+    diff_csv capabilities capabilities "path" "capabilities"
+    diff_csv immutable immutable "path" "attributes"
+    diff_csv pam pam "file,entry" ""
+    diff_csv firewall firewall "tool" "status,detail"
     flag_rule users added HIGH "account created since the earlier run"
     flag_rule users changed MED "account changed (shell, password state, UID or groups)"
     flag_rule users removed MED "account removed since the earlier run"
@@ -1611,8 +1737,8 @@ else
     flag_rule pam removed MED "PAM line removed"
     flag_rule firewall changed MED "firewall state changed"
     # Same view in both runs?  A root run sees more than a non-root run.
-    _ro=$(awk -F'","' '$1 == "\"collector_run_as_root" { gsub(/"/, "", $2); print $2 }' "$(cfile "$OLD" facts.csv)" 2>/dev/null)
-    _rn=$(awk -F'","' '$1 == "\"collector_run_as_root" { gsub(/"/, "", $2); print $2 }' "$(cfile "$NEW" facts.csv)" 2>/dev/null)
+    _ro=$(awk -F'","' '$1 == "\"collector_run_as_root" { gsub(/"/, "", $2); print $2 }' "$(cfile "$OLD" facts)" 2>/dev/null)
+    _rn=$(awk -F'","' '$1 == "\"collector_run_as_root" { gsub(/"/, "", $2); print $2 }' "$(cfile "$NEW" facts)" 2>/dev/null)
     [ -n "$_ro" ] && [ "$_ro" != "$_rn" ] && cc_warn "one run was as root and the other was not; some 'added' or 'removed' items only reflect what each run could see"
 fi
 
@@ -1647,19 +1773,10 @@ _label=SH-03; [ "$TYPE" = sh05 ] && _label=SH-05
     cc_flag_report "$MAXFLAGS"
     printf '\nAll results: %s\n' "$CC_RUN_DIR"
 } >"$CC_RUN_DIR/summary.txt"
-# Readable tables: changes.txt (added, changed, removed) and flags.txt (HIGH first).
-_ch=$(cfile "$CC_RUN_DIR" changes.csv)
-if [ -f "$_ch" ]; then
-    { head -n 1 "$_ch"; for _k in added changed removed; do awk -v k="$_k" -F'","' '$2 == k' "$_ch"; done; } >"$W/changes_sorted.csv"
-    cc_csv_pretty "$W/changes_sorted.csv" "$CC_RUN_DIR/changes.txt" 80
-fi
-_fl=$(cfile "$CC_RUN_DIR" flags.csv)
-if [ -f "$_fl" ]; then
-    { head -n 1 "$_fl"; for _sv in HIGH MED LOW; do grep "^\"$_sv\"" "$_fl"; done; } >"$W/flags_sorted.csv"
-    cc_csv_pretty "$W/flags_sorted.csv" "$CC_RUN_DIR/flags.txt" 200
-else
-    printf 'No flags.\n' >"$CC_RUN_DIR/flags.txt"
-fi
+# Tables: changes.txt (added, changed, removed) and flags.txt (HIGH first).
+awk -F'|' 'NR == 1 { print; next } { c = $2; gsub(/ /, "", c); r[c] = r[c] $0 "\n" } END { printf "%s%s%s", r["added"], r["changed"], r["removed"] }' "$CH" >"$W/ch.s" && cat "$W/ch.s" >"$CH"
+cc_table_align "$CH"
+if [ -f "$CC_RUN_DIR/flags.txt" ]; then cc_table_sort_flags "$CC_RUN_DIR/flags.txt"; else printf 'No flags.\n' >"$CC_RUN_DIR/flags.txt"; fi
 cat "$CC_RUN_DIR/summary.txt"
 rm -rf "$W"
 cc_finish

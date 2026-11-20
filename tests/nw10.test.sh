@@ -15,14 +15,41 @@ O="$T_TMP/out"; B="$T_TMP/bin"; D="$T_TMP/dev"; mkdir -p "$O" "$B" "$D"
 STUB_DIR=$D; export STUB_DIR
 cat >"$B/ssh" <<'STUB'
 #!/bin/sh
-host=""; for a in "$@"; do case "$a" in *@*) host=${a#*@} ;; esac; done
+host=""; cmd=""; seen=0; cfg=""; nextf=0
+for a in "$@"; do
+    if [ "$nextf" = 1 ]; then cfg=$a; nextf=0; continue; fi
+    [ "$a" = -F ] && { nextf=1; continue; }
+    if [ "$seen" = 1 ]; then cmd=$a; continue; fi; case "$a" in *@*) host=${a#*@}; seen=1 ;; esac
+done
+echo "ARGS $*" >>"$STUB_DIR/args.log"
+# a command given in an ssh config file (RemoteCommand, %% for %)
+[ -n "$cfg" ] && cmd=$(sed -n 's/^ *RemoteCommand //p' "$cfg" | sed 's/%%/%/g')
 pwf="$STUB_DIR/$host.pw"; [ -f "$pwf" ] || { echo "ssh: connect to host $host: Connection timed out" >&2; exit 255; }
+# a RouterOS job scheduled to put the old password back runs when it is due
+sch="$STUB_DIR/$host.sched"
+if [ -f "$sch" ] && [ "$(date +%s)" -ge "$(cut -d' ' -f2 "$sch")" ]; then cut -d' ' -f1 "$sch" >"$pwf"; rm -f "$sch"; fi
 cur=$(cat "$pwf")
 case "$cur" in
     phash:*) h=${cur#phash:}; salt=$(echo "$h" | cut -d'$' -f3); [ "$(openssl passwd -5 -salt "$salt" "$SSHPASS")" = "$h" ] || { echo "Permission denied" >&2; exit 255; } ;;
     *) [ "$SSHPASS" = "$cur" ] || { echo "Permission denied, please try again." >&2; exit 255; } ;;
 esac
 mode=$(cat "$STUB_DIR/$host.mode" 2>/dev/null)
+# A command on the ssh line (RouterOS): no commands are read from stdin.
+if [ -n "$cmd" ]; then
+    printf '%s\n' "$cmd" >>"$STUB_DIR/$host.log"
+    case "$cmd" in
+        *'scheduler add name="bt-nw10-revert"'*)
+            old=$(printf '%s' "$cmd" | sed 's/.*on-event="\/user set \[find name=\\"[^\\]*\\"\] password=\\"\([^\\]*\)\\".*/\1/')
+            iv=$(printf '%s' "$cmd" | sed 's/.*interval=\([0-9]*\)s.*/\1/')
+            echo "$old $(( $(date +%s) + iv ))" >"$sch"
+            new=$(printf '%s' "$cmd" | sed 's/.*; \/user set \[find name="[^"]*"\] password="\([^"]*\)"$/\1/')
+            case "$mode" in ignore) ;; garble) echo "garbled-$new" >"$pwf" ;; *) printf '%s\n' "$new" >"$pwf" ;; esac ;;
+        *':put [:len'*) if [ -f "$sch" ]; then echo 1; else echo 0; fi ;;
+        *'scheduler remove'*) [ "$mode" = keepjob ] || rm -f "$sch" ;;
+        "/system identity print") echo "  name: $host" ;;
+    esac
+    exit 0
+fi
 prev=""
 while IFS= read -r l; do
     echo "$l" >>"$STUB_DIR/$host.log"
@@ -50,7 +77,7 @@ chmod +x "$B/ssh" "$B/sshpass"
 BT_SSH="$B/ssh"; BT_SSHPASS="$B/sshpass"; export BT_SSH BT_SSHPASS
 OLD='Old-Device-Pass1'
 devices() {
-    for h in ios asa pan fg vyos mt lnx bad; do printf '%s\n' "$OLD" >"$D/$h.pw"; rm -f "$D/$h.mode" "$D/$h.log" "$D/$h.priv" "$D/$h.en"; done
+    for h in ios asa pan fg vyos mt lnx bad; do printf '%s\n' "$OLD" >"$D/$h.pw"; rm -f "$D/$h.mode" "$D/$h.log" "$D/$h.priv" "$D/$h.en" "$D/$h.sched"; done
     echo ignore >"$D/bad.mode"
     # NW-01's store: the Cisco account's privilege level comes from here.
     mkdir -p "$O/net-configs/r1" "$O/net-configs/a1" "$O/net-configs/bad"
@@ -60,6 +87,8 @@ devices() {
 }
 DEVS="--device r1,ios,cisco-ios --device a1,asa,cisco-asa --device p1,pan,paloalto --device f1,fg,fortigate --device v1,vyos,vyos,vyos --device m1,mt,mikrotik --device l1,lnx,linux,ops --device pf1,pfx,pfsense"
 BT_NET_PASS=$OLD; export BT_NET_PASS
+# pw_of FILE DEVICE -> the password a passwords.txt table gives the device
+pw_of() { awk -F'|' -v d="$2" '{ x = $1; gsub(/ /, "", x) } x == d { p = $4; gsub(/ /, "", p); print p }' "$1"; }
 
 t_start "options"
 (unset BT_NET_PASS; run --device r1,ios,cisco-ios >/dev/null 2>&1); t_eq "$?" 3 "no current password exits 3"
@@ -81,11 +110,11 @@ devices
 # shellcheck disable=SC2086
 out=$(run --out "$O" $DEVS --apply --no-protected --wait 1 --commit-wait 1 2>&1); rc=$?
 t_eq "$rc" 0 "exit 0"
-P=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')/passwords.csv
+P=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')/passwords.txt
 t_eq "$(ls -l "$P" | cut -c1-10)" "-rw-------" "passwords file is mode 600"
 for pair in r1:ios a1:asa f1:fg v1:vyos m1:mt l1:lnx; do
     d=${pair%:*}; h=${pair#*:}
-    t_eq "$(cat "$D/$h.pw")" "$(awk -F, -v d="$d" '$1 == d { print $4 }' "$P")" "$d: device has the password from the file"
+    t_eq "$(cat "$D/$h.pw")" "$(pw_of "$P" "$d")" "$d: device has the password from the file"
 done
 case "$(cat "$D/pan.pw")" in 'phash:$5$'*|'phash:$1$'*) t_ok "Palo Alto got a password hash, not the password" true ;; *) t_ok "Palo Alto got a password hash, not the password" false ;; esac
 t_has "$out" "p1             paloalto   admin      changed (new login tested)" "Palo Alto new login tested"
@@ -93,8 +122,12 @@ t_eq "$(cat "$D/ios.priv")" 15 "Cisco privilege level 15 kept"
 t_has "$(cat "$D/ios.log")" "write memory" "Cisco config saved after the test"
 t_has "$out" "pf1            pfsense    admin      skipped: change it in the web GUI" "pfSense pointed to the GUI"
 leak=0
-for p in $(awk -F, 'NR > 1 { print $4 }' "$P"); do grep -rqF -- "$p" "$O"/*.log "$(dirname "$P")/summary.txt" "$(dirname "$P")/devices.csv" && leak=1; done
-t_eq "$leak" 0 "no new password in the log, summary or devices.csv"
+for p in $(awk -F'|' 'NR > 1 { gsub(/ /, "", $4); print $4 }' "$P"); do grep -rqF -- "$p" "$O"/*.log "$(dirname "$P")/summary.txt" "$(dirname "$P")/devices.txt" && leak=1; done
+t_eq "$leak" 0 "no new password in the log, summary or devices.txt"
+t_fail "no CSV files in the run" sh -c "ls '$(dirname "$P")' | grep -q csv"
+t_has "$(cat "$D/mt.log")" 'scheduler add name="bt-nw10-revert"' "MikroTik: a put-back is scheduled on the device first"
+t_fail "MikroTik: and removed once the new password works" test -f "$D/mt.sched"
+t_fail "no password on any ssh command line (MikroTik's goes in a config file)" sh -c "grep -F -e '$OLD' -e \"\$(cat '$D/mt.pw')\" '$D/args.log'"
 
 t_start "safety"
 devices
@@ -116,21 +149,40 @@ t_has "$out" "skipped (protected device)" "protected device skipped"
 t_start "Cisco enable secret"
 devices
 out=$(run --out "$O" --device r1,ios,cisco-ios --enable-too --apply --no-protected --wait 1 2>&1)
-P=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')/passwords.csv
+P=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')/passwords.txt
 t_has "$out" "changed (new login tested, enable secret too)" "enable secret changed and tested at level 15"
-t_eq "$(cat "$D/ios.en")" "$(awk -F, '$3 == "(enable secret)" { print $4 }' "$P")" "device has the enable secret from the file"
+t_eq "$(cat "$D/ios.en")" "$(awk -F'|' '$3 ~ /enable secret/ { gsub(/ /, "", $4); print $4 }' "$P")" "device has the enable secret from the file"
 t_start "chosen passwords per device (--passwords)"
 devices
-printf '# device,password\nf1, Chosen-For-Forti-1 \n10.99.99.99,Not-A-Device-Here1\n' >"$T_TMP/devpw.csv"
-out=$(run --out "$O" --device f1,fg,fortigate --device m1,mt,mikrotik --passwords "$T_TMP/devpw.csv" --apply --no-protected --wait 1 2>&1)
-P=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')/passwords.csv
+printf '# device  password\nf1   Chosen-For-Forti-1 \n10.99.99.99 Not-A-Device-Here1\n' >"$T_TMP/devpw.txt"
+out=$(run --out "$O" --device f1,fg,fortigate --device m1,mt,mikrotik --passwords "$T_TMP/devpw.txt" --apply --no-protected --wait 1 2>&1)
+P=$(printf '%s\n' "$out" | sed -n 's/^All results: //p')/passwords.txt
 t_eq "$(cat "$D/fg.pw")" "Chosen-For-Forti-1" "the device named in the file got the chosen password"
-t_eq "$(cat "$D/mt.pw")" "$(awk -F, '$1 == "m1" { print $4 }' "$P")" "the other device got a random one"
+t_eq "$(cat "$D/mt.pw")" "$(pw_of "$P" m1)" "the other device got a random one"
 t_has "$out" "not a device in this run: 10.99.99.99" "a name that is no device is reported"
 t_hasnt "$(cat "$O"/NW-10_*.log)" "Chosen-For-Forti-1" "the chosen password is not in the log"
-printf 'f1,bad pass?\n' >"$T_TMP/devbad.csv"
-run --out "$O" --device f1,fg,fortigate --passwords "$T_TMP/devbad.csv" >/dev/null 2>&1; t_eq "$?" 2 "an unsafe chosen password exits 2"
-t_fail "no pending file left after a normal run" sh -c "ls '$O'/NW-10_*/pending-password.csv >/dev/null 2>&1"
+printf 'f1 bad pass?\n' >"$T_TMP/devbad.txt"
+run --out "$O" --device f1,fg,fortigate --passwords "$T_TMP/devbad.txt" >/dev/null 2>&1; t_eq "$?" 2 "an unsafe chosen password exits 2"
+t_fail "no pending file left after a normal run" sh -c "ls '$O'/NW-10_*/pending-password.txt >/dev/null 2>&1"
+devices
+printf 'f1,Older-Comma-Form-1\n' >"$T_TMP/devold.txt"
+run --out "$O" --device f1,fg,fortigate --passwords "$T_TMP/devold.txt" --apply --no-protected --wait 1 >/dev/null 2>&1
+t_eq "$(cat "$D/fg.pw")" "Older-Comma-Form-1" "an older device,password file is still read"
+
+t_start "MikroTik: the device puts the old password back by itself"
+# "garble": the device takes a password nobody knows; only its own job saves it
+devices; echo garble >"$D/mt.mode"
+out=$(run --out "$O" --device m1,mt,mikrotik --apply --no-protected --wait 1 --revert-after 5 2>&1); rc=$?
+t_eq "$rc" 5 "exit 5"
+t_has "$out" "puts the old one back by itself within 5s" "it says it waits for the device"
+t_has "$out" "failed: new password did not work; the device put the old password back; tested" "old password back and tested"
+t_eq "$(cat "$D/mt.pw")" "$OLD" "the device has the old password"
+devices; echo keepjob >"$D/mt.mode"
+out=$(run --out "$O" --device m1,mt,mikrotik --apply --no-protected --wait 1 --revert-after 5 2>&1)
+t_has "$out" "REMOVE /system scheduler bt-nw10-revert now" "a put-back that cannot be removed is shouted about"
+devices
+out=$(BT_NET_PASS='Has$Dollar-Sign1'; export BT_NET_PASS; run --out "$O" --device m1,mt,mikrotik --apply --no-protected --wait 1 2>&1)
+t_has "$out" "characters RouterOS would read as code" "a current password RouterOS would misread: skipped"
 
 t_start "stopped in the middle: the new password is not lost"
 devices
@@ -147,8 +199,8 @@ kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
 STOP
 # shellcheck disable=SC2086
 sh "$T_TMP/stop.sh" "$T_TMP/stop.out" $SH "$C" --out "$O" --device p1,pan,paloalto --apply --no-protected --commit-wait 20
-pend=$(ls "$O"/NW-10_*/pending-password.csv 2>/dev/null | tail -n 1)
-t_file "${pend:-$O/none}" "pending-password.csv is left behind"
+pend=$(ls "$O"/NW-10_*/pending-password.txt 2>/dev/null | tail -n 1)
+t_file "${pend:-$O/none}" "pending-password.txt is left behind"
 t_eq "$(ls -l "$pend" | cut -c1-10)" "-rw-------" "and is mode 600"
 t_has "$(cat "$T_TMP/stop.out")" "EITHER its old password OR the new one" "the message says what to do"
 t_done

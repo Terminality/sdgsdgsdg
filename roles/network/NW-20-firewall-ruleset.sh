@@ -243,10 +243,7 @@ vendor_of() {
 }
 : >"$W/devices"
 if [ -n "$HOSTS" ]; then
-    awk -F',' "$CC_AWK_CSV"'
-        /^[ \t]*#/ || NF < 2 { next }
-        !hdr { n = csvsplit($0, h); for (i = 1; i <= n; i++) c[tolower(h[i])] = i; hdr = 1; next }
-        { csvsplit($0, f); print f[c["host"]] "|" f[c["ip"]] "|" tolower(f[c["os"]]) "|" (("vendor" in c) ? f[c["vendor"]] : "") "|" f[c["notes"]] "|" (("user" in c) ? f[c["user"]] : "") "|" (("port" in c) ? f[c["port"]] : "") }' "$HOSTS" >"$W/rows"
+    cc_hosts_rows "$HOSTS" | awk -F'|' '{ print $1 "|" $2 "|" tolower($3) "|" $10 "|" $9 "|" $7 "|" $6 }' >"$W/rows"
     while IFS='|' read -r _n _a _os _v _notes _u _p; do
         _vend=""; [ -n "$_v" ] && _vend=$(vendor_of "$_v")
         [ -z "$_vend" ] && [ "$_os" != linux ] && case " $VENDORS " in *" $_os "*) _vend=$_os ;; esac
@@ -358,9 +355,14 @@ printf '%s' "$ALLOWS" | grep . | while IFS= read -r _l; do printf '%s %s\n' "${_
 if [ -n "$SFILE" ]; then awk 'index($0, "#") { n = substr($0, index($0, "#") + 1); sub(/^[ \t]+/, "", n); split($0, a, " "); if (a[1] !~ /^#/) print a[1] " " n }' "$SFILE" >"$W/notes"; else : >"$W/notes"; fi
 while IFS=' ' read -r _a _ports; do add_scored "$_a" "$_ports" "$(awk -v a="$_a" '$1 == a { $1 = ""; sub(/^ /, ""); print; exit }' "$W/notes")"; done <"$W/given"
 # The newest SH-03 scan offers its open ports.
-[ -n "$SCAN" ] || SCAN=$(ls -d "$CC_OUT"/netscan-* 2>/dev/null | sort -t- -k2 -n | tail -n 1)
+# (the newest by its number: netscan-10 is newer than netscan-9)
+[ -n "$SCAN" ] || SCAN=$(for _sd in "$CC_OUT"/netscan-*; do [ -d "$_sd" ] && printf '%s %s\n' "${_sd##*-}" "$_sd"; done | sort -n | tail -n 1 | cut -d' ' -f2-)
 : >"$W/scanports"
-if [ -n "$SCAN" ] && [ -f "$SCAN/csv/ports.csv" ]; then
+# ports.txt: a " | " table (ip hostname proto port state service version);
+# an older scan has csv/ports.csv
+if [ -n "$SCAN" ] && [ -f "$SCAN/ports.txt" ] && head -n 1 "$SCAN/ports.txt" | grep -q ' | '; then
+    awk "$CC_AWK_TABLE"'NR > 1 { tsplit($0, f); if (f[5] == "open") print f[1] " " f[4] (f[3] == "udp" ? "/udp" : "") " " f[6] }' "$SCAN/ports.txt" >"$W/scanports"
+elif [ -n "$SCAN" ] && [ -f "$SCAN/csv/ports.csv" ]; then
     awk -F',' "$CC_AWK_CSV"'NR > 1 { csvsplit($0, f); if (f[5] == "open") print f[1] " " f[4] (f[3] == "udp" ? "/udp" : "") " " f[6] }' "$SCAN/csv/ports.csv" >"$W/scanports"
 fi
 if [ ! -s "$W/scored" ]; then

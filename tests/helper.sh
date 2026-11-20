@@ -31,6 +31,9 @@ T_TMP="${TMPDIR:-/tmp}/cctest.$$"
 (umask 077; mkdir -p "$T_TMP") || { echo "cannot create $T_TMP" >&2; exit 1; }
 trap 'rm -rf "$T_TMP"' EXIT
 
+# t_quoted TABLE -> a " | " text table written as "a","b",... lines (each field
+#   trimmed), so a check can name whole fields the same way for any table.
+t_quoted() { awk -F'|' '{ l = ""; for (i = 1; i <= NF; i++) { v = $i; sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v); l = l (i > 1 ? "," : "") "\"" v "\"" } print l }' "$1"; }
 t_start() { printf '  -- %s\n' "$1"; }
 _t_pass() { T_PASS=$((T_PASS + 1)); }
 _t_fail() { T_FAILED=$((T_FAILED + 1)); printf '     FAIL: %s\n' "$1"; [ -n "${2:-}" ] && printf '           %s\n' "$2"; return 0; }
