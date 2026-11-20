@@ -1623,6 +1623,8 @@ while :; do sh NW-01-config-backup.sh --out ~/bt-out --hosts config/hosts.txt --
 
 Run it from the admin workstation (a Linux box that can reach the devices' management addresses).
 
+**Without flags it asks.** If there is a `config/hosts.txt` it offers that; otherwise it asks for each device's address, what it is (`[o]` OpenWRT first), a short name and the login name (root for OpenWRT, pfSense and OPNsense). Then how to log in: a password typed now (hidden, never saved), the one in `BT_NET_PASS`, or SSH keys. Every answer has a flag; `--batch` uses SSH keys as before.
+
 | Option | What it does |
 | --- | --- |
 | `--hosts FILE` | Host list. Rows with `os` = `network` take the vendor from the notes ("Palo Alto", "Cisco IOS", "Cisco ASA", "FortiGate", "VyOS", "pfSense", "OPNsense", "MikroTik") or a `vendor` column; a vendor name in `os` works too |
@@ -1630,6 +1632,7 @@ Run it from the admin workstation (a Linux box that can reach the devices' manag
 | `--user NAME` | Login name when the list gives none (default `admin`) |
 | `--password-env` | Password from `$BT_NET_PASS`, handed to `sshpass -e` in the environment (never on a command line) |
 | `--ask-password` | Ask once, without echo |
+| `--keys` | Log in with SSH keys (no question) |
 | `--enable-env` | Cisco: send `enable` with `$BT_NET_ENABLE` when the login is below privilege 15 |
 | `--legacy-ssh` | Allow old SSH algorithms from the start. Also tried automatically when a device refuses the modern ones |
 
@@ -1647,8 +1650,9 @@ Without a password option, SSH keys are used and the script never prompts.
 | `pfsense`, `opnsense` | `cat /conf/config.xml` | `root` (admin lands in the menu) |
 | `mikrotik` | `/export` | An admin |
 | `linux` | `iptables-save`, `nft list ruleset`, `ip addr`, `ip route` | root (named with a `vendor` column or `--device`) |
+| `openwrt` | `uci export` (every setting), `nft list ruleset` (fw4), `ip addr`, `ip route`, `/etc/passwd`, root's SSH keys, cron, `/etc/rc.d`, `/etc/rc.local` | `root` |
 
-Before comparing, lines that change by themselves are dropped: prompts and echoed commands, Cisco "Last configuration change" and NVRAM lines, ASA checksums and serial lines, the FortiGate file version, nftables packet counters.
+Before comparing, lines that change by themselves are dropped: prompts and echoed commands, Cisco "Last configuration change" and NVRAM lines, ASA checksums and serial lines, the FortiGate file version, nftables packet counters, OpenWRT's DHCP lease times. On screen each device gets one line: `[ok]` saved, `[*]` saved and something changed, `[!]` not saved and why.
 
 ### What it produces
 
@@ -1695,6 +1699,8 @@ sh NW-07-config-audit.sh --out ~/bt-out --file r1.cfg --file fw1.txt     # confi
 sh NW-07-config-audit.sh --out ~/bt-out --file fw1.txt,paloalto          # name the vendor
 ```
 
+Without `--file` it offers the newest config NW-01 saved for each device; with none saved it asks for a file and, when it cannot tell, what device it is from. The screen shows one line per device (`[!]` HIGH found, `[*]` MED, `[ok]` nothing), then the findings worst first.
+
 | Option | What it does |
 | --- | --- |
 | `--configs DIR` | NW-01's saved configs (default `<out>/net-configs`); the newest copy of each device is read |
@@ -1712,6 +1718,7 @@ sh NW-07-config-audit.sh --out ~/bt-out --file fw1.txt,paloalto          # name 
 | VyOS | telnet service; default or read-write SNMP community; plaintext password | | HTTPS API; SSH on every address; accounts |
 | pfSense / OPNsense | default or read-write SNMP community; a WAN rule passing any to any | web GUI over plain HTTP | accounts |
 | MikroTik | telnet on; default SNMP community | telnet not disabled (on by default); `www`, `ftp` or `api` on | accounts |
+| OpenWRT | the outside (wan) zone accepts or forwards everything; wan to lan forwarding; router SSH or LuCI open from the outside; any-any allow from outside; UPnP on; default SNMP community; a second UID 0 account; telnet at boot | SSH (dropbear) on every interface; LuCI over plain HTTP; a management or database port forwarded in; root SSH keys; root cron jobs; commands in `/etc/rc.local`; an extra LuCI login | no remote log server; time client off; **the port forwards** (on a NAT router those are the scored paths); accounts |
 
 Default or guessable SNMP communities: `public`, `private`, `cisco`, `community`, `admin`, `default`, `secret`, `password`, `snmp`, `monitor`, `manager`, `read`, `write`, `test`, `bt`.
 
