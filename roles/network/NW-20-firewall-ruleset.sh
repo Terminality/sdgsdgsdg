@@ -4,7 +4,7 @@
 # NAME:     Firewall ruleset
 # ROLE:     Network  (wave 2, after NW-01 backup; one device at a time)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Puts a short, readable set of rules at the TOP of the network firewall
@@ -45,6 +45,8 @@
 #       (offered from the newest SH-03 scan when there is one)
 #     is this list right?                   Y
 #     your team's addresses                 --team
+#     addresses you log in from outside     --remote
+#     ports you log in on (kept open)       --login-ports   (22,3389)
 #     which side is outside / servers       --outside, --inside
 #     each rule                             [k]eep (default) / [s]kip
 #     block everything else coming in?      Y
@@ -69,6 +71,11 @@
 #   --scan DIR         an SH-03 run folder to offer ports from (default: the
 #                      newest netscan-N under --out)
 #   --team CIDR,...    your team's addresses (allowed everything)
+#   --remote CIDR,...  addresses you log in from OUTSIDE (remote teammates,
+#                      VPN): allowed everything, like the team (asked)
+#   --login-ports P,.. ports you log in to the boxes on (default 22,3389):
+#                      kept open to every scored box from any address, so
+#                      the team is never blocked; "none" closes them (asked)
 #   --outside NAME     the outside zone / interface (else asked)
 #   --inside NAME      the zone / interface the servers are on (else asked;
 #                      "all" = every zone but outside: Palo Alto, FortiGate)
@@ -139,6 +146,8 @@ NW-20 Firewall ruleset - only the scored services in, everything else blocked; c
   --file FILE          scored boxes, one per line: ADDR PORTS... # note
   --scan DIR           an SH-03 run folder to offer ports from
   --team CIDR,...      your team's addresses
+  --remote CIDR,...    addresses you log in from outside (allowed everything)
+  --login-ports P,...  ports you log in on, kept open to every box (default 22,3389; none)
   --outside NAME / --inside NAME   zones or interfaces (else asked)
   --restrict-out       also limit what the servers start (default: asked, no)
   --dns IP,... / --ntp IP / --out-allow ADDR:PORTS   what they may still reach
@@ -155,7 +164,7 @@ USAGE
 NL='
 '
 HOSTS=""; DEVICES=""; DEFUSER="admin"; ASK=0; ENABLE=0; LEGACY=0; COLOR=1
-ALLOWS=""; SFILE=""; SCAN=""; TEAM=""; OUTSIDE=""; INSIDE=""; RESTRICT=""; DNS=""; NTP=""; OUTALLOW=""; THREAT=""; REMOVE=0
+ALLOWS=""; SFILE=""; SCAN=""; TEAM=""; REMOTE=""; LOGINP=""; OUTSIDE=""; INSIDE=""; RESTRICT=""; DNS=""; NTP=""; OUTALLOW=""; THREAT=""; REMOVE=0
 WAIT=5; CWAIT=120; TIMER=120
 num() { case "$2" in ''|*[!0-9]*) cc_die 2 "$1 needs a whole number" ;; esac; }
 okname() { case "$2" in ''|*[!A-Za-z0-9_./:-]*) cc_die 2 "$1: letters, digits and . _ / : - only" ;; esac; }
@@ -173,6 +182,8 @@ while [ $# -gt 0 ]; do
         --file)         [ $# -ge 2 ] || cc_die 2 "--file needs a file"; [ -r "$2" ] || cc_die 2 "--file: cannot read $2"; SFILE=$2; shift 2 ;;
         --scan)         [ $# -ge 2 ] || cc_die 2 "--scan needs a folder"; [ -d "$2" ] || cc_die 2 "--scan: not a folder: $2"; SCAN=$2; shift 2 ;;
         --team)         [ $# -ge 2 ] || cc_die 2 "--team needs addresses"; TEAM="$TEAM,$2"; shift 2 ;;
+        --remote)       [ $# -ge 2 ] || cc_die 2 "--remote needs addresses"; REMOTE="$REMOTE,$2"; shift 2 ;;
+        --login-ports)  [ $# -ge 2 ] || cc_die 2 "--login-ports needs ports or none"; LOGINP=$2; shift 2 ;;
         --outside)      [ $# -ge 2 ] || cc_die 2 "--outside needs a name"; okname "$1" "$2"; OUTSIDE=$2; shift 2 ;;
         --inside)       [ $# -ge 2 ] || cc_die 2 "--inside needs a name"; okname "$1" "$2"; INSIDE=$2; shift 2 ;;
         --restrict-out) RESTRICT=y; shift ;;
@@ -195,6 +206,9 @@ isip()   { printf '%s' "$1" | grep -q "^$IPRE\$"; }
 iscidr() { printf '%s' "$1" | grep -q "^$IPRE\\(/[0-9]\\{1,2\\}\\)\\{0,1\\}\$"; }
 TEAM=${TEAM#,}; DNS=${DNS#,}
 for _t in $(printf '%s' "$TEAM" | tr ',' ' '); do iscidr "$_t" || cc_die 2 "--team: IPv4 addresses or CIDRs (10.0.0.0/24)"; done
+REMOTE=${REMOTE#,}
+for _t in $(printf '%s' "$REMOTE" | tr ',' ' '); do iscidr "$_t" || cc_die 2 "--remote: IPv4 addresses or CIDRs"; done
+case "$LOGINP" in ''|none) ;; *[!0-9,]*|,*|*,) cc_die 2 "--login-ports: port numbers separated by commas (22,3389), or none" ;; esac
 for _t in $(printf '%s' "$DNS" | tr ',' ' '); do isip "$_t" || cc_die 2 "--dns: IPv4 addresses"; done
 [ -z "$NTP" ] || isip "$NTP" || cc_die 2 "--ntp: an IPv4 address"
 
@@ -407,7 +421,31 @@ if [ -z "$TEAM" ] && _cc_can_ask && [ "$CC_BATCH" != 1 ]; then
     for _t in $(printf '%s' "$CC_ANSWER" | tr ',' ' '); do iscidr "$_t" && TEAM="$TEAM,$_t" || cc_show "$C_RED" "  [x] not an address or CIDR, left out: $_t"; done
     TEAM=${TEAM#,}
 fi
-[ -n "$TEAM" ] && cc_show "$C_GRN" "  [ok] your team ($TEAM): allowed everything" || cc_show "$C_YEL" "  [*] no team addresses: if you manage boxes from OUTSIDE the firewall, give --team or you are blocked too"
+# Never block the team: where you log in from outside, and the ports you
+# log in on, stay open.
+if [ -z "$REMOTE" ] && _cc_can_ask && [ "$CC_BATCH" != 1 ]; then
+    cc_ask_text "Addresses you log in to the boxes from OUTSIDE the firewall (remote teammates, VPN)? Allowed everything, like the team" "" "addresses or networks separated by commas (Enter = none, or from anywhere)"
+    for _t in $(printf '%s' "$CC_ANSWER" | tr ',' ' '); do iscidr "$_t" && REMOTE="$REMOTE,$_t" || cc_show "$C_RED" "  [x] not an address or CIDR, left out: $_t"; done
+    REMOTE=${REMOTE#,}
+fi
+# (each address once: one given as both --team and --remote counts once)
+[ -n "$REMOTE" ] && TEAM=$(printf '%s,%s' "$TEAM" "$REMOTE" | tr ',' '\n' | awk 'NF && !s[$0]++' | tr '\n' ',' | sed 's/,$//')
+if [ -z "$LOGINP" ]; then
+    LOGINP=22,3389
+    if _cc_can_ask && [ "$CC_BATCH" != 1 ]; then
+        cc_ask_text "Ports you log in to the boxes on from outside? They stay open to every box from ANY address, so the team is never blocked" "$LOGINP" "port numbers separated by commas (22 SSH, 3389 RDP, 5985 WinRM), or none"
+        LOGINP=$CC_ANSWER
+        case "$LOGINP" in ''|none) LOGINP=none ;; *[!0-9,]*|,*|*,) cc_show "$C_RED" "  [x] not a port list: kept 22,3389"; LOGINP=22,3389 ;; esac
+    fi
+fi
+[ -n "$TEAM" ] && cc_show "$C_GRN" "  [ok] your team ($TEAM): allowed everything" || cc_show "$C_YEL" "  [*] no team addresses: if you manage boxes from OUTSIDE the firewall, give --team or --remote, or keep their login ports open"
+if [ "$LOGINP" != none ]; then
+    # The login ports join every scored box's TCP ports (each port once).
+    awk -F"$US" -v OFS="$US" -v lp="$LOGINP" '{ n = split($2 "," lp, p, ","); o = ""; split("", s); for (i = 1; i <= n; i++) if (p[i] != "" && !(p[i] in s)) { s[p[i]] = 1; o = o (o == "" ? "" : ",") p[i] } $2 = o; if ($4 !~ /login/) $4 = $4 ($4 == "" ? "" : ", ") "+ login " lp; print }' "$W/scored" >"$W/scored.n" && cat "$W/scored.n" >"$W/scored"
+    cc_show "$C_GRN" "  [ok] login ports $LOGINP stay open to every scored box from any address (--login-ports none to close them)"
+else
+    cc_show "$C_YEL" "  [*] no login ports kept open: from outside, only --team / --remote addresses can log in to the boxes"
+fi
 if [ -z "$RESTRICT" ]; then
     cc_show "" "  Outgoing limits stop a hacked server from calling out (web-shell callbacks, downloads, data sent out, ping and DNS tunnels)."
     cc_show "" "  They can break a service that must start connections out (webmail to IMAP, a store to its database, forwarders to Splunk) - you list those next."

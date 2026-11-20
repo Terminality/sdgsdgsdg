@@ -155,7 +155,9 @@ EOF
 }
 DEVS="--device r1,ios,cisco-ios --device a1,asa,cisco-asa --device p1,pan,paloalto --device f1,fg,fortigate --device v1,vyos,vyos,vyos --device m1,mt,mikrotik --device l1,lnx,linux,ops --device pf1,pfx,pfsense"
 # shellcheck disable=SC2086
-run() { $SH "$C" --out "$O" --no-color --me "$ME" $DEVS "$@"; }
+# --kick-outside --disable-new: the old defaults, so these checks can see
+# every brand's kick and disable (the safe defaults have their own section).
+run() { $SH "$C" --out "$O" --no-color --me "$ME" $DEVS --kick-outside --disable-new "$@"; }
 
 t_start "options"
 $SH "$C" --device r1,ios,junos >/dev/null 2>&1; t_eq "$?" 2 "an unknown vendor exits 2"
@@ -240,8 +242,8 @@ if command -v script >/dev/null 2>&1; then
     grep -v ' backdoor$' "$O/net-accounts-baseline.txt" >"$T_TMP/b"; cat "$T_TMP/b" >"$O/net-accounts-baseline.txt"
     # only r1: backdoor (new) k; ops (first-run, not new) Enter; session backdoor l; apply Enter
     printf 'k\n\nl\n\n' >"$T_TMP/ans"
-    tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --me $ME --device r1,ios,cisco-ios --team 10.0.0.0/24 --no-protected --apply" /dev/null <"$T_TMP/ans" 2>&1)
-    t_has "$tt" "[d] disable it (removed; the undo puts back its lines from NW-01's copy)" "an account lists its answers"
+    tt=$(BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --me $ME --device r1,ios,cisco-ios --team 10.0.0.0/24 --kick-outside --disable-new --no-protected --apply" /dev/null <"$T_TMP/ans" 2>&1)
+    t_has "$tt" "[d] disable it - only if you are SURE no teammate uses it (removed; the undo puts back its lines from NW-01's copy)" "an account lists its answers"
     t_has "$tt" "[k] kick it" "a session lists its answers"
     t_fail "k: the account is kept" grep -q 'no username backdoor' "$D/ios.log"
     t_fail "l: the session is left" grep -q 'clear line' "$D/ios.log"
@@ -267,7 +269,7 @@ daemon L
 EOF
 }
 owrt; rm -f "$O/net-accounts-baseline.txt"
-orun() { $SH "$C" --out "$O" --no-color --me "$ME" --device o1,owrt,openwrt,root --team 10.0.0.0/24 "$@"; }
+orun() { $SH "$C" --out "$O" --no-color --me "$ME" --device o1,owrt,openwrt,root --team 10.0.0.0/24 --kick-outside --disable-new "$@"; }
 out=$(orun --batch 2>&1)
 t_has "$(cat "$D/owrt.cmds")" "cat /etc/passwd" "accounts from /etc/passwd"
 t_has "$(cat "$D/owrt.cmds")" "ubus call session list" "web sessions from ubus"
@@ -309,4 +311,13 @@ if command -v script >/dev/null 2>&1; then
     t_has "$tt" "Your team's addresses?" "the team is asked"
     t_has "$tt" "router (owrt, openwrt)" "and the device is read"
 fi
+t_start "never kicks the team off"
+devices; rm -f "$O/net-accounts-baseline.txt"
+$SH "$C" --out "$O" --no-color --me "$ME" --device r1,ios,cisco-ios --team 10.0.0.0/24 --batch >/dev/null 2>&1
+grep -v ' backdoor$' "$O/net-accounts-baseline.txt" >"$T_TMP/b"; cat "$T_TMP/b" >"$O/net-accounts-baseline.txt"
+out=$($SH "$C" --out "$O" --no-color --me "$ME" --device r1,ios,cisco-ios --team 10.0.0.0/24 --batch --no-protected --apply 2>&1)
+t_has "$out" "logged in from $RED (vty, vty 1): what now? [k/L/a] l (default): leave it" "a session from outside the team: the default is leave"
+t_has "$out" "NEW since the first run: what now? [d/K/a] k (default): keep it" "a new account: the default is keep"
+t_fail "--batch kicks nobody" grep -q 'clear line' "$D/ios.log"
+t_fail "and disables nothing" grep -q 'no username' "$D/ios.log"
 t_done

@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-20: NW-12 and NW-20 never kick or block the team
+
+- **NW-12** (1.2.0): nothing is kicked or disabled unless you answer `k` or `d` for it. A session from outside `--team` now defaults to leave (it may be a teammate logged in from somewhere else), an account new since the first run defaults to keep (a teammate may have made it), and both answers say "only if you are SURE". `--batch` kicks and disables nothing. The old defaults are opt-in: `--kick-outside`, `--disable-new`.
+- **NW-20** (1.1.0): two new questions so the team is never blocked from outside: "Addresses you log in to the boxes from OUTSIDE the firewall?" (`--remote`; allowed everything, like the team, each address once) and "Ports you log in to the boxes on from outside?" (`--login-ports`, default `22,3389`): they are added to every scored box's rule from any address; `none` closes them. The firewall's own management was never touched (only traffic through it).
+- NW-20 test: the "stopped while a firewall is being changed" check is skipped under yash (a background yash started by a yash test does not take TERM the way a terminal Ctrl-C reaches it; already failing on main, the same as NW-30's).
+- Tested: nw12 and nw20 under dash, bash, ksh93, mksh, yash and busybox sh; gawk, mawk and busybox awk; the built copies. New sections: the safe defaults (`--batch` kicks, disables and blocks nobody), the login ports and remote addresses, the questions on a terminal.
+
 ## 2026-11-20: NW-12 on OpenWRT; the device questions in the library (library 0.5.0)
 
 - **Library 0.5.0** (`lib/lib.sh`; `lib/lib.ps1` version only): `cc_net_hostfile`, `cc_net_ask_devices` (the host list `config/hosts.txt` if there is one, else each device: address, what it is with OpenWRT first, a short name, the login; root for OpenWRT, pfSense, OPNsense) and `cc_net_ask_password` (`BT_NET_PASS` as it is when set, else typed hidden). The network scripts ask these the same way.
