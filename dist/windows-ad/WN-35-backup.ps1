@@ -1314,7 +1314,9 @@ function Get-CcFlagReport {
     }
     $cut = $hi.Count + $me.Count - $shown
     if ($cut -gt 0) { $out += ('  ... {0} more high/medium not shown' -f $cut) }
-    if ($lo.Count + $cut -gt 0) { $out += ('All flags, including low: ' + $c.FlagsFile) }
+    $ff = $c.FlagsFile
+    if ($c.Numbered) { $ff = Join-Path $c.RunDir 'flags.txt' }   # the CSV becomes this table at the end
+    if ($lo.Count + $cut -gt 0) { $out += ('All flags, including low: ' + $ff) }
     return $out
 }
 

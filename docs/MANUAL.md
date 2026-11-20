@@ -1867,7 +1867,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File SH-06-windows-enum.ps1 -Out 
 
 ### What you get
 
-`<out>\SH-06_<host>_<time>\` holds `summary.txt` (also printed), `flags.csv`, one CSV per section and `raw\` with everything as read. Run it without elevation and the summary says which sections are incomplete.
+It looks like the Linux scripts: a title line, the legend, a numbered header per section (`==========[ 3/9  ports ]==========`) with its row count and how many flags it raised, then the `SUMMARY` with the HIGH flags in red and MED in yellow.
+
+**The question:** "How much to look at?" `[c]` card (about a minute), `[F]` full, `[t]` triage (full plus a copy of the event logs). `-Profile`, `-Only` or `-Skip` answer it; `-Batch` takes full.
+
+`<out>\windows-enum-N\` (a new number each run) holds `output.txt` (the screen without colours), `summary.txt`, `flags.txt`, one `.txt` table per section, `run.txt` and `raw\` with everything as read (`-FromRaw` replays it). No CSV is left. Run it without elevation and the summary says which sections are incomplete.
 
 ### What it flags
 

@@ -20,6 +20,7 @@ $tmp = Join-Path ([IO.Path]::GetTempPath()) ('cctest_sh06_' + $PID)
 $out = Join-Path $tmp 'out'
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 $env:BT_SKIP_VERIFY = '1'
+$env:BT_TEST_KEEP_CSV = '1'   # keep the CSV working files in <run>\.work to read the rows whole
 $script:pass = 0; $script:fail = 0
 
 function T-Start($t) { Write-Host "  -- $t" }
@@ -44,7 +45,7 @@ function Csv($dir, $name, [string[]]$header, [object[]]$rows) {
 }
 function Txt($dir, $name, [string]$text) { [IO.File]::WriteAllText((Join-Path $dir ($name + '.txt')), $text.Replace("`r`n", "`n").Replace("`n", "`r`n")) }
 # Flags dir -> flags.csv text ('' when there are none).
-function Flags($dir) { $f = Join-Path $dir 'flags.csv'; if (Test-Path -LiteralPath $f) { return [IO.File]::ReadAllText($f) }; return '' }
+function Flags($dir) { $f = Join-Path (Join-Path $dir '.work') 'flags.csv'; if (Test-Path -LiteralPath $f) { return [IO.File]::ReadAllText($f) }; return '' }
 
 # -----------------------------------------------------------------------------
 # A host with planted problems: a domain controller.
@@ -385,7 +386,7 @@ T-HasNot $fl 'Microsoft.LockApp' 'a rule limited to one app package is not allow
 T-HasNot $fl 'Tailscale-In' 'a rule limited to one local address is not allow-all'
 T-HasNot $fl 'Old allow all' 'a disabled rule is not flagged'
 T-Has $fl '"LOW","firewall","Discord"' 'a rule for a program in AppData is LOW'
-$fr = [IO.File]::ReadAllText((Join-Path $r.Dir 'firewall_rules.csv'))
+$fr = [IO.File]::ReadAllText((Join-Path $r.Dir '.work\firewall_rules.csv'))
 T-Has $fr '"Microsoft.LockApp","local","True","Allow","","","","","","AppPkgId PFN"' 'package rules are shortened and show what limits them'
 # defender
 T-Has $fl '"HIGH","defender","Defender","real-time protection is off"' 'real-time off'
@@ -424,9 +425,9 @@ T-HasNot $fl 'SeImpersonatePrivilege' 'default impersonate holders not flagged'
 T-Has $fl '"HIGH","rights","SeRemoteInteractiveLogonRight *S-1-1-0"' 'RDP logon for Everyone'
 T-Has $sum 'Runs: Domain controller, DNS server, Remote Desktop' 'roles from services'
 T-True (Test-Path -LiteralPath (Join-Path $r.Dir 'raw\registry.csv')) 'the replayed raw files are kept with the new run'
-T-True (Test-Path -LiteralPath (Join-Path $r.Dir 'tasks.csv')) 'section CSV written'
-T-HasNot ([IO.File]::ReadAllText((Join-Path $r.Dir 'users.csv'))) 'Summer2026' 'the password-like description is not in users.csv'
-T-Has ([IO.File]::ReadAllText((Join-Path $r.Dir 'users.csv'))) '(hidden: password-like text)' 'it is replaced by a note'
+T-True (Test-Path -LiteralPath (Join-Path $r.Dir '.work\tasks.csv')) 'section CSV written'
+T-HasNot ([IO.File]::ReadAllText((Join-Path $r.Dir '.work\users.csv'))) 'Summer2026' 'the password-like description is not in users.csv'
+T-Has ([IO.File]::ReadAllText((Join-Path $r.Dir '.work\users.csv'))) '(hidden: password-like text)' 'it is replaced by a note'
 
 T-Start 'replay of a clean workstation'
 $r = Run @('-Out', $out, '-FromRaw', $good)
@@ -456,6 +457,30 @@ T-True ($r.Dir -ne '' -and (Test-Path -LiteralPath (Join-Path $r.Dir 'summary.tx
 if ([Environment]::OSVersion.Platform -ne 'Win32NT') {
     T-Has ([IO.File]::ReadAllText((Join-Path $r.Dir 'summary.txt'))) 'could not be read' 'the summary says which sources failed'
 }
+
+T-Start 'the look, the profile question, and no CSV left'
+Remove-Item Env:\BT_TEST_KEEP_CSV
+$o9 = Join-Path $tmp 'out9'
+$r = Run @('-Out', $o9, '-FromRaw', $bad, '-Only', 'users,tasks')
+T-Eq $r.Code 0 'exits 0'
+T-Has $r.Text 'SH-06 Windows enum | host' 'the title line'
+T-Has $r.Text 'Legend: [!] HIGH' 'the legend'
+T-Has $r.Text '==========[ 1/2  users ]==========' 'numbered section headers'
+T-Has $r.Text '==========[ SUMMARY ]==========' 'the summary header'
+T-HasNot $r.Text 'How much to look at?' '-Only answers the profile question'
+T-True ($r.Dir -match 'windows-enum-1$') 'a numbered folder windows-enum-1'
+T-True (Test-Path -LiteralPath (Join-Path $r.Dir 'users.txt')) 'users.txt table'
+T-True (Test-Path -LiteralPath (Join-Path $r.Dir 'flags.txt')) 'flags.txt table'
+T-Has ([IO.File]::ReadAllText((Join-Path $r.Dir 'output.txt'))) '==========[ 2/2  tasks ]==========' 'output.txt has the screen'
+T-True (@(Get-ChildItem -LiteralPath $r.Dir -Filter '*.csv').Count -eq 0) 'no CSV in the results'
+T-True (-not (Test-Path -LiteralPath (Join-Path $r.Dir '.work'))) 'the work folder is gone'
+$r = Run @('-Out', $o9, '-FromRaw', $bad, '-Batch')
+T-Has $r.Text '[?] How much to look at? [c/F/t] f (default): full' 'the profile question: Enter = full'
+$env:BT_TEST_ANSWERS = 'c'
+$r = Run @('-Out', $o9, '-FromRaw', $bad)
+Remove-Item Env:\BT_TEST_ANSWERS
+T-Has $r.Text 'profile card' 'answering c runs the card profile'
+T-HasNot $r.Text '  processes ]' 'and leaves the full sections out'
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ("  {0} passed, {1} failed" -f $script:pass, $script:fail)
