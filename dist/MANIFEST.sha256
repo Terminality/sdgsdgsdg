@@ -34,7 +34,7 @@ cfe31a624c0fa5e56cdc0965ce67c04437d70fcd37655b0fe65ffacd9c395c65  linux/SV-26-ba
 4f61b87097c0fdcff181701c8ba723c44b85c2b69692032f825786481e6f4a79  network/NW-10-device-passwords.sh
 b324ea7e33a76e0aada06a6078666db020e4b734f9c344418b9f92df418c7d18  network/NW-12-device-sessions.sh
 07df34250d1fde4c1803f5a7145015f3d8eccd6acd30199c24d91c5b661bc969  network/NW-20-firewall-ruleset.sh
-aaa47c54e4650be7da27271a161e0b18a45471784643f85f1b27d96d556ef8f5  network/NW-21-device-hardening.sh
+0696349c2c049cdf84fc36096ca8d9328be82c6a3d346ef8d1e03f957d217b95  network/NW-21-device-hardening.sh
 054ef9ca25e465f4d4757ae2a13d0179e374b55a92d6fe92e42f1ef2197ebf50  network/NW-30-device-watch.sh
 2ce2fb78700cc0b5fe9bf64841dab4b47cdce5485558632264b3697c2a58e740  network/SH-03-network-scan.sh
 21f0a47566645217a152e0922ed817e45dfe11413ebc1a9e166974959e785ef4  network/SH-04-scan-diff.sh

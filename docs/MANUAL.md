@@ -3400,13 +3400,36 @@ Run NW-01 before (backup) and after (the changes become the saved copy).
 
 A non-default SNMP community is reported, but its value is never shown or written. The management limit always keeps this box (`--me`, else found with `ip route get`). Linux devices: use LX-22 and LX-25. pfSense / OPNsense: the web GUI places are listed.
 
+**OpenWRT** (log in as root). Every fix is a `uci` setting, committed, and only that service reloaded; every one has an undo line:
+
+| Found | Fix |
+| --- | --- |
+| Web admin (LuCI) over plain HTTP | `uhttpd.main.redirect_https=1` |
+| The web admin on every address | on the router's lan address (a management change: you confirm a login from another team machine) |
+| SSH on the outside (wan) | shown, **left by default**: the team logs in from outside. `[f]ix` puts SSH on `lan` only. To limit who may connect from outside, use NW-20 |
+| UPnP on | off, and `miniupnpd` disabled |
+| Telnet started at boot | stopped and disabled |
+| No SSH idle timeout | `IdleTimeout` = `--timeout` minutes |
+| Logs not sent to `--log-host` / time not from `--ntp` | `log_ip` / added to `system.ntp.server` |
+| No login banner | `/etc/bt-banner` and dropbear's `BannerFile` |
+| Default SNMP community | reported only |
+
 ### The questions
 
 | Question | Answers | Flag |
 | --- | --- | --- |
+| Which devices: the host list `config/hosts.txt`, or each typed (OpenWRT first) | | `--hosts`, `--device` |
+| Device password (hidden) | | `BT_NET_PASS`, `--ask-password` |
+| Your team's addresses? (management is limited to them and this box) | addresses or networks, Enter = do not limit | `--team` |
+| Send the devices' logs to a log server? / Take the time from a time server? | an address, Enter = no | `--log-host`, `--ntp` |
 | Each finding | `[f]ix` (default) / `[l]eave` / `[a]ll the rest default` | `--batch` |
 | Do these? | `[y]` / `[n]` | `--apply` |
-| After a management or telnet change: log in from another team machine, keep? | `[y]` within `--timer` seconds (60), else put back | `--batch` keeps |
+| After a management or telnet change: log in from another team machine, keep? | `[y]` within `--timer` seconds (60), else put back | none: a person answers |
+
+**It never locks the team out.** A change that can stop someone logging in (a management limit, telnet or HTTP management off, SSH or the web admin limited) is:
+- never the default for a limit on who may log in: the default is `[l]eave`, and the question says who would be locked out (`--fix-access` makes fix the default; the confirmation below still happens)
+- never kept without a person confirming a login from ANOTHER machine within `--timer` seconds
+- with `--batch` or no terminal: not made at all, only shown ("left: ... run without --batch"). The other fixes (logging, time, banner, SNMP, idle timeout) still go in.
 
 ### How a device is changed
 
