@@ -431,4 +431,56 @@ if command -v script >/dev/null 2>&1; then
     t_has "$tt" "Ports you log in to the boxes on from outside?" "and on which ports"
     t_has "$tt" "203.0.113.7" "the answer joins the team"
 fi
+t_start "OpenWRT"
+devices
+printf '%s\n' "$BT_NET_PASS" >"$D/ow.pw"; rm -f "$D/ow.log"
+cat >"$D/ow.out" <<'EOF'
+===if
+1: lo: <LOOPBACK,UP> mtu 65536
+2: eth0: <BROADCAST,MULTICAST,UP> mtu 1500
+3: eth1: <BROADCAST,MULTICAST,UP> mtu 1500
+4: br-lan: <BROADCAST,MULTICAST,UP> mtu 1500
+===wan
+eth1
+===fwd
+firewall.@redirect[0]=redirect
+firewall.@redirect[0].name='web'
+firewall.@redirect[0].src='wan'
+firewall.@redirect[0].src_dport='80'
+firewall.@redirect[0].dest_ip='10.0.0.5'
+firewall.@redirect[0].dest_port='8080'
+firewall.@redirect[0].proto='tcp'
+firewall.@redirect[0].target='DNAT'
+firewall.@redirect[1]=redirect
+firewall.@redirect[1].src='wan'
+firewall.@redirect[1].src_dport='445'
+firewall.@redirect[1].dest_ip='10.0.0.30'
+firewall.@redirect[1].enabled='0'
+===nft
+EOF
+OWR="--device router,ow,openwrt,root"
+out=$(run $OWR --batch 2>&1)
+t_has "$(cat "$D/ow.log")" "uci -q get network.wan.device" "asks the router which device is wan"
+t_has "$out" "which interface is OUTSIDE? [1/2/3] 2 (default): eth1" "and offers it first"
+t_has "$out" "port forward web: outside -> 10.0.0.5:8080 (tcp)" "the port forwards are listed"
+t_hasnt "$out" "10.0.0.30" "a disabled one is left out"
+t_has "$out" "keep these 1 port forward(s) open?" "keeping them is asked"
+_c=$(cat "$(newest)/commands-router.txt")
+t_has "$_c" 'iifname "eth1" ip daddr 10.0.0.5 tcp dport 8080 accept comment "bt-fwd-0"' "a kept forward is allowed to its inside address and port"
+t_has "$_c" 'iifname "eth1" drop' "everything else from outside dropped"
+t_has "$_c" "cat > /etc/bt_fw.nft" "the rules are kept in /etc"
+t_has "$_c" "uci set firewall.bt_fw=include" "and loaded by fw4 at every reload and boot"
+t_hasnt "$_c" "sudo" "no sudo on OpenWRT (root)"
+t_fail "a dry run sends nothing" grep -q 'bt_fw' "$D/ow.log"
+out=$(run $OWR --batch --no-protected --apply 2>&1)
+t_has "$out" "[+] router: rules on, scored services still answer" "applied and checked"
+t_ok "the include is set" grep -q 'uci set firewall.bt_fw=include' "$D/ow.log"
+t_has "$(cat "$O/nw20-router.undo")" "uci -q delete firewall.bt_fw" "the undo takes the include out"
+t_has "$(cat "$O/nw20-router.undo")" "nft delete table inet bt_fw" "and the table"
+out=$(run $OWR --no-forwards --batch 2>&1)
+t_hasnt "$(cat "$(newest)/commands-router.txt")" "bt-fwd-" "--no-forwards: no forward kept"
+if command -v nft >/dev/null 2>&1 && nft -c -f /dev/null >/dev/null 2>&1; then
+    sed -n "/^cat > \/etc\/bt_fw.nft/,/^BTNFT/p" "$(newest)/commands-router.txt" | sed '1d;$d' >"$T_TMP/ow.nft"
+    t_ok "the real nft accepts the OpenWRT ruleset" nft -c -f "$T_TMP/ow.nft"
+fi
 t_done

@@ -4,7 +4,7 @@
 # NAME:     Firewall ruleset
 # ROLE:     Network  (wave 2, after NW-01 backup; one device at a time)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.1.0
+# VERSION:  1.2.0
 #
 # PURPOSE
 #   Puts a short, readable set of rules at the TOP of the network firewall
@@ -23,7 +23,9 @@
 #   Every rule is named bt-... so it is easy to see, and the old rules are
 #   left where they were (below ours).  Nothing is deleted.
 #
-#   Brands: paloalto, cisco-asa, fortigate, mikrotik, linux (a Linux router:
+#   Brands: paloalto, cisco-asa, fortigate, mikrotik, openwrt (its own
+#   nftables table bt_fw, loaded again by fw4 at every reload and boot through
+#   a uci include; the router's port forwards are kept open, asked), linux (a Linux router:
 #   its own nftables table).  pfSense / OPNsense: the same plan as web GUI
 #   steps.  Cisco IOS, VyOS: the plan is shown, not applied.
 #
@@ -85,6 +87,8 @@
 #   --out-allow ADDR:PORTS   another destination the servers may reach (repeat)
 #   --threat           threat prevention on the scored rules (asked otherwise)
 #   --remove           take out every bt- rule this script put on the device(s)
+#   --no-forwards      OpenWRT: do not keep the router's port forwards open
+#                      (asked otherwise, default keep)
 #   --user NAME / --ask-password / --enable-env / --legacy-ssh   as NW-21
 #   --wait N           seconds before the checks (default 5)
 #   --commit-wait N    Palo Alto: at most this many seconds for the commit
@@ -1632,7 +1636,7 @@ cc_finish() {
 }
 # <<< BT-LIB
 
-VENDORS="cisco-ios cisco-asa paloalto fortigate vyos mikrotik linux pfsense opnsense"
+VENDORS="cisco-ios cisco-asa paloalto fortigate vyos mikrotik linux pfsense opnsense openwrt"
 
 usage() {
     cat <<'USAGE'
@@ -1651,6 +1655,7 @@ NW-20 Firewall ruleset - only the scored services in, everything else blocked; c
   --dns IP,... / --ntp IP / --out-allow ADDR:PORTS   what they may still reach
   --threat             threat prevention on the scored rules
   --remove             take out every bt- rule this script added
+  --no-forwards         OpenWRT: do not keep the router's port forwards open (asked)
   --user NAME / --ask-password / --enable-env / --legacy-ssh
   --wait N / --commit-wait N / --timer N
   --no-color           no colours
@@ -1662,7 +1667,7 @@ USAGE
 NL='
 '
 HOSTS=""; DEVICES=""; DEFUSER="admin"; ASK=0; ENABLE=0; LEGACY=0; COLOR=1
-ALLOWS=""; SFILE=""; SCAN=""; TEAM=""; REMOTE=""; LOGINP=""; OUTSIDE=""; INSIDE=""; RESTRICT=""; DNS=""; NTP=""; OUTALLOW=""; THREAT=""; REMOVE=0
+KEEPFWD=""; DEFUSER_SET=0; ALLOWS=""; SFILE=""; SCAN=""; TEAM=""; REMOTE=""; LOGINP=""; OUTSIDE=""; INSIDE=""; RESTRICT=""; DNS=""; NTP=""; OUTALLOW=""; THREAT=""; REMOVE=0
 WAIT=5; CWAIT=120; TIMER=120
 num() { case "$2" in ''|*[!0-9]*) cc_die 2 "$1 needs a whole number" ;; esac; }
 okname() { case "$2" in ''|*[!A-Za-z0-9_./:-]*) cc_die 2 "$1: letters, digits and . _ / : - only" ;; esac; }
@@ -1672,7 +1677,7 @@ while [ $# -gt 0 ]; do
         --apply)        CC_APPLY=1; shift ;;
         --hosts)        [ $# -ge 2 ] || cc_die 2 "--hosts needs a file"; [ -r "$2" ] || cc_die 2 "--hosts: cannot read $2"; HOSTS=$2; shift 2 ;;
         --device)       [ $# -ge 2 ] || cc_die 2 "--device needs NAME,ADDRESS,VENDOR"; DEVICES="$DEVICES$2$NL"; shift 2 ;;
-        --user)         [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; shift 2 ;;
+        --user)         [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; DEFUSER_SET=1; shift 2 ;;
         --ask-password) ASK=1; shift ;;
         --enable-env)   ENABLE=1; shift ;;
         --legacy-ssh)   LEGACY=1; shift ;;
@@ -1690,6 +1695,7 @@ while [ $# -gt 0 ]; do
         --out-allow)    [ $# -ge 2 ] || cc_die 2 "--out-allow needs ADDR:PORTS"; OUTALLOW="$OUTALLOW$2$NL"; shift 2 ;;
         --threat)       THREAT=y; shift ;;
         --remove)       REMOVE=1; shift ;;
+        --no-forwards)  KEEPFWD=n; shift ;;
         --wait)         num "$1" "${2:-}"; WAIT=$2; shift 2 ;;
         --commit-wait)  num "$1" "${2:-}"; CWAIT=$2; shift 2 ;;
         --timer)        num "$1" "${2:-}"; TIMER=$2; shift 2 ;;
@@ -1698,7 +1704,6 @@ while [ $# -gt 0 ]; do
         *)              cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-[ -n "$HOSTS$DEVICES" ] || cc_die 2 "give the firewall: --device NAME,ADDRESS,VENDOR (try --help)"
 IPRE='[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}'
 isip()   { printf '%s' "$1" | grep -q "^$IPRE\$"; }
 iscidr() { printf '%s' "$1" | grep -q "^$IPRE\\(/[0-9]\\{1,2\\}\\)\\{0,1\\}\$"; }
@@ -1711,6 +1716,10 @@ for _t in $(printf '%s' "$DNS" | tr ',' ' '); do isip "$_t" || cc_die 2 "--dns: 
 [ -z "$NTP" ] || isip "$NTP" || cc_die 2 "--ntp: an IPv4 address"
 
 cc_init "NW-20" "Firewall ruleset" changes
+# No firewall named, no host list and nobody to ask: stop before a run folder.
+if [ -z "$HOSTS$DEVICES" ] && ! _cc_can_ask && ! cc_net_hostfile >/dev/null; then
+    cc_die 2 "give the firewall: --device NAME,ADDRESS,VENDOR (try --help)"
+fi
 # shellcheck disable=SC2034  # read by cc_color_init
 [ "$COLOR" = 1 ] || CC_NOCOLOR=1
 cc_color_init
@@ -1729,16 +1738,22 @@ CONFIGS="$CC_OUT/net-configs"; mkdir -p "$CONFIGS" 2>/dev/null
 SSH=${BT_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
 SSHPASS_BIN=${BT_SSHPASS:-$(cc_which sshpass)} || cc_die 3 "sshpass not found (apt install sshpass)"
 cc_have mkfifo || cc_die 3 "mkfifo not found"
+cc_show "$C_CYN" "NW-20 Firewall ruleset | from $CC_HOST | results in $CC_RUN_DIR"
+cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it   ${C_GRN}[ok]${C_OFF} fine   ${C_YEL}[~] would change${C_OFF}   ${C_GRN}[+] changed${C_OFF}   ${C_RED}[x] failed${C_OFF}"
+# Which firewall, and its password, when no flag said.
+if [ -z "$HOSTS$DEVICES" ]; then
+    cc_net_ask_devices "$DEFUSER" "$DEFUSER_SET" || cc_die 2 "no firewall given (or use --device NAME,ADDRESS,VENDOR)"
+    HOSTS=$CC_NET_HOSTS; DEVICES=$CC_NET_DEVICES
+fi
 if [ "$ASK" = 1 ]; then
     [ -r /dev/tty ] || cc_die 3 "--ask-password needs a terminal; set BT_NET_PASS"
     printf 'Device password: ' >/dev/tty; stty -echo </dev/tty 2>/dev/null
     read -r BT_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
+else
+    cc_net_ask_password
 fi
 [ -n "${BT_NET_PASS:-}" ] || cc_die 3 "the device password is needed: set BT_NET_PASS or use --ask-password"
 [ "$ENABLE" = 1 ] && [ -z "${BT_NET_ENABLE:-}" ] && cc_die 3 "--enable-env: set BT_NET_ENABLE"
-
-cc_show "$C_CYN" "NW-20 Firewall ruleset | from $CC_HOST | results in $CC_RUN_DIR"
-cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it   ${C_GRN}[ok]${C_OFF} fine   ${C_YEL}[~] would change${C_OFF}   ${C_GRN}[+] changed${C_OFF}   ${C_RED}[x] failed${C_OFF}"
 
 # ---- Devices ------------------------------------------------------------------------------
 vendor_of() {
@@ -1748,6 +1763,7 @@ vendor_of() {
         /paloalto|palo alto|pan-os|panos/ { print "paloalto"; exit }
         /fortigate|fortinet|fortios/ { print "fortigate"; exit }
         /vyos|vyatta/ { print "vyos"; exit }
+        /openwrt|lede|luci/ { print "openwrt"; exit }
         /opnsense/ { print "opnsense"; exit }
         /pfsense/ { print "pfsense"; exit }
         /mikrotik|routeros/ { print "mikrotik"; exit }
@@ -1781,7 +1797,7 @@ sshopts() {
     [ "$LEGACY" = 1 ] && set -- "$@" -o KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group1-sha1 -o HostKeyAlgorithms=+ssh-rsa -o Ciphers=+aes128-cbc,aes256-cbc,3des-cbc
     printf '%s\n' "$@"
 }
-read_mode() { case "$1" in mikrotik|linux) echo exec ;; *) echo stdin ;; esac; }
+read_mode() { case "$1" in mikrotik|linux|openwrt) echo exec ;; *) echo stdin ;; esac; }
 en() { case "$1" in cisco-*) [ "$ENABLE" = 1 ] && printf 'enable\n%s\n' "$BT_NET_ENABLE" ;; esac; return 0; }
 read_cmds() {
     case "$1" in
@@ -1790,6 +1806,8 @@ read_cmds() {
         fortigate) printf 'show system interface\nshow firewall vip\nshow firewall policy\nexit\n' ;;
         mikrotik)  printf ':put "===if"; /interface print terse without-paging; :put "===filter"; /ip firewall filter print terse without-paging' ;;
         linux)     printf 'echo ===if; ip -o link show; echo ===nft; if [ "$(id -u)" = 0 ]; then nft list ruleset; else sudo -n nft list ruleset; fi' ;;
+        # OpenWRT: the interfaces, which one is wan, the port forwards (uci) and nft.
+        openwrt)   printf 'echo ===if; ip -o link show; echo ===wan; uci -q get network.wan.device || uci -q get network.wan.ifname; echo ===fwd; uci -q show firewall | grep "^firewall\\.@redirect\\["; echo ===nft; nft list ruleset' ;;
     esac
 }
 readdev() {
@@ -2270,14 +2288,36 @@ while IFS='|' read -r _n _a _v _u _p; do
         if [ -n "$_pb" ]; then awk -v pb="$_pb" '{ l[NR] = $0 pb } END { for (i = NR; i > 0; i--) print l[i] }' "$W/mt" >>"$W/fix.$_n"; else cat "$W/mt" >>"$W/fix.$_n"; fi
         printf '/ip firewall filter remove [find comment~"^bt-"]\n' >"$W/undo.$_n"
         ;;
-    linux)
+    linux|openwrt)
         sed -n '/^===if/,/^===/p' "$_raw.c" | awk -F': ' 'NF >= 2 && $1 ~ /^[0-9]+$/ { n = $2; sub(/@.*/, "", n); if (n != "lo") print n }' >"$W/zones"
-        pick "$W/zones" "$_n: which interface is OUTSIDE?" 'wan|outside|eth0|ens3|ens18|enp' "$OUTSIDE" || { _ok=0; cc_show "$C_RED" "  [x] no interfaces read"; }
+        # OpenWRT says which device is wan: offered first.
+        _wre='wan|outside|eth0|ens3|ens18|enp'
+        if [ "$_v" = openwrt ]; then _wd=$(sed -n '/^===wan/,/^===/p' "$_raw.c" | sed -n '2p' | tr -d "' "); [ -n "$_wd" ] && grep -qxF "$_wd" "$W/zones" && _wre="^$_wd\$"; fi
+        pick "$W/zones" "$_n: which interface is OUTSIDE?" "$_wre" "$OUTSIDE" || { _ok=0; cc_show "$C_RED" "  [x] no interfaces read"; }
         _out=$CC_PICK
         grep -q 'table inet bt_fw' "$_raw.c" && cc_show "$C_YEL" "  [*] the bt_fw table from an earlier run is there: it is replaced"
+        # OpenWRT port forwards (DNAT from wan): the scored paths, most likely.
+        # After DNAT the forward chain sees the inside address and port.
+        : >"$W/fwd"
+        if [ "$_v" = openwrt ]; then
+            sed -n '/^===fwd/,/^===/p' "$_raw.c" | tr -d "'" | awk -F'[].=[]' '/^firewall\.@redirect\[/ { i = $3; k = $5; v = substr($0, index($0, "=") + 1); R[i, k] = v; I[i] = 1 }
+                END { for (i in I) { if (R[i, "enabled"] == "0") continue; if (R[i, "src"] != "" && R[i, "src"] != "wan") continue; if (R[i, "target"] != "" && R[i, "target"] != "DNAT") continue
+                      d = R[i, "dest_ip"]; p = R[i, "dest_port"]; if (p == "") p = R[i, "src_dport"]; pr = R[i, "proto"]; if (pr == "") pr = "tcp udp"
+                      if (d ~ /^[0-9.]+$/ && p ~ /^[0-9]+(-[0-9]+)?$/) print i " " d " " p " " pr " " R[i, "name"] } }' | sort -n >"$W/fwd"
+            if [ -s "$W/fwd" ]; then
+                while read -r _fi _fd _fp _fpr _fn; do cc_show "$C_CYN" "  [-] port forward ${_fn:-#$_fi}: outside -> $_fd:$_fp ($_fpr)"; done <"$W/fwd"
+                _kf=$KEEPFWD
+                [ -z "$_kf" ] && { cc_ask "$_n: keep these $(grep -c . "$W/fwd") port forward(s) open? (they are most likely the scored services; NW-07 flags ones that look planted)" Y "yes, keep them open" "no, only the scored boxes and ports above" && _kf=y || _kf=n; }
+                [ "$_kf" = y ] || : >"$W/fwd"
+            else cc_show "$C_GRY" "  [-] no port forwards on $_n"; fi
+        fi
         {
             printf 'table inet bt_fw\ndelete table inet bt_fw\ntable inet bt_fw {\n    chain forward {\n        type filter hook forward priority -10; policy accept;\n'
             printf '        ct state established,related accept comment "bt-established"\n'
+            while read -r _fi _fd _fp _fpr _fn; do
+                for _x in $_fpr; do case "$_x" in tcp|udp) printf '        iifname "%s" ip daddr %s %s dport %s accept comment "bt-fwd-%s"\n' "$_out" "$_fd" "$_x" "$_fp" "$_fi" ;; esac; done
+            done <"$W/fwd"
+
             while IFS="$US" read -r _k _nm _s _d _t _ud _w; do
                 case "$_k" in
                     team) printf '        ip saddr { %s } accept comment "%s"\n' "$(printf '%s' "$_s" | sed 's/,/, /g')" "$_nm" ;;
@@ -2297,13 +2337,21 @@ while IFS='|' read -r _n _a _v _u _p; do
             cat "$W/nftchk" >>"$CC_LOG"
             grep -qi 'syntax error\|unexpected' "$W/nftchk" && { _ok=0; cc_show "$C_RED" "  [x] nft refuses the ruleset: $(head -n 1 "$W/nftchk")"; }
         fi
+        if [ "$_v" = openwrt ]; then
+            # Kept in /etc and loaded by fw4 at every reload and boot (a uci
+            # include); loaded now with nft.  Root on OpenWRT: no sudo.
+            { printf "cat > /etc/bt_fw.nft <<'BTNFT'\n"; cat "$W/nft.$_n"; printf "BTNFT\n"
+              printf "nft -f /etc/bt_fw.nft || exit 1\nuci set firewall.bt_fw=include && uci set firewall.bt_fw.type=nftables && uci set firewall.bt_fw.path=/etc/bt_fw.nft && uci set firewall.bt_fw.position=ruleset-post && uci commit firewall\n"; } >"$W/fix.$_n"
+            printf 'nft delete table inet bt_fw; uci -q delete firewall.bt_fw; uci commit firewall; rm -f /etc/bt_fw.nft\n' >"$W/undo.$_n"
+        else
         { printf "cat > /tmp/bt_fw.nft <<'BTNFT'\n"; cat "$W/nft.$_n"; printf "BTNFT\n"; printf "if [ \"\$(id -u)\" = 0 ]; then nft -f /tmp/bt_fw.nft; else sudo -n nft -f /tmp/bt_fw.nft; fi; _r=\$?; rm -f /tmp/bt_fw.nft; exit \$_r\n"; } >"$W/fix.$_n"
         printf 'if [ "$(id -u)" = 0 ]; then nft delete table inet bt_fw; else sudo -n nft delete table inet bt_fw; fi\n' >"$W/undo.$_n"
+        fi
         ;;
     esac
     [ "$_ok" = 1 ] || { cc_show "$C_RED" "  [x] $_n: not built (see above)"; continue; }
     cp "$W/fix.$_n" "$CC_RUN_DIR/commands-$_n.txt"
-    { printf '%s (%s): outside = %s%s\n' "$_n" "$_v" "$_out" "$([ -n "${_in:-}" ] && [ "$_v" != mikrotik ] && [ "$_v" != linux ] && echo ", servers = $_in")"
+    { printf '%s (%s): outside = %s%s\n' "$_n" "$_v" "$_out" "$([ -n "${_in:-}" ] && [ "$_v" != mikrotik ] && [ "$_v" != linux ] && [ "$_v" != openwrt ] && echo ", servers = $_in")"
       printf '  top of the rule list, in this order:\n'; awk -F"$US" '{ printf "  %2d. %s\n", NR, $7 }' "$W/rules"
       printf '  everything below stays as it was\n  commands: commands-%s.txt\n\n' "$_n"; } >>"$CC_RUN_DIR/plan.txt"
     cc_show "$C_GRN" "  [ok] built: $NRULES rule(s) on top, outside = $_out; exact commands in commands-$_n.txt"
@@ -2367,7 +2415,7 @@ try_login() {
 undo_lines() {
     case "$1" in
         paloalto) printf 'configure\n'; cat "$W/undo.$2"; printf 'commit\nexit\n' ;;
-        mikrotik|linux) cat "$W/undo.$2" ;;
+        mikrotik|linux|openwrt) cat "$W/undo.$2" ;;
         *) cat "$W/undo.$2" ;;
     esac
 }
