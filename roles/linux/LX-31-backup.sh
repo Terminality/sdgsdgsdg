@@ -162,7 +162,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$MAXMB" in ''|*[!0-9]*) cc_die 2 "--max-mb needs a whole number" ;; esac
-case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
+cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 
 cc_color_init
 cc_init "LX-31" "Backup" readonly
@@ -219,8 +219,7 @@ find_webroots() {
 
 header "QUESTIONS (Enter = the default)"
 if [ -z "$BOX" ]; then
-    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "o=other"
-    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
+    cc_box_ask o "${R:-}"
 fi
 # Folders that matter for each scored box, beyond /etc and the web roots.
 _boxp=""

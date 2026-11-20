@@ -130,7 +130,7 @@ while [ $# -gt 0 ]; do
         *)              cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
+cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 for _n in "$LEN" "$TIMER"; do case "$_n" in ''|*[!0-9]*) cc_die 2 "--length and --timer need whole numbers" ;; esac; done
 [ "$LEN" -ge 12 ] || cc_die 2 "--length must be at least 12"
 
@@ -214,8 +214,7 @@ fi
 case "$SMTPVIA" in dovecot) printf 'NOTE|Postfix logs SMTP users in through Dovecot: they get the same new passwords\n' >>"$W/notes" ;; esac
 
 if [ -z "$BOX" ]; then
-    cc_choose "Which box is this?" w "s=splunk" "w=webmail" "e=ecomm" "o=other"
-    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
+    cc_box_ask w "${R:-}"
 fi
 [ "$BOX" = webmail ] && cc_show "$C_YEL" "  webmail: the scored IMAP and webmail checks log in as a mail user. Put that user on the protected list, or report its new password."
 

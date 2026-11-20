@@ -128,7 +128,7 @@ while [ $# -gt 0 ]; do
         *)          cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
+cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 for _n in "$DAYS" "$TIMER"; do case "$_n" in ''|*[!0-9]*) cc_die 2 "--days and --timer need whole numbers" ;; esac; done
 
 cc_init "LX-21" "Account lockdown" changes
@@ -153,8 +153,7 @@ cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it
 [ -n "$R" ] && cc_show "$C_GRY" "Acting on $R as if it were / (files edited directly)"
 
 if [ -z "$BOX" ]; then
-    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "o=other"
-    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
+    cc_box_ask o "${R:-}"
 fi
 case "$BOX" in splunk|webmail)
     cc_show "$C_YEL" "  SSH is SCORED on $BOX ($BOX-ssh): the scoring engine logs in as some account. Keep that one (put it on the protected list)." ;;

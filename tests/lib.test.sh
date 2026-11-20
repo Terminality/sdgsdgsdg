@@ -318,4 +318,26 @@ echo "# tampered" >>"$T_TMP/dist2/w.sh"
 r=$(run "$T_TMP/dist2/w.sh" --out "$OUT" 2>&1); t_eq "$?" 3 "and an edited one is refused"
 t_has "$r" "w.sh.sha256" "naming the hash file"
 
+t_start "which box: the shared list and the guess"
+B="$T_TMP/boxroot"
+mk box 'BOX=${1:-${BOX:-}}; cc_box_valid "${1:-}" || { echo "invalid ${1:-}"; exit 0; }; cc_box_ask "${2:-o}" "$B"; echo "BOX=$BOX"'
+sed -i "s|\$B|$B|" "$S/box.sh"
+guess() { rm -rf "$B"; mkdir -p "$B"; for _f in "$@"; do mkdir -p "$B/${_f%/*}"; : >"$B/$_f"; done; }
+bx() { (export BT_NO_TTY=1; run "$S/box.sh" "$@" 2>&1); }
+guess;                                  t_has "$(bx '' o)" "BOX=other" "nothing found: other"
+t_hasnt "$(bx '' o)" "looks like" "and no guess is shown"
+guess etc/gitea/app.ini;                t_has "$(bx '' o)" "BOX=gitea" "Gitea is found"
+t_has "$(bx '' o)" "This box looks like: gitea (/etc/gitea/app.ini)" "and says why"
+guess opt/splunk/bin/splunk;            t_has "$(bx '' e)" "BOX=splunk" "Splunk wins over a script default"
+guess etc/postfix/main.cf etc/dovecot/dovecot.conf; t_has "$(bx '' o)" "BOX=webmail" "postfix and dovecot: webmail"
+guess etc/exports; echo '/srv 10.0.0.0/24(rw)' >"$B/etc/exports"; t_has "$(bx '' o)" "BOX=fileshare" "an NFS export: fileshare"
+guess etc/samba/smb.conf; printf '[global]\n[homes]\n' >"$B/etc/samba/smb.conf"; t_has "$(bx '' o)" "BOX=other" "Samba with no shares is not a file share"
+printf '[global]\n[data]\npath=/d\n' >"$B/etc/samba/smb.conf"; t_has "$(bx '' o)" "BOX=fileshare" "Samba with a share: fileshare"
+guess etc/nginx/nginx.conf;             t_has "$(bx '' o)" "BOX=web" "a web server: web"
+t_has "$(bx '' e)" "BOX=ecomm" "but a web server does not replace the ecomm default"
+t_has "$(bx '' w)" "BOX=webmail" "or the webmail default"
+t_has "$(bx gitea o)" "BOX=gitea" "every box kind is valid"
+t_has "$(bx nope o)" "invalid nope" "an unknown one is not"
+t_has "$(BOX=fileshare bx '' o)" "BOX=fileshare" "a given --box is kept, no question"
+
 t_done

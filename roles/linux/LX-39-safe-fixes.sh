@@ -209,7 +209,7 @@ while [ $# -gt 0 ]; do
 done
 case "$TIMER" in ''|*[!0-9]*) cc_die 2 "--timer needs a whole number of seconds" ;; esac
 [ "$TIMER" -ge 2 ] || cc_die 2 "--timer must be at least 2 seconds"
-case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
+cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 for _n in $(printf '%s,%s' "$ONLY" "$SKIP" | tr ',' ' '); do
     case " $ALL_FIXES " in *" $_n "*) ;; *) cc_die 2 "unknown fix '$_n' (see --list)" ;; esac
 done
@@ -715,8 +715,7 @@ fix_desc() { list_fixes | awk -v f="$1" '$1 == f { $1 = ""; sub(/^ +/, ""); prin
 
 header "QUESTIONS (Enter = the default in capitals)"
 if [ -z "$BOX" ]; then
-    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "o=other"
-    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
+    cc_box_ask o "${R:-}"
 fi
 case "$BOX" in
     splunk)  cc_show "$C_GRY" "    Scored here: chrony (123/udp), Splunk management (8089), search, SSH, ping. LX-39 touches none of them." ;;

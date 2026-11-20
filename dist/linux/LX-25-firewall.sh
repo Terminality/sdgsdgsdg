@@ -138,12 +138,12 @@
 #   with the prefix "BT-DROP" (journalctl -k | grep BT-DROP).
 # =============================================================================
 
-# >>> BT-LIB  (lib/lib.sh 0.6.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.7.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.6.0
+# VERSION:  0.7.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -214,7 +214,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.6.0"
+CC_LIB_VERSION="0.7.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -1541,6 +1541,44 @@ cc_hosts_rows() {
 # -----------------------------------------------------------------------------
 # cc_net_hostfile -> the first host list lying around (config/hosts.txt,
 #   hosts.txt in the current folder), or nothing.
+# ---- Which box is this -------------------------------------------------------
+# One list of box kinds for every script (--box NAME and the question).
+CC_BOXES="splunk webmail ecomm fileshare gitea web other"
+# cc_box_valid NAME -> 0 if NAME is empty or a known box kind.
+cc_box_valid() { case "$1" in ''|splunk|webmail|ecomm|fileshare|gitea|web|other) return 0 ;; esac; return 1; }
+# cc_box_detect [ROOT] -> CC_BOX_GUESS (a box kind or "") and CC_BOX_WHY (the
+#   file that shows it).  Only looks at files; changes nothing.
+cc_box_detect() {
+    _cc_bd_r=${1:-}; CC_BOX_GUESS=""; CC_BOX_WHY=""
+    _cc_bd() { for _cc_bd_f in "$@"; do [ -e "$_cc_bd_r$_cc_bd_f" ] && { CC_BOX_WHY=$_cc_bd_f; return 0; }; done; return 1; }
+    if _cc_bd /opt/splunk/bin/splunk /opt/splunk/etc; then CC_BOX_GUESS=splunk
+    elif _cc_bd /etc/roundcube /var/lib/roundcube /usr/share/roundcube /usr/share/webapps/roundcube /var/www/roundcube /var/www/html/roundcube /usr/share/roundcubemail; then CC_BOX_GUESS=webmail
+    elif [ -e "$_cc_bd_r/etc/postfix/main.cf" ] && [ -e "$_cc_bd_r/etc/dovecot/dovecot.conf" ]; then CC_BOX_GUESS=webmail; CC_BOX_WHY="postfix and dovecot"
+    elif _cc_bd /etc/gitea/app.ini /var/lib/gitea/custom/conf/app.ini /usr/local/bin/gitea /usr/bin/gitea /opt/gitea; then CC_BOX_GUESS=gitea
+    elif [ -r "$_cc_bd_r/etc/samba/smb.conf" ] && grep -Eiv '^[[:space:]]*\[(global|homes|printers|print\$)\]' "$_cc_bd_r/etc/samba/smb.conf" 2>/dev/null | grep -Eq '^[[:space:]]*\['; then CC_BOX_GUESS=fileshare; CC_BOX_WHY="shares in /etc/samba/smb.conf"
+    elif [ -r "$_cc_bd_r/etc/exports" ] && grep -Eq '^[[:space:]]*/' "$_cc_bd_r/etc/exports" 2>/dev/null; then CC_BOX_GUESS=fileshare; CC_BOX_WHY="exports in /etc/exports"
+    elif _cc_bd /etc/nginx/nginx.conf /etc/apache2/apache2.conf /etc/apache2/httpd.conf /etc/httpd/conf/httpd.conf /etc/lighttpd/lighttpd.conf /etc/caddy/Caddyfile; then CC_BOX_GUESS=web
+    fi
+}
+# cc_box_ask DEFAULT [ROOT] [QUESTION]
+#   Sets BOX (a box kind) when it is empty: the same question in every script,
+#   with the guess from cc_box_detect as the answer for Enter.  DEFAULT is the
+#   script's own default letter (s w e f g b o); a guess only replaces it when
+#   it is sure (splunk, webmail, gitea, fileshare), or the default is "other".
+cc_box_ask() {
+    [ -n "${BOX:-}" ] && return 0
+    _cc_ba_d=$1; cc_box_detect "${2:-}"
+    case "$CC_BOX_GUESS" in
+        splunk)    _cc_ba_g=s ;; webmail) _cc_ba_g=w ;; gitea) _cc_ba_g=g ;; fileshare) _cc_ba_g=f ;;
+        web)       _cc_ba_g=b; [ "$_cc_ba_d" = o ] || _cc_ba_g="" ;;
+        *)         _cc_ba_g="" ;;
+    esac
+    [ -n "$CC_BOX_GUESS" ] && cc_show "${C_GRY:-}" "  This box looks like: $CC_BOX_GUESS ($CC_BOX_WHY)"
+    [ -n "$_cc_ba_g" ] && _cc_ba_d=$_cc_ba_g
+    cc_choose "${3:-Which box is this?}" "$_cc_ba_d" "s=splunk" "w=webmail" "e=ecomm" "f=fileshare: Samba or NFS" "g=gitea" "b=web: a ticket, help-desk or shop site" "o=other"
+    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; f) BOX=fileshare ;; g) BOX=gitea ;; b) BOX=web ;; *) BOX=other ;; esac
+}
+
 cc_net_hostfile() {
     for _cc_nh in config/hosts.txt hosts.txt; do [ -r "$_cc_nh" ] && { printf '%s' "$_cc_nh"; return 0; }; done
     return 1
@@ -1700,7 +1738,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$TIMEOUT" in ''|*[!0-9]*) cc_die 2 "--confirm-timeout needs a whole number of seconds" ;; esac
-case "$BOX" in ''|splunk|webmail|ecomm|fileshare|gitea|web|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm, fileshare, gitea, web or other" ;; esac
+cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 case "$BACKEND" in ''|nft|iptables) ;; *) cc_die 2 "--backend must be nft or iptables" ;; esac
 # valid_cidr ADDR -> IPv4 address or network (a.b.c.d or a.b.c.d/n), or IPv6.
 valid_cidr() {
@@ -1904,10 +1942,7 @@ if _sshd=$(cc_which sshd) && [ -z "${BT_SS:-}" ]; then SSHPORTS=$("$_sshd" -T 2>
 
 # Which box: its scored ports are kept without asking (--box).
 if [ -z "$BOX" ]; then
-    if _cc_can_ask; then
-        cc_choose "Which box is this? (its scored ports stay open)" o "s=splunk" "w=webmail" "e=ecomm" "f=fileshare: Samba or NFS (139, 445, 2049, 111)" "g=gitea (3000, 2222, 80, 443)" "b=web: a ticket, help-desk or shop site (80, 443)" "o=other"
-        case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; f) BOX=fileshare ;; g) BOX=gitea ;; b) BOX=web ;; *) BOX=other ;; esac
-    else BOX=other; fi
+    cc_box_ask o "${R:-}" "Which box is this? (its scored ports stay open)"
 fi
 case "$BOX" in
     splunk)    BOXPORTS="22/tcp,8000/tcp,8089/tcp,9997/tcp,123/udp" ;;

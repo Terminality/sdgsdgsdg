@@ -157,7 +157,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$LEVEL" in ''|safe|service|access) ;; *) cc_die 2 "--level must be safe, service or access" ;; esac
-case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
+cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 case "$TIMER" in ''|*[!0-9]*) cc_die 2 "--timer needs a whole number of seconds" ;; esac
 for _a in $(printf '%s' "$ONLY,$SKIP" | tr ',' ' '); do
     case " $ALL_ACTIONS " in *" $_a "*) ;; *) cc_die 2 "unknown fix '$_a' (see --help)" ;; esac
@@ -212,8 +212,7 @@ cc_show "$C_GRY" "Server: $VER (logged in with $MYOPT)"
 
 # ---- Box and level --------------------------------------------------------------------
 if [ -z "$BOX" ]; then
-    cc_choose "Which box is this?" e "s=splunk" "w=webmail" "e=ecomm" "o=other"
-    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
+    cc_box_ask e "${R:-}"
 fi
 case "$BOX" in
     ecomm)   cc_show "$C_GRY" "  ecomm: the store is scored (ecomm-http). It must still load after every change: that is checked." ;;

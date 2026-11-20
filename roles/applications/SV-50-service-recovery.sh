@@ -153,7 +153,7 @@ while [ $# -gt 0 ]; do
         *)              cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-case "$BOX" in ''|splunk|webmail|ecomm|fileshare|gitea|web|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm, fileshare, gitea, web or other" ;; esac
+cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 for _n in "$WATCH" "$WCOUNT"; do case "$_n" in *[!0-9]*) cc_die 2 "--watch and --watch-count need whole numbers" ;; esac; done
 [ -z "$WATCH" ] || [ "$WATCH" -ge 5 ] || cc_die 2 "--watch must be at least 5 seconds"
 for _k in $(printf '%s' "$FIXK" | tr ',' ' '); do
@@ -237,8 +237,7 @@ done
 [ -s "$W/rows" ] || { cc_show "$C_GRY" "None of the services this script knows is installed here."; rm -rf "$W"; cc_finish; exit 0; }
 
 if [ -z "$BOX" ] && [ -z "$WATCH" ]; then
-    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "f=fileshare: Samba or NFS" "g=gitea" "b=web: a ticket, help-desk or shop site" "o=other"
-    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; f) BOX=fileshare ;; g) BOX=gitea ;; b) BOX=web ;; *) BOX=other ;; esac
+    cc_box_ask o "${R:-}"
 fi
 case "$BOX" in
     splunk)    SCORED="splunk ssh ntp" ;;

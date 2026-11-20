@@ -127,7 +127,7 @@ while [ $# -gt 0 ]; do
         *)          cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
+cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 case "$TIMER" in ''|*[!0-9]*) cc_die 2 "--timer needs a whole number" ;; esac
 for _a in $(printf '%s' "$ONLY,$SKIP" | tr ',' ' '); do
     case " $ALL_FIX " in *" $_a "*) ;; *) cc_die 2 "unknown fix '$_a' ($ALL_FIX)" ;; esac
@@ -168,8 +168,7 @@ if [ ! -s "$W/roots" ]; then
     rm -rf "$W"; cc_finish; exit 0
 fi
 if [ -z "$BOX" ]; then
-    cc_choose "Which box is this?" w "s=splunk" "w=webmail" "e=ecomm" "o=other"
-    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
+    cc_box_ask w "${R:-}"
 fi
 [ "$BOX" = webmail ] && cc_show "$C_GRY" "  webmail: webmail-interactive is scored - the login page is checked after any change."
 
