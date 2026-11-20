@@ -18,7 +18,9 @@
 #
 # OUTPUTS  (all under the --out folder, never next to the script)
 #   <ID>_<host>_<time>.log            everything printed, plus command output
-#   <ID>_<host>_<time>_<name>.csv     describe each CSV and its columns
+#   <ID>_<host>_<time>_<name>.txt     describe each table and its columns
+#                                     (built with cc_csv_new / cc_csv_row; the
+#                                     library turns it into this .txt at the end)
 #   undo-<host>.log                   one line per change, newest last
 #
 # WHAT IT CHANGES
