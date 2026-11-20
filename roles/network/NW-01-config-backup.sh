@@ -166,9 +166,8 @@ cc_init "NW-01" "Network config backup" readonly
 [ "$COLOR" = 1 ] || CC_NOCOLOR=1
 cc_color_init
 # Nothing to read and nobody to ask: stop before making a run folder.
-if [ -z "$HOSTS$DEVICES" ] && ! _cc_can_ask; then
-    _hf=""; for _f in config/hosts.txt hosts.txt; do [ -r "$_f" ] && { _hf=$_f; break; }; done
-    [ -n "$_hf" ] || cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
+if [ -z "$HOSTS$DEVICES" ] && ! _cc_can_ask && ! cc_net_hostfile >/dev/null; then
+    cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
 fi
 cc_use_run_dir
 W="$CC_RUN_DIR/.work"
@@ -179,34 +178,10 @@ cc_show "" "Legend: ${C_GRN}[ok]${C_OFF} saved   ${C_YEL}[*]${C_OFF} saved, some
 
 # ---- 1/3  Which devices, and how to log in --------------------------------------
 header "1/3  devices and login"
-# The host list, when one is lying around and no flag named the devices.
+# No flag named the devices: the host list if there is one, else typed in.
 if [ -z "$HOSTS$DEVICES" ]; then
-    for _f in config/hosts.txt hosts.txt; do
-        [ -r "$_f" ] || continue
-        if cc_ask "Use the host list $_f (the network devices in it)?" Y "yes, read every network device in it" "no, I will type the devices"; then HOSTS=$_f; fi
-        break
-    done
-fi
-# Otherwise ask device by device.
-if [ -z "$HOSTS$DEVICES" ]; then
-    while :; do
-        cc_ask_text "Device address (IP or name)? Enter when done" "" "like 192.168.220.2"
-        _da=$CC_ANSWER; [ -n "$_da" ] || break
-        case "$_da" in *[!A-Za-z0-9._:-]*) cc_show "$C_YEL" "  [*] '$_da' is not an address: skipped"; continue ;; esac
-        cc_choose "What is $_da?" o "o=OpenWRT router" "l=Linux router" "m=MikroTik" "p=pfSense" "n=OPNsense" \
-            "c=Cisco router or switch (IOS)" "a=Cisco ASA" "x=Palo Alto" "f=FortiGate" "v=VyOS"
-        case "$CC_CHOICE" in o) _dv=openwrt ;; l) _dv=linux ;; m) _dv=mikrotik ;; p) _dv=pfsense ;; n) _dv=opnsense ;;
-            c) _dv=cisco-ios ;; a) _dv=cisco-asa ;; x) _dv=paloalto ;; f) _dv=fortigate ;; *) _dv=vyos ;; esac
-        # OpenWRT, pfSense and OPNsense: root runs the commands.
-        _du=$DEFUSER; [ "$USERSET" = 0 ] && case "$_dv" in openwrt|pfsense|opnsense) _du=root ;; esac
-        _dd=router; case "$_dv" in cisco-asa|paloalto|fortigate|pfsense|opnsense) _dd=firewall ;; esac
-        cc_ask_text "A short name for it (letters, digits, - and _)?" "$_dd"; _dn=$CC_ANSWER
-        case "$_dn" in ''|*[!A-Za-z0-9_.-]*) _dn=$_dd ;; esac
-        cc_ask_text "Log in to $_dn as?" "$_du"; _du=${CC_ANSWER:-$_du}
-        DEVICES="$DEVICES$_dn,$_da,$_dv,$_du$NL"
-        cc_ask "Another device?" N "yes, add one more" "no, that is all" || break
-    done
-    [ -n "$DEVICES" ] || cc_die 2 "no devices given (or use --hosts FILE / --device NAME,ADDRESS,VENDOR)"
+    cc_net_ask_devices "$DEFUSER" "$USERSET" || cc_die 2 "no devices given (or use --hosts FILE / --device NAME,ADDRESS,VENDOR)"
+    HOSTS=$CC_NET_HOSTS; DEVICES=$CC_NET_DEVICES
 fi
 # How to log in, when no flag said.
 if [ "$PWSET" = 0 ] && _cc_can_ask; then

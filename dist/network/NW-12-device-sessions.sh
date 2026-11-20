@@ -4,7 +4,7 @@
 # NAME:     Device accounts and sessions
 # ROLE:     Network  (wave 1, first 15 minutes, again every time red team is busy)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   A red team's first move on a firewall or router is to log in with an
@@ -20,6 +20,8 @@
 #   changed - run NW-10 right after.  "Disable" is the brand's most
 #   reversible way:
 #     MikroTik, Linux       disabled / locked (the undo turns it back on)
+#     OpenWRT               password locked (! in /etc/shadow) and the shell
+#                           set to /bin/false; the undo puts both back
 #     Cisco IOS/ASA, VyOS,  removed; the undo puts back the account's own
 #     FortiGate             line(s) from NW-01's saved config (run NW-01 first:
 #                           without that copy there is no undo, and you are told)
@@ -27,12 +29,17 @@
 #   This script's own login (your login account from your address) is never
 #   kicked, and the login account is never disabled.
 #
-#   Brands: cisco-ios, cisco-asa, paloalto, fortigate, vyos, mikrotik, linux.
+#   Brands: cisco-ios, cisco-asa, paloalto, fortigate, vyos, mikrotik, linux,
+#   openwrt (log in as root: accounts from /etc/passwd and /etc/shadow, SSH
+#   sessions from dropbear's connections, web (LuCI) sessions from ubus).
 #   pfSense / OPNsense: listed, check in the web GUI (System > User Manager,
 #   Status > ... ).  FortiGate sessions are shown with the command to end one
 #   (its session numbers change as people log in and out).
 #
 #   QUESTIONS (Enter takes the default in capitals; a flag answers each):
+#     which devices (the host list, or typed)   --hosts FILE / --device SPEC
+#     the device password                       $BT_NET_PASS / --ask-password
+#     your team's addresses                     --team CIDR,...
 #     each session not yours    [k]ick (default when it is from outside
 #                               --team) / [l]eave / [a]ll the rest default
 #     each account to look at   [d]isable (default when new since the first
@@ -83,12 +90,12 @@
 #     your own login account are never kicked: change its password instead.
 # =============================================================================
 
-# >>> BT-LIB  (lib/lib.sh 0.4.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.5.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.4.0
+# VERSION:  0.5.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -159,7 +166,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.4.0"
+CC_LIB_VERSION="0.5.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -1482,6 +1489,64 @@ cc_hosts_rows() {
 }
 
 # -----------------------------------------------------------------------------
+# Network devices: the questions every NW script asks when no flag names them
+# -----------------------------------------------------------------------------
+# cc_net_hostfile -> the first host list lying around (config/hosts.txt,
+#   hosts.txt in the current folder), or nothing.
+cc_net_hostfile() {
+    for _cc_nh in config/hosts.txt hosts.txt; do [ -r "$_cc_nh" ] && { printf '%s' "$_cc_nh"; return 0; }; done
+    return 1
+}
+# cc_net_ask_devices DEFAULT-USER USER-GIVEN(0|1)
+#   Asks which devices to work on, in the password-rotation style:
+#     the host list, when one is found:   "Use the host list config/hosts.txt?"
+#     else device by device:              address, what it is ([o] OpenWRT
+#                                         first), a short name, the login
+#                                         (root for OpenWRT, pfSense, OPNsense
+#                                         unless --user was given)
+#   Sets CC_NET_HOSTS (the list chosen) or appends "NAME,ADDRESS,VENDOR,USER"
+#   lines to CC_NET_DEVICES.  Returns 1 when nothing was chosen.  With nobody
+#   to ask, only a host list found lying around is taken.
+cc_net_ask_devices() {
+    CC_NET_HOSTS=""; CC_NET_DEVICES=""
+    if _cc_nf=$(cc_net_hostfile); then
+        if cc_ask "Use the host list $_cc_nf (the network devices in it)?" Y "yes, use every network device in it" "no, I will type the devices"; then
+            CC_NET_HOSTS=$_cc_nf; return 0
+        fi
+    fi
+    _cc_can_ask || return 1
+    while :; do
+        cc_ask_text "Device address (IP or name)? Enter when done" "" "like 192.168.220.2"
+        _cc_na=$CC_ANSWER; [ -n "$_cc_na" ] || break
+        case "$_cc_na" in *[!A-Za-z0-9._:-]*) cc_show "${C_YEL:-}" "  [*] '$_cc_na' is not an address: skipped"; continue ;; esac
+        cc_choose "What is $_cc_na?" o "o=OpenWRT router" "l=Linux router" "m=MikroTik" "p=pfSense" "n=OPNsense" \
+            "c=Cisco router or switch (IOS)" "a=Cisco ASA" "x=Palo Alto" "f=FortiGate" "v=VyOS"
+        case "$CC_CHOICE" in o) _cc_nv=openwrt ;; l) _cc_nv=linux ;; m) _cc_nv=mikrotik ;; p) _cc_nv=pfsense ;; n) _cc_nv=opnsense ;;
+            c) _cc_nv=cisco-ios ;; a) _cc_nv=cisco-asa ;; x) _cc_nv=paloalto ;; f) _cc_nv=fortigate ;; *) _cc_nv=vyos ;; esac
+        # OpenWRT, pfSense and OPNsense: root runs the commands.
+        _cc_nu=$1; [ "${2:-0}" = 0 ] && case "$_cc_nv" in openwrt|pfsense|opnsense) _cc_nu=root ;; esac
+        _cc_nd=router; case "$_cc_nv" in cisco-asa|paloalto|fortigate|pfsense|opnsense) _cc_nd=firewall ;; esac
+        cc_ask_text "A short name for it (letters, digits, - and _)?" "$_cc_nd"; _cc_nn=$CC_ANSWER
+        case "$_cc_nn" in ''|*[!A-Za-z0-9_.-]*) _cc_nn=$_cc_nd ;; esac
+        cc_ask_text "Log in to $_cc_nn as?" "$_cc_nu"; _cc_nu=${CC_ANSWER:-$_cc_nu}
+        CC_NET_DEVICES="$CC_NET_DEVICES$_cc_nn,$_cc_na,$_cc_nv,$_cc_nu
+"
+        cc_ask "Another device?" N "yes, add one more" "no, that is all" || break
+    done
+    [ -n "$CC_NET_DEVICES" ]
+}
+# cc_net_ask_password -> BT_NET_PASS: used as it is when already set (setting
+#   it is the answer), else typed now, hidden, never logged.  Returns 1 when
+#   there is no password and nobody to ask.
+cc_net_ask_password() {
+    [ -n "${BT_NET_PASS:-}" ] && return 0
+    _cc_can_ask || return 1
+    printf '%s[?]%s Device password (hidden, never saved): ' "${C_CYN:-}" "${C_OFF:-}" >/dev/tty
+    stty -echo </dev/tty 2>/dev/null; read -r BT_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
+    [ -n "$BT_NET_PASS" ]
+}
+
+# -----------------------------------------------------------------------------
 # Kit integrity and finish
 # -----------------------------------------------------------------------------
 
@@ -1531,12 +1596,13 @@ cc_finish() {
 }
 # <<< BT-LIB
 
-VENDORS="cisco-ios cisco-asa paloalto fortigate vyos mikrotik linux pfsense opnsense"
+VENDORS="cisco-ios cisco-asa paloalto fortigate vyos mikrotik linux pfsense opnsense openwrt"
 
 usage() {
     cat <<'USAGE'
 NW-12 Device accounts and sessions - who has an account, who is logged in; kick and disable
   BT_NET_PASS=pw sh NW-12-device-sessions.sh --hosts FILE | --device SPEC [--team CIDR] [--apply]
+  sh NW-12-device-sessions.sh              asks which devices, the password and your team
 
   --hosts FILE / --device NAME,ADDRESS,VENDOR[,USER[,PORT]]
   --user NAME        default login account (admin)
@@ -1555,14 +1621,14 @@ USAGE
 
 NL='
 '
-HOSTS=""; DEVICES=""; DEFUSER="admin"; ASK=0; ENABLE=0; TEAM=""; KNOWN=""; ME=""; CONFIGS=""; LEGACY=0; COLOR=1
+HOSTS=""; DEVICES=""; DEFUSER="admin"; USERSET=0; ASK=0; ENABLE=0; TEAM=""; KNOWN=""; ME=""; CONFIGS=""; LEGACY=0; COLOR=1
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
         --apply)        CC_APPLY=1; shift ;;
         --hosts)        [ $# -ge 2 ] || cc_die 2 "--hosts needs a file"; [ -r "$2" ] || cc_die 2 "--hosts: cannot read $2"; HOSTS=$2; shift 2 ;;
         --device)       [ $# -ge 2 ] || cc_die 2 "--device needs NAME,ADDRESS,VENDOR"; DEVICES="$DEVICES$2$NL"; shift 2 ;;
-        --user)         [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; shift 2 ;;
+        --user)         [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; USERSET=1; shift 2 ;;
         --ask-password) ASK=1; shift ;;
         --enable-env)   ENABLE=1; shift ;;
         --team)         [ $# -ge 2 ] || cc_die 2 "--team needs addresses"; TEAM="$TEAM,$2"; shift 2 ;;
@@ -1575,7 +1641,6 @@ while [ $# -gt 0 ]; do
         *)              cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-[ -n "$HOSTS$DEVICES" ] || cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
 for _t in $(printf '%s' "$TEAM" | tr ',' ' '); do
     printf '%s' "$_t" | grep -q '^[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\(/[0-9]\{1,2\}\)\{0,1\}$' || cc_die 2 "--team: IPv4 addresses or CIDRs (10.0.0.0/24)"
 done
@@ -1585,6 +1650,10 @@ cc_init "NW-12" "Device accounts and sessions" changes
 # shellcheck disable=SC2034  # read by cc_color_init
 [ "$COLOR" = 1 ] || CC_NOCOLOR=1
 cc_color_init
+# No device named, no host list and nobody to ask: stop before a run folder.
+if [ -z "$HOSTS$DEVICES" ] && ! _cc_can_ask && ! cc_net_hostfile >/dev/null; then
+    cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
+fi
 cc_use_numbered_dir device-sessions
 rmdir "$CC_RUN_DIR/raw" 2>/dev/null
 OUTF="$CC_RUN_DIR/output.txt"
@@ -1605,16 +1674,30 @@ trap 'rm -rf "$W"; exit 130' INT TERM HUP
 mkdir -p "$CONFIGS" 2>/dev/null
 SSH=${BT_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
 SSHPASS_BIN=${BT_SSHPASS:-$(cc_which sshpass)} || cc_die 3 "sshpass not found (apt install sshpass): device logins use the password"
+cc_show "$C_CYN" "NW-12 Device accounts and sessions | from $CC_HOST | results in $CC_RUN_DIR"
+cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it   ${C_GRN}[ok]${C_OFF} fine   ${C_YEL}[~] would change${C_OFF}   ${C_GRN}[+] changed${C_OFF}   ${C_RED}[x] failed${C_OFF}"
+header "1/5  devices"
+# The questions a flag did not answer: devices, password, team.
+if [ -z "$HOSTS$DEVICES" ]; then
+    cc_net_ask_devices "$DEFUSER" "$USERSET" || cc_die 2 "no devices given (or use --hosts FILE / --device NAME,ADDRESS,VENDOR)"
+    HOSTS=$CC_NET_HOSTS; DEVICES=$CC_NET_DEVICES
+fi
 if [ "$ASK" = 1 ]; then
     [ -r /dev/tty ] || cc_die 3 "--ask-password needs a terminal; set BT_NET_PASS"
     printf 'Device password: ' >/dev/tty; stty -echo </dev/tty 2>/dev/null
     read -r BT_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
+else
+    cc_net_ask_password
 fi
 [ -n "${BT_NET_PASS:-}" ] || cc_die 3 "the device password is needed: set BT_NET_PASS or use --ask-password"
 [ "$ENABLE" = 1 ] && [ -z "${BT_NET_ENABLE:-}" ] && cc_die 3 "--enable-env: set BT_NET_ENABLE"
-
-cc_show "$C_CYN" "NW-12 Device accounts and sessions | from $CC_HOST | results in $CC_RUN_DIR"
-cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it   ${C_GRN}[ok]${C_OFF} fine   ${C_YEL}[~] would change${C_OFF}   ${C_GRN}[+] changed${C_OFF}   ${C_RED}[x] failed${C_OFF}"
+if [ -z "$TEAM" ] && _cc_can_ask; then
+    cc_ask_text "Your team's addresses? (their sessions are left alone; others are offered to kick)" "" "addresses or networks separated by commas, like 192.168.220.30,192.168.220.0/24 (Enter = none: every session is asked about)"
+    TEAM=$CC_ANSWER
+    for _t in $(printf '%s' "$TEAM" | tr ',' ' '); do
+        printf '%s' "$_t" | grep -q '^[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\(/[0-9]\{1,2\}\)\{0,1\}$' || cc_die 2 "team: IPv4 addresses or CIDRs (10.0.0.0/24)"
+    done
+fi
 
 # ---- Devices (same rules as NW-01) ---------------------------------------------------
 vendor_of() {
@@ -1627,6 +1710,7 @@ vendor_of() {
         /opnsense/ { print "opnsense"; exit }
         /pfsense/ { print "pfsense"; exit }
         /mikrotik|routeros/ { print "mikrotik"; exit }
+        /openwrt|lede|luci/ { print "openwrt"; exit }
         /cisco/ { print "cisco-ios"; exit }'
 }
 : >"$W/devices"
@@ -1658,7 +1742,7 @@ sshopts() {
     printf '%s\n' "$@"
 }
 # mode VENDOR -> stdin (commands typed into the CLI) | exec (one command line)
-mode() { case "$1" in vyos|mikrotik|linux) echo exec ;; *) echo stdin ;; esac; }
+mode() { case "$1" in vyos|mikrotik|linux|openwrt) echo exec ;; *) echo stdin ;; esac; }
 # session VENDOR USER ADDRESS PORT INFILE OUTFILE -> 0 when it logged in
 session() {
     _sv=$1; _su=$2; _sa=$3; _sp=$4; _si=$5; _so=$6
@@ -1680,6 +1764,19 @@ read_cmds() {
         vyos)      printf '/opt/vyatta/bin/vyatta-op-cmd-wrapper show configuration commands; who' ;;
         mikrotik)  printf '/user print terse without-paging; /user active print terse without-paging' ;;
         # passwd -S: L = locked (needs root or sudo; without it the state stays unknown)
+        # OpenWRT: accounts and their lock state; each SSH session is a dropbear
+        # process with a peer (busybox netstat -p) and an owner (/proc); the
+        # web (LuCI) sessions are in ubus.
+        openwrt)   cat <<'OWRT'
+cat /etc/passwd
+echo ===shadow
+awk -F: '{ s = "P"; if ($2 ~ /^[!*]/) s = "L"; if ($2 == "") s = "NP"; print $1, s }' /etc/shadow
+echo ===ssh
+netstat -tnp 2>/dev/null | awk '$6 == "ESTABLISHED" && $4 ~ /:22$/ && $7 ~ /dropbear/ { split($7, a, "/"); p = $5; sub(/:[0-9]+$/, "", p); sub(/^::ffff:/, "", p); u = "?"; f = "/proc/" a[1] "/status"; while ((getline l < f) > 0) if (l ~ /^Uid:/) { split(l, q, /[ \t]+/); u = q[2] } close(f); print a[1], p, u }'
+echo ===web
+ubus call session list 2>/dev/null | awk -F'"' '/"ubus_rpc_session"/ { s = $4 } /"username"/ && s != "" { print s, $4; s = "" }'
+OWRT
+                   ;;
         linux)     printf 'getent passwd; echo ===groups; getent group sudo wheel admin; echo ===who; who; echo ===status; for u in $(getent passwd | awk -F: '"'"'$3 == 0 || $3 >= 1000 { print $1 }'"'"'); do passwd -S "$u" 2>/dev/null || sudo -n passwd -S "$u" 2>/dev/null; done' ;;
     esac
 }
@@ -1713,6 +1810,17 @@ parse() {
             for (i = 1; i <= NF; i++) { if ($i ~ /^name=/) { n = substr($i, 6) } else if ($i ~ /^group=/) { g = substr($i, 7) } else if ($i ~ /^address=/) { a = substr($i, 9) } else if ($i ~ /^via=/) { w = substr($i, 5) } }
             gsub(/"/, "", n)
             if ($0 ~ / via=/) ses(n "@" a, n, a, w); else acc(n, "group " g, st) }
+        v == "openwrt" && /^===/ { op = substr($0, 4); next }
+        v == "openwrt" && op == "" && split($0, pw, ":") >= 7 && pw[3] ~ /^[0-9]+$/ {
+            # Two UID 0 accounts share one uid: a session of uid 0 is shown as
+            # the first one (root), which is how the device itself sees it.
+            if (!(pw[3] in uname)) uname[pw[3]] = pw[1]
+            if (pw[3] == 0) owr[pw[1]] = "uid 0 (root)"
+            else if (pw[7] !~ /(nologin|false)$/) owr[pw[1]] = "can log in (" pw[7] ")"
+            if (pw[1] in owr) oo[++no2] = pw[1] }
+        v == "openwrt" && op == "shadow" { if ($2 == "L") lk[$1] = 1; if ($2 == "NP") np[$1] = 1 }
+        v == "openwrt" && op == "ssh" && NF >= 3 { u = ($3 in uname) ? uname[$3] : "uid " $3; ses($1, u, $2, "ssh") }
+        v == "openwrt" && op == "web" && NF >= 2 { ses($1, $2, "?", "web (LuCI)") }
         v == "linux" && /^===groups/ { ing = 1; next }
         v == "linux" && /^===who/ { ing = 0; next }
         v == "linux" && /^===status/ { inst = 1; next }
@@ -1725,6 +1833,7 @@ parse() {
         END {
             for (i = 1; i <= no; i++) { n = order[i]; acc(n, (v == "paloalto") ? role[n] : prof[n], "active") }
             for (i = 1; i <= nl; i++) { n = lo[i]; acc(n, (n in adm) ? "admin (" adm[n] ")" : lin[n], (n in lk) ? "disabled" : "active") }
+            for (i = 1; i <= no2; i++) { n = oo[i]; acc(n, owr[n] ((n in np) ? ", NO PASSWORD" : ""), (n in lk) ? "disabled" : "active") }
         }'
 }
 # in_team ADDRESS -> 0 if it is in one of the --team ranges
@@ -1756,7 +1865,6 @@ SAVED_AWK='
 has_saved() { _cf=$(latest_cfg "$2") || return 1; awk -v v="$1" -v n="$3" "$SAVED_AWK" "$_cf" | grep -q .; }
 
 # ---- 1. Read every device --------------------------------------------------------------
-header "1/5  devices"
 : >"$W/allacc"; : >"$W/allses"; NDEV=0; NFAIL=0
 printf '%-14s %-10s %-20s %-24s %s\n' device brand account rights state >"$CC_RUN_DIR/accounts.txt"
 printf '%-14s %-10s %-12s %-16s %-18s %s\n' device brand session user from verdict >"$CC_RUN_DIR/sessions.txt"
@@ -1815,6 +1923,10 @@ while IFS="$US" read -r _n _a _v _u _p _si _su _sf _sw _me; do
         _verd="this script"; cc_show "$C_GRN" "  [ok] $_n: $_su from $_sf ($_sw) - this script's own login"
     elif [ "$_sf" = "-" ]; then
         _verd="console"; cc_show "$C_YEL" "  [*] $_n: $_su on the console ($_id) - someone at the device itself"
+    elif [ "$_sf" = "?" ]; then
+        # OpenWRT web (LuCI) sessions do not say where they come from.
+        _verd="web"; cc_show "$C_YEL" "  [*] $_n: $_su logged in to the web page ($_sw) - from where is not known: yours?"
+        safe "$_id" && j ses l "$_n" "$_a" "$_v" "$_u" "$_p" "$_id" "$_su" "$_sf" "$_sw" >>"$W/ask"
     elif in_team "$_sf"; then
         _verd="team"; cc_show "$C_GRN" "  [ok] $_n: $_su from $_sf ($_sw) - your team (--team)"
     elif ! safe "$_id" || ! safe "$_su" || ! safe "$_sf"; then
@@ -1834,6 +1946,7 @@ header "4/5  what to do (Enter = the default in capitals)"
 how_off() {   # how_off VENDOR DEVICE NAME -> how the account is turned off, for the answer text
     case "$1" in
         mikrotik|linux) echo "disabled; the undo turns it back on" ;;
+        openwrt) echo "password locked and shell set to /bin/false; the undo puts both back" ;;
         paloalto) echo "removed and committed; NO automatic undo" ;;
         *) if has_saved "$1" "$2" "$3"; then echo "removed; the undo puts back its lines from NW-01's copy"; else echo "removed; NO undo - NW-01 has no copy of it (run NW-01 first)"; fi ;;
     esac
@@ -1881,6 +1994,8 @@ off_cmds() {
         vyos)      printf "source /opt/vyatta/etc/functions/script-template; configure; delete system login user '%s'; commit; save; exit" "$2" ;;
         mikrotik)  printf '/user disable [find name="%s"]' "$2" ;;
         linux)     printf "if [ \"\$(id -u)\" = 0 ]; then S=''; else S='sudo -n'; fi; \$S usermod -L -e 1 '%s'" "$2" ;;
+        # OpenWRT has no usermod: ! before the hash, and no shell.
+        openwrt)   _on=$2; printf '%s' "sed -i -e 's/^$_on:\\([^!]\\)/$_on:!\\1/' -e 's/^$_on::/$_on:!:/' /etc/shadow && sed -i 's#^\\($_on:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:\\).*\$#\\1/bin/false#' /etc/passwd" ;;  # posix-ok: sent to the OpenWRT router, whose busybox sed has -i
     esac
 }
 # kick_cmds VENDOR ID USER FROM -> lines that end the session (kicks come last)
@@ -1892,6 +2007,8 @@ kick_cmds() {
         vyos)      printf "; sudo pkill -KILL -t '%s'" "$2" ;;
         mikrotik)  printf '; /user active request-logout [find name="%s" address="%s"]' "$3" "$4" ;;
         linux)     printf "; if [ \"\$(id -u)\" = 0 ]; then S=''; else S='sudo -n'; fi; \$S pkill -KILL -t '%s'" "$2" ;;
+        # OpenWRT: an SSH session is a dropbear process; a web one a ubus session.
+        openwrt)   case "$2" in *[!0-9]*) printf "; ubus call session destroy '{\"ubus_rpc_session\":\"%s\"}'" "$2" ;; *) printf '; kill %s' "$2" ;; esac ;;
     esac
 }
 # write_undo VENDOR DEVICE ADDRESS USER PORT NAME -> an undo script; prints its path
@@ -1904,6 +2021,9 @@ write_undo() {
         case "$1" in
             mikrotik) printf '%s -e %s %s -p %s %s %s\n' "$(cc_shquote "$SSHPASS_BIN")" "$(cc_shquote "$SSH")" "$(sshopts | while IFS= read -r _o; do printf '%s ' "$(cc_shquote "$_o")"; done)" "$5" "$(cc_shquote "$4@$3")" "$(cc_shquote "/user enable [find name=\"$6\"]")" ;;
             linux) printf '%s -e %s %s -p %s %s %s\n' "$(cc_shquote "$SSHPASS_BIN")" "$(cc_shquote "$SSH")" "$(sshopts | while IFS= read -r _o; do printf '%s ' "$(cc_shquote "$_o")"; done)" "$5" "$(cc_shquote "$4@$3")" "$(cc_shquote "if [ \"\$(id -u)\" = 0 ]; then S=''; else S='sudo -n'; fi; \$S usermod -U -e '' '$6'")" ;;
+            # OpenWRT: the ! comes off the hash and the old shell goes back.
+            openwrt) _osh=$(awk -F: -v n="$6" '$1 == n { print $7; exit }' "$W/raw.$2" 2>/dev/null); case "$_osh" in ''|*[!A-Za-z0-9/_.-]*) _osh=/bin/ash ;; esac
+                printf '%s -e %s %s -p %s %s %s\n' "$(cc_shquote "$SSHPASS_BIN")" "$(cc_shquote "$SSH")" "$(sshopts | while IFS= read -r _o; do printf '%s ' "$(cc_shquote "$_o")"; done)" "$5" "$(cc_shquote "$4@$3")" "$(cc_shquote "sed -i 's/^$6:!/$6:/' /etc/shadow && sed -i 's#^\($6:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:\)/bin/false\$#\1$_osh#' /etc/passwd")" ;;  # posix-ok: runs on the router
             *)
                 # The account's lines are read from NW-01's copy now, not copied here (they hold a hash).
                 printf 'CFG=%s\n' "$(cc_shquote "$(latest_cfg "$2")")"
@@ -1942,7 +2062,7 @@ elif cc_ask "Do these $NCH change(s) now?" Y "yes, kick and disable them" "no, c
             [ "$_k" = off ] || continue
             if ! cc_guard account "$_t"; then cc_show "$C_YEL" "  [-] $_n: $_t is protected: left"; continue; fi
             case "$_v" in
-                mikrotik|linux) [ -s "$W/in" ] && printf '; ' >>"$W/in"; off_cmds "$_v" "$_t" >>"$W/in"; _uf=$(write_undo "$_v" "$_n" "$_a" "$_u" "$_p" "$_t"); cc_undo_add "turn the account $_t on $_n back on" "sh $(cc_shquote "$_uf")" ;;
+                mikrotik|linux|openwrt) [ -s "$W/in" ] && printf '; ' >>"$W/in"; off_cmds "$_v" "$_t" >>"$W/in"; _uf=$(write_undo "$_v" "$_n" "$_a" "$_u" "$_p" "$_t"); cc_undo_add "turn the account $_t on $_n back on" "sh $(cc_shquote "$_uf")" ;;
                 paloalto) off_cmds "$_v" "$_t" >>"$W/in" ;;
                 vyos) [ -s "$W/in" ] && printf '; ' >>"$W/in"; off_cmds "$_v" "$_t" >>"$W/in"
                       has_saved "$_v" "$_n" "$_t" && { _uf=$(write_undo "$_v" "$_n" "$_a" "$_u" "$_p" "$_t"); cc_undo_add "put the account $_t back on $_n" "sh $(cc_shquote "$_uf")"; } ;;

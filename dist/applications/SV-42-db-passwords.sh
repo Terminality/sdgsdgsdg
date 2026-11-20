@@ -93,12 +93,12 @@
 #   --debug shows each command (never the passwords: they go on stdin).
 # =============================================================================
 
-# >>> BT-LIB  (lib/lib.sh 0.4.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.5.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.4.0
+# VERSION:  0.5.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -169,7 +169,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.4.0"
+CC_LIB_VERSION="0.5.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -1489,6 +1489,64 @@ cc_hosts_rows() {
                   nt = ""; for (i = 9; i <= NF; i++) nt = nt (nt == "" ? "" : " ") $i; if (nt == "-") nt = ""
                   print v[1] "|" v[2] "|" v[3] "|" v[4] "|" v[5] "|" v[6] "|" v[7] "|" v[8] "|" nt "|" }' ;;
     esac
+}
+
+# -----------------------------------------------------------------------------
+# Network devices: the questions every NW script asks when no flag names them
+# -----------------------------------------------------------------------------
+# cc_net_hostfile -> the first host list lying around (config/hosts.txt,
+#   hosts.txt in the current folder), or nothing.
+cc_net_hostfile() {
+    for _cc_nh in config/hosts.txt hosts.txt; do [ -r "$_cc_nh" ] && { printf '%s' "$_cc_nh"; return 0; }; done
+    return 1
+}
+# cc_net_ask_devices DEFAULT-USER USER-GIVEN(0|1)
+#   Asks which devices to work on, in the password-rotation style:
+#     the host list, when one is found:   "Use the host list config/hosts.txt?"
+#     else device by device:              address, what it is ([o] OpenWRT
+#                                         first), a short name, the login
+#                                         (root for OpenWRT, pfSense, OPNsense
+#                                         unless --user was given)
+#   Sets CC_NET_HOSTS (the list chosen) or appends "NAME,ADDRESS,VENDOR,USER"
+#   lines to CC_NET_DEVICES.  Returns 1 when nothing was chosen.  With nobody
+#   to ask, only a host list found lying around is taken.
+cc_net_ask_devices() {
+    CC_NET_HOSTS=""; CC_NET_DEVICES=""
+    if _cc_nf=$(cc_net_hostfile); then
+        if cc_ask "Use the host list $_cc_nf (the network devices in it)?" Y "yes, use every network device in it" "no, I will type the devices"; then
+            CC_NET_HOSTS=$_cc_nf; return 0
+        fi
+    fi
+    _cc_can_ask || return 1
+    while :; do
+        cc_ask_text "Device address (IP or name)? Enter when done" "" "like 192.168.220.2"
+        _cc_na=$CC_ANSWER; [ -n "$_cc_na" ] || break
+        case "$_cc_na" in *[!A-Za-z0-9._:-]*) cc_show "${C_YEL:-}" "  [*] '$_cc_na' is not an address: skipped"; continue ;; esac
+        cc_choose "What is $_cc_na?" o "o=OpenWRT router" "l=Linux router" "m=MikroTik" "p=pfSense" "n=OPNsense" \
+            "c=Cisco router or switch (IOS)" "a=Cisco ASA" "x=Palo Alto" "f=FortiGate" "v=VyOS"
+        case "$CC_CHOICE" in o) _cc_nv=openwrt ;; l) _cc_nv=linux ;; m) _cc_nv=mikrotik ;; p) _cc_nv=pfsense ;; n) _cc_nv=opnsense ;;
+            c) _cc_nv=cisco-ios ;; a) _cc_nv=cisco-asa ;; x) _cc_nv=paloalto ;; f) _cc_nv=fortigate ;; *) _cc_nv=vyos ;; esac
+        # OpenWRT, pfSense and OPNsense: root runs the commands.
+        _cc_nu=$1; [ "${2:-0}" = 0 ] && case "$_cc_nv" in openwrt|pfsense|opnsense) _cc_nu=root ;; esac
+        _cc_nd=router; case "$_cc_nv" in cisco-asa|paloalto|fortigate|pfsense|opnsense) _cc_nd=firewall ;; esac
+        cc_ask_text "A short name for it (letters, digits, - and _)?" "$_cc_nd"; _cc_nn=$CC_ANSWER
+        case "$_cc_nn" in ''|*[!A-Za-z0-9_.-]*) _cc_nn=$_cc_nd ;; esac
+        cc_ask_text "Log in to $_cc_nn as?" "$_cc_nu"; _cc_nu=${CC_ANSWER:-$_cc_nu}
+        CC_NET_DEVICES="$CC_NET_DEVICES$_cc_nn,$_cc_na,$_cc_nv,$_cc_nu
+"
+        cc_ask "Another device?" N "yes, add one more" "no, that is all" || break
+    done
+    [ -n "$CC_NET_DEVICES" ]
+}
+# cc_net_ask_password -> BT_NET_PASS: used as it is when already set (setting
+#   it is the answer), else typed now, hidden, never logged.  Returns 1 when
+#   there is no password and nobody to ask.
+cc_net_ask_password() {
+    [ -n "${BT_NET_PASS:-}" ] && return 0
+    _cc_can_ask || return 1
+    printf '%s[?]%s Device password (hidden, never saved): ' "${C_CYN:-}" "${C_OFF:-}" >/dev/tty
+    stty -echo </dev/tty 2>/dev/null; read -r BT_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
+    [ -n "$BT_NET_PASS" ]
 }
 
 # -----------------------------------------------------------------------------

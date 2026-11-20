@@ -123,12 +123,12 @@ if ($Help) {
     exit 0
 }
 
-# >>> BT-LIB  (lib/lib.ps1 0.4.0 pasted in by tools/build.sh - edit lib/lib.ps1, not this copy)
+# >>> BT-LIB  (lib/lib.ps1 0.5.0 pasted in by tools/build.sh - edit lib/lib.ps1, not this copy)
 # =============================================================================
 # ID:       LB-02
 # NAME:     PowerShell library (lib.ps1)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.4.0
+# VERSION:  0.5.0
 #
 # PURPOSE
 #   The jobs every Windows script in this kit repeats, written once.  It is the
@@ -202,7 +202,7 @@ if ($Help) {
 #     session, because there is no file to hash.
 # =============================================================================
 
-$script:CcLibVersion = '0.4.0'
+$script:CcLibVersion = '0.5.0'
 
 # All library state lives in one hashtable so it is easy to inspect while
 # debugging: type  $Cc  at a prompt after dot-sourcing a script.

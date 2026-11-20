@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-20: NW-12 on OpenWRT; the device questions in the library (library 0.5.0)
+
+- **Library 0.5.0** (`lib/lib.sh`; `lib/lib.ps1` version only): `cc_net_hostfile`, `cc_net_ask_devices` (the host list `config/hosts.txt` if there is one, else each device: address, what it is with OpenWRT first, a short name, the login; root for OpenWRT, pfSense, OPNsense) and `cc_net_ask_password` (`BT_NET_PASS` as it is when set, else typed hidden). The network scripts ask these the same way.
+- **NW-01**: its device question now comes from the library (the same questions as before).
+- **NW-12** (1.1.0): new brand `openwrt`: accounts from `/etc/passwd` and `/etc/shadow` (UID 0 and shell accounts, `NO PASSWORD` shown), SSH sessions from dropbear's connections with their owner, web (LuCI) sessions from ubus (default leave: they do not say where they come from). Disable = `!` before the hash and shell `/bin/false` (no `usermod` on OpenWRT); kick = `kill` the dropbear process or `ubus call session destroy`; the undo puts the hash and the old shell back. A uid 0 session is shown as root, so its own login is never kicked. New questions when no flag says: which devices, the device password (hidden), your team's addresses (`--team`).
+- Tested: nw12, nw01 and lib under dash, bash, ksh93, mksh, yash and busybox sh; gawk, mawk and busybox awk; the built copies. OpenWRT with a stand-in router that applies the lock, unlock, kill and ubus commands to its own files; the lock and unlock `sed` lines also on sample `/etc/shadow` and `/etc/passwd` files with GNU and busybox sed. Not yet on a real OpenWRT router.
+
 ## 2026-11-20: NW-30 watches OpenWRT routers
 
 - **NW-30** (1.1.0): new brand `openwrt`, read like NW-01 (uci export, fw4 nft, accounts, root keys, cron, boot scripts); counters and DHCP lease times dropped before comparing. Each change shows its uci section and what it may mean: a new `config redirect` is NAT (HIGH), a new UID 0 line an account, a root key a key, a cron line a scheduled job; `dropbear`, `uhttpd`, `rpcd` are management access; `config zone`/`forwarding` firewall rules; `log_ip` logging. The undo hint is uci (`uci delete`, `uci commit`, `fw4 reload` or the service reload), or the file to edit for accounts, keys, cron and boot scripts. Never sent.

@@ -50,6 +50,11 @@ while IFS= read -r l; do
         *"usermod -U -e '' "*) n=$(printf '%s' "${l##* }" | tr -d "'"); sed "s/^$n L /$n P /" "$out" >"$tmp"; cat "$tmp" >"$out" ;;
         "delete "*) n=${l#delete }; awk -v n="$n" '$1 == "edit" { e = $2; gsub(/"/, "", e); if (e == n) { skip = 1; next } } skip { if ($1 == "next") skip = 0; next } { print }' "$out" >"$tmp"; cat "$tmp" >"$out" ;;
         "edit "*) awk -v l="$l" '{ print } /^config system admin/ { print "    " l; print "    next" }' "$out" >"$tmp"; cat "$tmp" >"$out" ;;
+        # OpenWRT: lock (! before the hash), unlock, kill a dropbear, end a web session
+        "sed -i 's/^"*":!/"*) n=$(printf '%s' "$l" | cut -d"'" -f2 | sed 's/^s.^//; s/:.*//'); sed "s/^$n L$/$n P/" "$out" >"$tmp"; cat "$tmp" >"$out" ;;  # posix-ok: matches the text sent to the router
+        *"/etc/shadow"*"/bin/false"*) n=$(printf '%s' "$l" | cut -d"'" -f2 | sed 's/^s.^//; s/:.*//'); sed "s/^$n P$/$n L/" "$out" >"$tmp"; cat "$tmp" >"$out" ;;
+        "kill "[0-9]*) n=${l#kill }; grep -v "^$n " "$out" >"$tmp"; cat "$tmp" >"$out" ;;
+        "ubus call session destroy "*) n=$(printf '%s' "$l" | sed 's/.*"ubus_rpc_session":"\([^"]*\)".*/\1/'); grep -v "^$n " "$out" >"$tmp"; cat "$tmp" >"$out" ;;
     esac
 done <"$STUB_DIR/$host.cmds"
 cat "$STUB_DIR/$host.reply"
@@ -241,5 +246,67 @@ if command -v script >/dev/null 2>&1; then
     t_fail "k: the account is kept" grep -q 'no username backdoor' "$D/ios.log"
     t_fail "l: the session is left" grep -q 'clear line' "$D/ios.log"
     t_ok "a kept account joins the baseline" grep -qx 'r1 backdoor' "$O/net-accounts-baseline.txt"
+fi
+t_start "OpenWRT"
+owrt() {
+    printf '%s\n' "$BT_NET_PASS" >"$D/owrt.pw"; rm -f "$D/owrt.log"
+    cat >"$D/owrt.out" <<EOF
+root:x:0:0:root:/root:/bin/ash
+toor:x:0:0:toor:/root:/bin/ash
+daemon:*:1:1:daemon:/var:/bin/false
+ftp:*:55:55:ftp:/home/ftp:/bin/false
+===shadow
+root P
+toor P
+daemon L
+===ssh
+1234 $ME 0
+1300 $RED 0
+===web
+0123456789abcdef0123456789abcdef root
+EOF
+}
+owrt; rm -f "$O/net-accounts-baseline.txt"
+orun() { $SH "$C" --out "$O" --no-color --me "$ME" --device o1,owrt,openwrt,root --team 10.0.0.0/24 "$@"; }
+out=$(orun --batch 2>&1)
+t_has "$(cat "$D/owrt.cmds")" "cat /etc/passwd" "accounts from /etc/passwd"
+t_has "$(cat "$D/owrt.cmds")" "ubus call session list" "web sessions from ubus"
+t_has "$out" "[ok] o1: root (uid 0 (root)) - the account this script logs in with" "root is the login account"
+t_has "$out" "o1: toor (uid 0 (root))" "a second UID 0 account is listed"
+t_hasnt "$out" "daemon" "system accounts with no shell are left out"
+t_has "$out" "[ok] o1: root from $ME (ssh) - this script's own login" "its own SSH session is recognised"
+t_has "$out" "[!] o1: root from $RED (ssh) - not from your team" "an SSH session from outside the team"
+t_has "$out" "[*] o1: root logged in to the web page (web (LuCI))" "a web session is shown"
+t_has "$out" "Dry run: nothing was changed" "dry run"
+t_fail "a dry run sends nothing" grep -q '^kill \|^sed -i' "$D/owrt.log"  # posix-ok: the text sent to the router
+# toor new since the first run: disabled by default; the outside session kicked; the web one left.
+grep -v ' toor$' "$O/net-accounts-baseline.txt" >"$T_TMP/b"; cat "$T_TMP/b" >"$O/net-accounts-baseline.txt"
+_u0=$(cat "$O"/undo-*.log 2>/dev/null | grep -c .)
+out=$(orun --batch --no-protected --apply 2>&1)
+t_has "$(cat "$D/owrt.log")" "/etc/shadow" "toor's password is locked"
+t_has "$(cat "$D/owrt.log")" "/bin/false" "and its shell taken away"
+t_has "$out" "[+] o1: account toor disabled" "checked after: disabled"
+t_has "$out" "[+] o1: kicked root from $RED" "the outside session is ended (kill)"
+t_has "$(cat "$D/owrt.log")" "kill 1300" "by killing its dropbear"
+t_fail "its own session is never killed" grep -q 'kill 1234' "$D/owrt.log"
+t_fail "the web session is left (default leave)" grep -q 'ubus call session destroy' "$D/owrt.log"
+t_fail "root is never disabled" grep -q "s/^root:" "$D/owrt.log"
+cat "$O"/undo-*.log | awk -F'\t' -v n="$_u0" 'NR > n { l[NR] = $4 } END { for (i = NR; i > n; i--) print l[i] }' >"$T_TMP/undo.sh"
+sh "$T_TMP/undo.sh" >/dev/null 2>&1
+t_has "$(cat "$D/owrt.out")" "toor P" "the undo unlocks toor"
+t_hasnt "$(cat "$O"/device-sessions-*/accounts.txt "$O"/device-sessions-*/sessions.txt 2>/dev/null)" '$1$' "no password hash in the results"
+
+t_start "questions: devices, password, team"
+if command -v script >/dev/null 2>&1; then
+    owrt
+    # address, type (Enter = OpenWRT), name (Enter = router), user (Enter = root), another (Enter = no),
+    # password (typed), team (Enter = none), then each question: Enter
+    printf 'owrt\n\n\n\n\n%s\n\n\n\n\n\n\n\n' "$BT_NET_PASS" >"$T_TMP/ans"
+    mkdir -p "$T_TMP/empty"
+    tt=$(cd "$T_TMP/empty" && unset BT_NET_PASS && BT_NO_TTY=0 script -qc "$SH '$C' --out '$O' --no-color --me $ME" /dev/null <"$T_TMP/ans" 2>&1)
+    t_has "$tt" "What is owrt?" "the device is asked for"
+    t_has "$tt" "Device password (hidden, never saved)" "the password is asked, hidden"
+    t_has "$tt" "Your team's addresses?" "the team is asked"
+    t_has "$tt" "router (owrt, openwrt)" "and the device is read"
 fi
 t_done
