@@ -250,4 +250,22 @@ t_ok "a request to a newly dropped script is HIGH" grep -q 'HIGH web .*dropped w
 t_fail "a plain request is not alerted" grep -q 'web .* /index.html' "$A2"
 t_ok "every request is still logged" grep -q 'GET /index.html' "$STW2/web.log"
 
+t_start "Alpine: /var/log/messages (busybox syslogd) and doas"
+RA="$T_TMP/aroot"; STA="$T_TMP/astate"; mkdir -p "$RA/var/log" "$RA/etc"
+cp "$R/etc/passwd" "$R/etc/group" "$RA/etc/"
+cat >"$RA/var/log/messages" <<'EOF'
+Nov 15 01:00:01 kolla auth.info sshd[301]: Accepted password for root from 10.9.9.8 port 4401 ssh2
+Nov 15 01:00:02 kolla authpriv.info doas: alice ran command apk upgrade as root from /home/alice
+Nov 15 01:00:03 kolla authpriv.info doas: bob ran command /bin/sh -i as root from /tmp
+Nov 15 01:00:04 kolla authpriv.notice doas: failed auth for bob
+Nov 15 01:00:05 kolla daemon.info crond[22]: crond 4.5 started
+EOF
+r=$(run --out "$O" --state "$STA" --root "$RA" --from-start --no-color 2>&1)
+t_has "$r" "auth log: $RA/var/log/messages" "no auth.log or secure: /var/log/messages is read"
+A="$STA/alerts.log"
+t_ok "a root password login there is HIGH" grep -q 'HIGH logins   root@10.9.9.8' "$A"
+t_ok "doas by an admin is recorded" grep -q 'DOAS alice: apk upgrade' "$STA/priv.log"
+t_ok "doas sh -i by a non-admin is HIGH" grep -q 'HIGH priv     bob .*/bin/sh -i' "$A"
+t_ok "a refused doas is HIGH for a non-admin" grep -q 'HIGH priv     bob .* doas refused: failed auth for bob' "$A"
+
 t_done

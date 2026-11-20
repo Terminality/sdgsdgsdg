@@ -4,7 +4,7 @@
 # NAME:     Linux firewall builder
 # ROLE:     Linux  (wave 2, first 15 minutes - run it LAST of the hardening)
 # KIND:     changes - dry run unless --apply
-# VERSION:  2.0.0
+# VERSION:  2.1.0
 #
 # PURPOSE
 #   Shows every open port on the box, says in plain words what each one is
@@ -90,8 +90,12 @@
 #
 # WHAT IT CHANGES  (only with --apply / --save / --remove)
 #   The live firewall (own table/chains only).  --save also writes
-#   /etc/bt-firewall.nft plus an include line in /etc/nftables.conf, or
-#   saves iptables rules with the distribution's tool.
+#   /etc/bt-firewall.nft and loads it at boot: an include line in
+#   /etc/nftables.conf (Debian, Ubuntu), a small bt-firewall service
+#   (systemd without that file: Rocky, Fedora) or /etc/local.d/
+#   bt-firewall.start (OpenRC: Alpine); or saves iptables rules with the
+#   distribution's tool (rc-service iptables save on Alpine).  With firewalld,
+#   --save also makes the ports opened there permanent.
 #
 # DEPENDS ON
 #   nft or iptables (+ ip6tables); ss or netstat for listening ports; /proc
@@ -114,7 +118,11 @@
 #     hint, not a fact: check the team packet.
 #   - Without root the program behind another account's port cannot be read.
 #   - Other firewalls still apply on top: a port this allows can still be
-#     blocked by ufw or firewalld rules (the first section says if they run).
+#     blocked by ufw (Ubuntu, Mint) or firewalld (Rocky, Fedora).  When one
+#     of them runs, the ports kept here that it would still block are shown
+#     and you are asked to open them there too (default yes): firewalld only
+#     until its next reload (--save makes it permanent), ufw at once (ufw
+#     keeps its rules); both are taken out again by the rollback.
 #   - FORWARD (routing) is never touched: routers and Docker keep working.
 #
 # DEBUGGING
@@ -252,6 +260,8 @@ fi
 [ "$BACKEND" = iptables ] && [ -z "$IPT" ] && cc_die 3 "iptables not found"
 cc_debug "backend: $BACKEND nft=$NFT iptables=$IPT ss=$SS"
 
+# Ports this script opened in firewalld (zone|port/proto), for --save.
+FWDREC="$CC_OUT/lx25-firewalld-$CC_HOST.txt"
 # The commands that remove our rules; used by --remove, the undo log and the timer.
 ROLLBACK="$CC_RUN_DIR/rollback.sh"
 {
@@ -277,26 +287,52 @@ if [ "$MODE" = remove ]; then
     cc_finish
 fi
 if [ "$MODE" = save ]; then
+    E=${BT_TEST_ETC:-/etc}   # (the tests point this at a fake /etc)
+    _init=${BT_SVC_INIT:-$CC_INIT}
     if [ "$BACKEND" = nft ]; then
         "$NFT" list table inet bt >"$W/live.nft" 2>/dev/null || cc_die 3 "no bt table is live: nothing to save (apply and confirm first)"
         { printf 'table inet bt\ndelete table inet bt\n'; cat "$W/live.nft"; } >"$W/save.nft"
-        cc_backup_file /etc/bt-firewall.nft || cc_die 5 "backup failed"
-        cc_run "save the rules to /etc/bt-firewall.nft" cp "$W/save.nft" /etc/bt-firewall.nft
-        if [ -f /etc/nftables.conf ]; then
-            if ! grep -q 'include "/etc/bt-firewall.nft"' /etc/nftables.conf; then
-                cc_backup_file /etc/nftables.conf || cc_die 5 "backup failed"
-                cc_run "load them at boot (include line in /etc/nftables.conf)" sh -c 'printf "\ninclude \"/etc/bt-firewall.nft\"\n" >>/etc/nftables.conf'
+        cc_backup_file "$E/bt-firewall.nft" || cc_die 5 "backup failed"
+        cc_run "save the rules to /etc/bt-firewall.nft" cp "$W/save.nft" "$E/bt-firewall.nft"
+        if [ -f "$E/nftables.conf" ]; then
+            if ! grep -q 'include "/etc/bt-firewall.nft"' "$E/nftables.conf"; then
+                cc_backup_file "$E/nftables.conf" || cc_die 5 "backup failed"
+                cc_run "load them at boot (include line in /etc/nftables.conf)" sh -c 'printf "\ninclude \"/etc/bt-firewall.nft\"\n" >>"$1"' _ "$E/nftables.conf"
             fi
-            [ "$CC_INIT" = systemd ] && cc_run "enable the nftables service at boot" systemctl enable nftables
+            [ "$_init" = systemd ] && cc_run "enable the nftables service at boot" systemctl enable nftables
+        elif [ "$_init" = openrc ]; then
+            # Alpine: OpenRC's "local" service runs /etc/local.d/*.start at boot.
+            # (Not the nftables service: its own /etc/nftables.nft would load too.)
+            cc_backup_file "$E/local.d/bt-firewall.start" || cc_die 5 "backup failed"
+            cc_run "load them at boot (/etc/local.d/bt-firewall.start)" sh -c 'mkdir -p "$1/local.d" && printf "#!/bin/sh\n# LX-25: the bt firewall rules\nnft -f /etc/bt-firewall.nft\n" >"$1/local.d/bt-firewall.start" && chmod 755 "$1/local.d/bt-firewall.start"' _ "$E"
+            [ -e "$E/runlevels/default/local" ] || { cc_run "start the local service at boot" rc-update add local default && cc_undo_add "stop running /etc/local.d at boot" "rc-update del local default"; }
+            cc_undo_add "do not load the bt rules at boot" "rm -f $(cc_shquote "$E/local.d/bt-firewall.start")"
+        elif [ "$_init" = systemd ]; then
+            # Rocky, Fedora: no /etc/nftables.conf, and the nftables service must
+            # not run next to firewalld; a small service of our own loads the file.
+            cc_run "load them at boot (bt-firewall service)" sh -c 'mkdir -p "$1/systemd/system" && printf "[Unit]\nDescription=LX-25 bt firewall rules\nAfter=network-pre.target firewalld.service\nWants=network-pre.target\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=%s -f /etc/bt-firewall.nft\n\n[Install]\nWantedBy=multi-user.target\n" "$2" >"$1/systemd/system/bt-firewall.service" && systemctl daemon-reload && systemctl enable bt-firewall.service' _ "$E" "$NFT"
+            cc_undo_add "do not load the bt rules at boot" "systemctl disable bt-firewall.service; rm -f $(cc_shquote "$E/systemd/system/bt-firewall.service"); systemctl daemon-reload"
+            cc_relabel "$E/systemd/system/bt-firewall.service" "$E/bt-firewall.nft"
         else
             cc_warn "no /etc/nftables.conf: load /etc/bt-firewall.nft at boot yourself (nft -f /etc/bt-firewall.nft)"
         fi
     else
         if cc_have netfilter-persistent; then cc_run "save iptables rules (netfilter-persistent)" netfilter-persistent save
+        elif [ "$_init" = openrc ] && [ -x /etc/init.d/iptables ]; then
+            cc_backup_file /etc/iptables/rules-save
+            cc_run "save iptables rules (rc-service iptables save)" /etc/init.d/iptables save
+            cc_run "restore them at boot" rc-update add iptables default
         elif [ -d /etc/sysconfig ]; then
             cc_backup_file /etc/sysconfig/iptables
             cc_run "save iptables rules to /etc/sysconfig/iptables" sh -c 'iptables-save >/etc/sysconfig/iptables'
         else cc_warn "no iptables save tool found (install iptables-persistent, or add iptables-restore to boot)"; fi
+    fi
+    # firewalld: the ports this script opened there (runtime only) become permanent
+    if [ -s "$FWDREC" ] && cc_have firewall-cmd; then
+        while IFS='|' read -r _z _pp; do
+            cc_run "open $_pp in firewalld zone $_z for good" firewall-cmd --permanent "--zone=$_z" "--add-port=$_pp" &&
+                cc_undo_add "close $_pp in firewalld zone $_z (permanent)" "firewall-cmd --permanent --zone=$(cc_shquote "$_z") --remove-port=$(cc_shquote "$_pp")"
+        done <"$FWDREC"
     fi
     cc_finish
 fi
@@ -314,10 +350,12 @@ elif [ "$BACKEND" = iptables ] && "$IPT" -S BT-IN >/dev/null 2>&1 && [ -z "${BT_
 else
     cc_show "$C_GRY" "  No LX-25 rules are loaded yet."
 fi
-# Other firewalls still apply on top of ours.  (Skipped with stand-in tools.)
-if [ -z "${BT_SS:-}" ]; then
-    if cc_have ufw && ufw status 2>/dev/null | grep -qi '^Status: active'; then cc_show "$C_YEL" "  ufw is ACTIVE: a port kept open here can still be blocked by ufw (ufw status)."; fi
-    if cc_have firewall-cmd && firewall-cmd --state >/dev/null 2>&1; then cc_show "$C_YEL" "  firewalld is RUNNING: a port kept open here can still be blocked by it (firewall-cmd --list-all)."; fi
+# Other firewalls still apply on top of ours.  (Skipped with stand-in tools,
+# unless the test says otherwise.)
+UFW=0; FWD=0
+if [ -z "${BT_SS:-}" ] || [ -n "${BT_TEST_OTHERFW:-}" ]; then
+    if cc_have ufw && ufw status 2>/dev/null | grep -qi '^Status: active'; then UFW=1; cc_show "$C_YEL" "  ufw is ACTIVE: a port kept open here can still be blocked by ufw (the plan says which; you are asked)."; fi
+    if cc_have firewall-cmd && firewall-cmd --state >/dev/null 2>&1; then FWD=1; cc_show "$C_YEL" "  firewalld is RUNNING: a port kept open here can still be blocked by it (the plan says which; you are asked)."; fi
     if [ -n "$IPT" ]; then
         _pol=$("$IPT" -S INPUT 2>/dev/null | sed -n 's/^-P INPUT //p'); _nr=$("$IPT" -S INPUT 2>/dev/null | grep -c '^-A')
         [ -n "$_pol" ] && cc_show "$C_GRY" "  iptables INPUT: policy $_pol, $_nr rule(s) already there (left alone)."
@@ -675,6 +713,43 @@ cc_show "" "  IPv6: $([ "$KEEP6" = 1 ] && echo 'allowed like IPv4' || echo 'drop
 [ -n "$FTPNOTE" ] && cc_show "$C_YEL" "  [*] $FTPNOTE"
 cc_show "$C_GRY" "  The exact rules: $RULES"
 
+# firewalld / ufw on top: which kept ports would they still block?
+# keptports -> "port/proto" for each single kept port (DHCP replies need no opening: they are replies)
+keptports() { awk -F'|' '$2 == $3 && !($1 == "udp" && ($2 == 68 || $2 == 546)) { print $2 "/" $1 }' "$W/allow.u"; }
+# $W/other: "fwd|zone|port/proto" or "ufw||port/proto"
+: >"$W/other"
+if [ "$FWD" = 1 ]; then
+    # every active zone (an interface's zone), else the default zone
+    _zones=$(firewall-cmd --get-active-zones 2>/dev/null | awk '/^[^ \t]/ { print $1 }')
+    [ -n "$_zones" ] || _zones=$(firewall-cmd --get-default-zone 2>/dev/null)
+    for _z in $_zones; do
+        { firewall-cmd --zone="$_z" --list-ports 2>/dev/null | tr ' ' '\n'
+          for _sv in $(firewall-cmd --zone="$_z" --list-services 2>/dev/null); do
+              firewall-cmd --info-service="$_sv" 2>/dev/null | sed -n 's/^ *ports: *//p' | tr ' ' '\n'
+          done; } | grep . >"$W/fwdopen"
+        keptports | while IFS= read -r _pp; do
+            awk -v pp="$_pp" 'BEGIN { split(pp, a, "/") } { split($0, b, "/"); split(b[1], r, "-"); if (b[2] == a[2] && a[1] + 0 >= r[1] + 0 && a[1] + 0 <= (r[2] == "" ? r[1] : r[2]) + 0) f = 1 } END { exit !f }' "$W/fwdopen" ||
+                printf 'fwd|%s|%s\n' "$_z" "$_pp"
+        done >>"$W/other"
+    done
+fi
+if [ "$UFW" = 1 ] && ufw status verbose 2>/dev/null | grep -qiE 'Default: *(deny|reject) \(incoming\)'; then
+    # "80/tcp  ALLOW IN  Anywhere", "22 (OpenSSH) ...", "8000:8100/tcp ..."
+    ufw status verbose 2>/dev/null | awk '/ALLOW( IN)? +Anywhere/ { print $1 }' >"$W/ufwopen"
+    keptports | while IFS= read -r _pp; do
+        awk -v pp="$_pp" 'BEGIN { split(pp, a, "/") } { split($0, b, "/"); split(b[1], r, ":"); if ((b[2] == "" || b[2] == a[2]) && a[1] + 0 >= r[1] + 0 && a[1] + 0 <= (r[2] == "" ? r[1] : r[2]) + 0) f = 1 } END { exit !f }' "$W/ufwopen" ||
+            printf 'ufw||%s\n' "$_pp"
+    done >>"$W/other"
+fi
+OTHERFW=0
+if [ -s "$W/other" ]; then
+    _fwdl=$(awk -F'|' '$1 == "fwd" { printf "%s%s (zone %s)", (n++ ? ", " : ""), $3, $2 }' "$W/other")
+    _ufwl=$(awk -F'|' '$1 == "ufw" { printf "%s%s", (n++ ? ", " : ""), $3 }' "$W/other")
+    [ -n "$_fwdl" ] && cc_show "$C_YEL" "  [*] firewalld would still BLOCK these kept ports: $_fwdl"
+    [ -n "$_ufwl" ] && cc_show "$C_YEL" "  [*] ufw would still BLOCK these kept ports: $_ufwl"
+    cc_ask "Open them in $([ -n "$_fwdl" ] && echo firewalld)$([ -n "$_fwdl" ] && [ -n "$_ufwl" ] && echo ' and ')$([ -n "$_ufwl" ] && echo ufw) too?" Y "yes, open them there too (taken out again by the rollback)" "no, leave that firewall as it is" && OTHERFW=1
+fi
+
 # ---- 5/5  Check, apply, start the rollback timer -----------------------------------
 header "5/5  apply"
 KEEPF="$CC_RUN_DIR/.keep"
@@ -704,6 +779,19 @@ elif [ "$CC_APPLY" = 1 ]; then
     else
         cc_undo_add "remove the LX-25 firewall rules" "sh $(cc_shquote "$ROLLBACK")"
         printf '%s\n' "$CC_RUN_DIR" >"$CURRENT"
+        if [ "$OTHERFW" = 1 ]; then
+            while IFS='|' read -r _k _z _pp; do
+                if [ "$_k" = fwd ]; then
+                    cc_run "open $_pp in firewalld zone $_z (until its next reload)" firewall-cmd "--zone=$_z" "--add-port=$_pp" || continue
+                    printf 'firewall-cmd --zone=%s --remove-port=%s >/dev/null 2>&1\n' "$(cc_shquote "$_z")" "$(cc_shquote "$_pp")" >>"$ROLLBACK"
+                    grep -qxF "$_z|$_pp" "$FWDREC" 2>/dev/null || printf '%s|%s\n' "$_z" "$_pp" >>"$FWDREC"
+                    grep -qF "$FWDREC" "$ROLLBACK" || printf 'rm -f %s\n' "$(cc_shquote "$FWDREC")" >>"$ROLLBACK"
+                else
+                    cc_run "open $_pp in ufw" ufw allow "$_pp" || continue
+                    printf 'ufw delete allow %s >/dev/null 2>&1\n' "$(cc_shquote "$_pp")" >>"$ROLLBACK"
+                fi
+            done <"$W/other"
+        fi
         if [ "$TIMEOUT" -eq 0 ]; then
             _state="LIVE (no rollback timer: --confirm-timeout 0)"
         else

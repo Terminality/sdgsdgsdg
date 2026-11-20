@@ -103,6 +103,28 @@ cat "$O"/undo-*.log | awk -F'\t' -v n="$_u0" 'NR > n { l[NR] = $4 } END { for (i
 sh "$T_TMP/undo.sh" >/dev/null 2>&1
 t_eq "$(snap)" "$before" "undo puts every line back"
 
+t_start "Alpine: doas rules"
+mkroot; rm -rf "$F/etc/sudoers" "$F/etc/sudoers.d"; mkdir -p "$F/etc/doas.d"
+printf 'wheel:x:10:teamadmin,eve\nops:x:20:bob\n' >>"$F/etc/group"
+printf '# local rules\npermit persist :wheel\npermit nopass :users\ndeny eve as root cmd /bin/sh\npermit nopass setenv { PATH } :ops\n' >"$F/etc/doas.conf"
+printf 'permit nopass keepenv eve\npermit nopass ghost as root\npermit nopass :docker cmd /usr/bin/docker\n' >"$F/etc/doas.d/90-extra.conf"
+printf 'permit nopass :users\n' >"$F/etc/doas.d/README"
+before=$(snap)
+out=$(run --batch 2>&1)
+t_has "$out" "admin (sudo docker wheel) - one of yours?" "a wheel member is an admin"
+t_has "$out" "has sudo lines (/etc/doas.conf:2 /etc/doas.d/90-extra.conf:1 /etc/doas.d/90-extra.conf:3), NOPASSWD" "eve's doas lines, with nopass"
+t_has "$out" "/etc/doas.conf line 3: permit nopass :users  - gives a whole group (%users) root" "nopass for a whole group is HIGH"
+t_has "$out" "/etc/doas.d/90-extra.conf line 2: permit nopass ghost as root  - for a user that does not exist (ghost)" "a doas line for a missing user is HIGH"
+t_has "$out" "/etc/doas.conf line 5: permit nopass setenv { PATH } :ops  - doas nopass for the whole group" "nopass for another group is HIGH (setenv skipped)"
+t_hasnt "$out" "90-extra.conf line 3" "nopass for one command is not flagged"
+t_hasnt "$out" "README" "only doas.d/*.conf files are read"
+t_hasnt "$out" "doas.conf line 4:" "deny lines give nothing"
+out=$(run --batch --apply --no-timer 2>&1)
+t_has "$(cat "$F/etc/doas.conf")" "# LX-21: permit nopass :users" "--apply comments out the group line"
+t_has "$(cat "$F/etc/doas.conf")" "permit persist :wheel" "the rest stays"
+t_has "$(cat "$F/etc/doas.d/90-extra.conf")" "# LX-21: permit nopass ghost as root" "and the missing-user line"
+t_has "$(awk -F: '$1 == "toor" { print $2 }' "$F/etc/shadow")" "!" "locking works without usermod (busybox)"
+
 t_start "questions on a terminal"
 if command -v script >/dev/null 2>&1; then
     mkroot; before=$(snap)

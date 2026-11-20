@@ -176,6 +176,78 @@ t_ok "the confirmed rules are still there after the first timer fired" test -s "
 t_fail "the first run did not record a rollback" test -f "$(rundir "$(cat "$T_TMP/a1.out")")/ROLLED_BACK"
 run --out "$O" --remove --apply --no-protected >/dev/null 2>&1
 
+t_start "firewalld (Rocky, Fedora) and ufw (Ubuntu, Mint) on top"
+F="$T_TMP/fw"; mkdir -p "$F"; FWLOG="$T_TMP/fw.log"; export FWLOG
+cat >"$F/firewall-cmd" <<'STUB'
+#!/bin/sh
+echo "firewall-cmd $*" >>"$FWLOG"
+case "$*" in
+    --state) echo running ;;
+    --get-active-zones) printf 'public\n  interfaces: eth0\n' ;;
+    "--zone=public --list-ports") echo "9001/tcp" ;;
+    "--zone=public --list-services") echo "ssh dhcpv6-client" ;;
+    --info-service=ssh) printf 'ssh\n  ports: 22/tcp\n' ;;
+    --info-service=dhcpv6-client) printf 'dhcpv6-client\n  ports: 546/udp\n' ;;
+esac
+exit 0
+STUB
+cat >"$F/ufw" <<'STUB'
+#!/bin/sh
+echo "ufw $*" >>"$FWLOG"
+case "$*" in
+    status) echo "Status: active" ;;
+    "status verbose") printf 'Status: active\nDefault: deny (incoming), allow (outgoing), disabled (routed)\n\nTo                         Action      From\n--                         ------      ----\n22/tcp (OpenSSH)           ALLOW IN    Anywhere\n53                         ALLOW IN    Anywhere\n' ;;
+esac
+exit 0
+STUB
+chmod +x "$F"/*
+: >"$FWLOG"
+out=$(BT_TEST_OTHERFW=1 PATH="$F:$PATH" run --out "$O" --no-protected --batch 2>&1)
+t_has "$out" "firewalld is RUNNING" "firewalld is seen"
+t_has "$out" "[*] firewalld would still BLOCK these kept ports: 80/tcp (zone public), 53/udp (zone public)" "the kept ports firewalld blocks are named (ssh and 9001 are open there)"
+t_has "$out" "[*] ufw would still BLOCK these kept ports: 80/tcp, 9001/tcp" "the kept ports ufw blocks are named (22 and 53 are open there)"
+t_has "$out" "Open them in firewalld and ufw too? [Y/n] y (default)" "asked, default yes"
+t_hasnt "$out" "68/udp" "DHCP replies are not asked about"
+t_hasnt "$(cat "$FWLOG")" "--add-port" "a dry run opens nothing"
+: >"$FWLOG"
+out=$(BT_TEST_OTHERFW=1 PATH="$F:$PATH" run --out "$O" --no-protected --batch --apply --confirm-timeout 0 2>&1)
+d=$(rundir "$out")
+t_has "$(cat "$FWLOG")" "firewall-cmd --zone=public --add-port=80/tcp" "firewalld: opened (runtime)"
+t_hasnt "$(cat "$FWLOG")" "--permanent" "firewalld: not permanent before --save"
+t_has "$(cat "$FWLOG")" "ufw allow 9001/tcp" "ufw: opened"
+t_has "$(cat "$d/rollback.sh")" "firewall-cmd --zone='public' --remove-port='80/tcp'" "the rollback closes it in firewalld"
+t_has "$(cat "$d/rollback.sh")" "ufw delete allow '9001/tcp'" "and in ufw"
+: >"$FWLOG"
+# (--save writes to a fake /etc here, never the real one)
+FE="$T_TMP/fe"; mkdir -p "$FE"; printf 'flush ruleset\n' >"$FE/nftables.conf"
+cat >"$F/rc-update" <<'STUB'
+#!/bin/sh
+echo "rc-update $*" >>"$FWLOG"
+STUB
+cat >"$F/systemctl" <<'STUB'
+#!/bin/sh
+echo "systemctl $*" >>"$FWLOG"
+STUB
+chmod +x "$F/rc-update" "$F/systemctl"
+BT_TEST_ETC="$FE" BT_TEST_OTHERFW=1 PATH="$F:$PATH" run --out "$O" --no-protected --save --apply >/dev/null 2>&1
+t_has "$(cat "$FE/nftables.conf")" 'include "/etc/bt-firewall.nft"' "--save (Debian, Ubuntu): an include line in nftables.conf"
+t_file "$FE/bt-firewall.nft" "and the rules file"
+t_has "$(cat "$FWLOG")" "firewall-cmd --permanent --zone=public --add-port=80/tcp" "--save makes the firewalld openings permanent"
+sh "$d/rollback.sh" >/dev/null 2>&1
+t_fail "the rollback forgets them (nothing for a later --save)" test -f "$O/lx25-firewalld-$(hostname | cut -d. -f1).txt"
+: >"$FWLOG"
+# --save on Alpine (OpenRC): /etc/local.d, the local service at boot
+rm -rf "$FE"; mkdir -p "$FE"; : >"$FWLOG"; echo 'table inet bt { }' >"$NFT_STATE"
+BT_TEST_ETC="$FE" BT_SVC_INIT=openrc PATH="$F:$PATH" run --out "$O" --no-protected --save --apply >/dev/null 2>&1
+t_has "$(cat "$FE/local.d/bt-firewall.start" 2>/dev/null)" "nft -f /etc/bt-firewall.nft" "--save (Alpine): /etc/local.d/bt-firewall.start loads the rules"
+t_has "$(cat "$FWLOG")" "rc-update add local default" "and the local service runs at boot"
+# --save on Rocky / Fedora (systemd, no nftables.conf): a bt-firewall service
+rm -rf "$FE"; mkdir -p "$FE"; : >"$FWLOG"; echo 'table inet bt { }' >"$NFT_STATE"
+BT_TEST_ETC="$FE" BT_SVC_INIT=systemd PATH="$F:$PATH" run --out "$O" --no-protected --save --apply >/dev/null 2>&1
+t_has "$(cat "$FE/systemd/system/bt-firewall.service" 2>/dev/null)" "After=network-pre.target firewalld.service" "--save (Rocky, Fedora): a bt-firewall service after firewalld"
+t_has "$(cat "$FWLOG")" "systemctl enable bt-firewall.service" "enabled at boot"
+run --out "$O" --remove --apply --no-protected >/dev/null 2>&1
+
 t_start "FTP note"
 out=$(run --out "$O" --no-protected --allow 21/tcp 2>&1)
 t_has "$out" "passive-mode data ports are not" "warns that passive FTP needs a port range"

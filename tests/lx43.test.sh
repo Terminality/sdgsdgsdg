@@ -53,6 +53,23 @@ out=$(run --send --to 10.0.0.20 --batch --logs system --udp --no-protected --app
 t_hasnt "$(cat "$CF")" "imfile" "system only: no service files"
 t_has "$(cat "$CF")" 'protocol="udp"' "--udp"
 
+t_start "Alpine without rsyslog: busybox syslogd"
+rm -rf "$F"; mkdir -p "$F/etc/conf.d" "$F/var/log/nginx"; : >"$F/var/log/nginx/access.log"
+printf '# busybox syslogd\nSYSLOGD_OPTS="-t"\n' >"$F/etc/conf.d/syslog"
+out=$(run --send --to 10.0.0.20 --batch 2>&1)
+t_has "$out" "no rsyslog here: busybox syslogd sends the system logs itself, over UDP only" "it says what busybox can do"
+t_hasnt "$out" "Send over TCP or UDP?" "no TCP question (busybox sends UDP only)"
+t_has "$out" 'set SYSLOGD_OPTS="-t -L -R 10.0.0.20:1514" in /etc/conf.d/syslog (was "-t")' "the plan: -L -R added, the old options kept"
+t_has "$(cat "$F/etc/conf.d/syslog")" 'SYSLOGD_OPTS="-t"' "a dry run changes nothing"
+out=$(run --send --to 10.0.0.20 --batch --no-protected --apply 2>&1)
+t_has "$(cat "$F/etc/conf.d/syslog")" 'SYSLOGD_OPTS="-t -L -R 10.0.0.20:1514"' "--apply writes it"
+t_has "$(cat "$F/etc/conf.d/syslog")" '# busybox syslogd' "the rest of the file is kept"
+out=$(run --send --to 10.0.0.20 --batch 2>&1)
+t_has "$out" "already sends to 10.0.0.20:1514" "a second run finds nothing to do"
+out=$(run --send --to 10.0.0.30 --port 514 --batch 2>&1)
+t_has "$out" 'set SYSLOGD_OPTS="-t -L -R 10.0.0.30:514"' "a new address replaces the old -R (not two of them)"
+t_has "$out" "syslogd already sends logs somewhere" "an existing -R is pointed out"
+
 t_start "receiver"
 mkroot
 out=$(run --receive --splunk-home /opt/splunk --batch --no-protected --apply 2>&1)

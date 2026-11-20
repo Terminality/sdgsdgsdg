@@ -4,7 +4,7 @@
 # NAME:     Account lockdown (Linux)
 # ROLE:     Linux  (wave 1, right after the passwords; again after red team)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   After the web shells, red team's way back in is an account: one they
@@ -23,7 +23,8 @@
 #                       a password changed in the last 2 days; a service
 #                       account with a login shell
 #     sudo rules        lines that give everyone root (ALL ALL, %users ...),
-#                       NOPASSWD: ALL, rules for users that do not exist
+#                       NOPASSWD: ALL, rules for users that do not exist;
+#                       doas rules (Alpine) the same way (nopass = NOPASSWD)
 #
 #   For each account worth a decision (Enter = the default in capitals):
 #     [k] keep   [l] lock (no password or key logins; files stay)
@@ -33,7 +34,7 @@
 #   Accounts on the protected list, root and the account you are using are
 #   never locked; the protected ones need an extra yes for anything.
 #   For each dangerous sudo line: comment it out, yes or no.
-#   Every sudoers change is checked with visudo -c first.
+#   Every sudoers change is checked with visudo -c first (doas: doas -C).
 #
 #   QUESTIONS (a flag answers each):
 #     which box                                --box NAME
@@ -164,14 +165,29 @@ UID_MIN=$(awk '$1 == "UID_MIN" { print $2 }' "$(P /etc/login.defs)" 2>/dev/null)
 ADMIN_GROUPS="root sudo wheel admin docker lxd lxc libvirt disk shadow"
 ME=${SUDO_USER:-$(id -un 2>/dev/null)}
 TODAY=$(( $(date +%s) / 86400 ))
-# Every sudoers line in use: "file|line number|text"
+# Every sudoers and doas line in use: "file|line number|who|NOPASSWD y/n|text"
+#   who: a user name, or %group.
 : >"$W/sudo"
 for _s in "$(P /etc/sudoers)" "$(P /etc/sudoers.d)"/*; do
     [ -f "$_s" ] || continue
     # sudo skips sudoers.d files whose name has a dot or ends in ~: so do we.
     case "${_s##*/}" in *~|*.*) [ "$(dirname "$_s")" = "$(P /etc/sudoers.d)" ] && continue ;; esac
     awk -v f="${_s#"$R"}" '{ t = $0; sub(/^[ \t]+/, "", t) } t == "" || t ~ /^#/ || t ~ /^(Defaults|Cmnd_Alias|Host_Alias|Runas_Alias|User_Alias)/ { next }
-        { printf "%s|%d|%s\n", f, NR, t }' "$_s" >>"$W/sudo"
+        { split(t, w, /[ \t]+/); printf "%s|%d|%s|%s|%s\n", f, NR, w[1], (t ~ /NOPASSWD/) ? "y" : "n", t }' "$_s" >>"$W/sudo"
+done
+# doas (Alpine): "permit [nopass persist ...] user|:group [as target] [cmd ...]".
+# Only permit lines give rights; :group is written %group like sudo.
+for _s in "$(P /etc/doas.conf)" "$(P /etc/doas.d)"/*.conf; do
+    [ -f "$_s" ] || continue
+    awk -v f="${_s#"$R"}" '{ t = $0; sub(/^[ \t]+/, "", t) } t !~ /^permit[ \t]/ { next }
+        { n = split(t, w, /[ \t]+/); np = "n"; who = ""; i = 2
+          # options, and a setenv { ... } block
+          while (i <= n) { if (w[i] == "nopass") np = "y"
+              if (w[i] ~ /^setenv/) { while (i <= n && w[i] !~ /}$/) i++; i++; continue }
+              if (w[i] ~ /^(nopass|nolog|persist|keepenv)$/) { i++; continue }
+              break }
+          who = w[i]; if (substr(who, 1, 1) == ":") who = "%" substr(who, 2)
+          printf "%s|%d|%s|%s|%s\n", f, NR, who, np, t }' "$_s" >>"$W/sudo"
 done
 # groups_of USER GID -> space separated group names
 groups_of() { awk -F: -v u="$1" -v g="$2" '$3 == g { print $1; next } { n = split($4, m, ","); for (i = 1; i <= n; i++) if (m[i] == u) { print $1; break } }' "$(P /etc/group)" | tr '\n' ' ' | sed 's/ $//'; }
@@ -201,8 +217,8 @@ while IFS='|' read -r _u _uid _gid _home _sh _pf; do
     _grs=$(groups_of "$_u" "$_gid"); _adm=""
     for _g in $_grs; do case " $ADMIN_GROUPS " in *" $_g "*) _adm="$_adm $_g" ;; esac; done; _adm=${_adm# }
     # Sudo lines for this user (by name, or by one of its groups).
-    _sud=$(awk -F'|' -v u="$_u" -v g=" $_grs " '{ split($3, w, /[ \t]+/); n = w[1]; if (n == u || (substr(n, 1, 1) == "%" && index(g, " " substr(n, 2) " "))) print $1 ":" $2 }' "$W/sudo" | tr '\n' ' ' | sed 's/ $//')
-    _nop=no; [ -n "$_sud" ] && awk -F'|' -v u="$_u" -v g=" $_grs " '{ split($3, w, /[ \t]+/); n = w[1]; if ((n == u || (substr(n, 1, 1) == "%" && index(g, " " substr(n, 2) " "))) && $3 ~ /NOPASSWD/) f = 1 } END { exit !f }' "$W/sudo" && _nop=yes
+    _sud=$(awk -F'|' -v u="$_u" -v g=" $_grs " '{ n = $3; if (n == u || (substr(n, 1, 1) == "%" && index(g, " " substr(n, 2) " "))) print $1 ":" $2 }' "$W/sudo" | tr '\n' ' ' | sed 's/ $//')
+    _nop=no; [ -n "$_sud" ] && awk -F'|' -v u="$_u" -v g=" $_grs " '{ n = $3; if ((n == u || (substr(n, 1, 1) == "%" && index(g, " " substr(n, 2) " "))) && $4 == "y") f = 1 } END { exit !f }' "$W/sudo" && _nop=yes
     _ki=$(keys_of "$_home"); _keys=${_ki%%"|"*}; _kopt=${_ki#*"|"}
     _days=-; case "$_lc" in ''|*[!0-9]*) ;; *) _days=$((TODAY - _lc)) ;; esac
     # Findings and the default answer.
@@ -216,7 +232,9 @@ while IFS='|' read -r _u _uid _gid _home _sh _pf; do
         if [ "$_pw" = set ] || [ "$_keys" -gt 0 ]; then hi "service account that can log in ($_sh$([ "$_pw" = set ] && echo ', has a password')$([ "$_keys" -gt 0 ] && echo ", $_keys SSH key(s)"))"; else me "service account with a login shell ($_sh)"; fi
         _def=n
     fi
-    [ -n "$_adm" ] && [ "$_kind" != root ] && ! cc_is_protected account "$_u" && me "admin ($_adm) - one of yours?"
+    # sync, halt, shutdown (Alpine: group root) cannot log in at all: no use as an admin.
+    _dead=0; [ "$_login" = no ] && [ "$_pw" != set ] && [ "$_keys" = 0 ] && [ -z "$_sud" ] && _dead=1
+    [ -n "$_adm" ] && [ "$_kind" != root ] && [ "$_dead" = 0 ] && ! cc_is_protected account "$_u" && me "admin ($_adm) - one of yours?"
     [ -n "$_sud" ] && [ "$_kind" != root ] && ! cc_is_protected account "$_u" && me "has sudo lines ($_sud)$([ "$_nop" = yes ] && echo ', NOPASSWD')"
     [ "$_keys" -gt 0 ] && [ -n "$_kopt" ] && me "SSH keys $_kopt"
     [ "$_days" != - ] && [ "$_days" -le "$DAYS" ] && [ "$_pw" = set ] && [ "$_kind" != service ] && me "password changed $_days day(s) ago"
@@ -239,8 +257,7 @@ cc_show "$C_GRY" "  ($(awk -F'|' '$16 == "ok" && ($5 == "no" || $3 == "service")
 # ---- Sudo rules on their own -------------------------------------------------------------
 header "2/5  sudo rules"
 : >"$W/sbad"
-while IFS='|' read -r _f _n _t; do
-    _w=$(printf '%s' "$_t" | awk '{ print $1 }')
+while IFS='|' read -r _f _n _w _np _t; do
     _why=""
     case "$_w" in ALL) _why="gives EVERY user root" ;; %users|%everyone|%staff) _why="gives a whole group ($_w) root" ;; esac
     if [ -z "$_why" ] && [ "${_w#%}" = "$_w" ] && [ "$_w" != root ] && ! awk -F'|' -v u="$_w" '$1 == u { f = 1 } END { exit !f }' "$W/pw"; then
@@ -249,6 +266,8 @@ while IFS='|' read -r _f _n _t; do
     # A line for one existing user is asked about with that account; here
     # only group-wide NOPASSWD.
     case "$_w$_t" in %*NOPASSWD*ALL*) [ -z "$_why" ] && ! cc_is_protected account "$_w" && _why="NOPASSWD: ALL for the whole group (root with no password)" ;; esac
+    # doas: nopass for a whole group, any command.
+    case "$_w|$_np|$_t" in %*"|y|permit"*) case "$_t" in *[[:space:]]cmd[[:space:]]*) ;; *) [ -z "$_why" ] && ! cc_is_protected account "$_w" && _why="doas nopass for the whole group (root with no password)" ;; esac ;; esac
     if [ -n "$_why" ]; then printf '%s|%s|%s|%s\n' "$_f" "$_n" "$_t" "$_why" >>"$W/sbad"; cc_show "$C_RED" "  [!] $_f line $_n: $_t  - $_why"; fi
 done <"$W/sudo"
 [ -s "$W/sbad" ] || cc_show "$C_GRN" "  [ok] no sudo line gives everyone root (per-account lines are with each account)"
@@ -293,7 +312,8 @@ while IFS='|' read -r _u _uid _kind _sh _login _pw _grs _adm _sud _nop _keys _ko
 done <"$W/ask"
 : >"$W/splan"
 while IFS='|' read -r _f _n _t _why; do
-    cc_ask "Comment out $_f line $_n ($_t) - $_why?" Y "yes, comment it out (checked with visudo first)" "no, leave it" && printf '%s|%s|%s\n' "$_f" "$_n" "$_t" >>"$W/splan"
+    _chk=visudo; case "$_f" in /etc/doas*) _chk="doas -C" ;; esac
+    cc_ask "Comment out $_f line $_n ($_t) - $_why?" Y "yes, comment it out (checked with $_chk first)" "no, leave it" && printf '%s|%s|%s\n' "$_f" "$_n" "$_t" >>"$W/splan"
 done <"$W/sbad"
 
 # ---- Plan ---------------------------------------------------------------------------------
@@ -349,14 +369,20 @@ do_unadmin() {   # do_unadmin USER ADMIN-GROUPS SUDO-LINES
     # Its own sudo lines (by name): commented out.
     for _sl in $3; do
         _f=${_sl%:*}; _n=${_sl##*:}
-        awk -F'|' -v f="$_f" -v n="$_n" -v u="$1" '$1 == f && $2 == n { split($3, w, /[ \t]+/); if (w[1] == u) x = 1 } END { exit !x }' "$W/sudo" && sudo_comment "$_f" "$_n"
+        awk -F'|' -v f="$_f" -v n="$_n" -v u="$1" '$1 == f && $2 == n && $3 == u { x = 1 } END { exit !x }' "$W/sudo" && sudo_comment "$_f" "$_n"
     done
     return 0
 }
-sudo_comment() {   # sudo_comment FILE LINE -> "# LX-21: " in front, checked by visudo
+sudo_comment() {   # sudo_comment FILE LINE -> "# LX-21: " in front, checked by visudo (doas -C for doas)
     _rf=$(P "$1")
     grep -qxF "$_rf" "$W/sbacked" 2>/dev/null || { cc_backup_file "$_rf" >/dev/null || return 1; printf '%s\n' "$_rf" >>"$W/sbacked"; }
     awk -v n="$2" 'NR == n && !/^# LX-21: / { print "# LX-21: " $0; next } { print }' "$_rf" >"$W/sudo.new" || return 1
+    case "$1" in /etc/doas*)
+        if [ -z "$R" ] && cc_have doas; then
+            doas -C "$W/sudo.new" >>"$CC_LOG" 2>&1 || { cc_show "$C_RED" "    [x] doas -C does not accept the change to $1: left as it is"; return 1; }
+        fi
+        cat "$W/sudo.new" >"$_rf"; return ;;
+    esac
     if [ -z "$R" ] && cc_have visudo; then
         _chk=$W/sudo.new; [ "$1" = /etc/sudoers ] || { cp "$(P /etc/sudoers)" "$W/sudo.main"; _chk=$W/sudo.new; }
         visudo -c -f "$_chk" >>"$CC_LOG" 2>&1 || { cc_show "$C_RED" "    [x] visudo does not accept the change to $1: left as it is"; return 1; }

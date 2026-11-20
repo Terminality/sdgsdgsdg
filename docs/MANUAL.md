@@ -457,6 +457,14 @@ Do this on the oldest and the newest Windows you expect to defend. It ends with 
 | Git shows every line of a `.sh` file as changed | Line endings were converted | `.gitattributes` forces LF for `.sh`. Run `git add --renormalize .` |
 | A script printed a password | A script passed a secret to `cc_log`, `cc_run` or a description | Treat that password as exposed and rotate it. Fix the script to use `cc_run_quiet` / `-Secret` |
 
+### Linux boxes that are not Ubuntu
+
+The Linux scripts are used the same way on every distribution: same options, same questions. What differs is found by itself.
+
+- **Alpine** (OpenRC, busybox): services are started, stopped and disabled with `rc-service` and `rc-update` (LX-25, LX-26, LX-42, LX-43, LX-46). LX-46 updates with `apk` (sources, keys, pins in `/etc/apk/world`; old packages for the rollback come from `/etc/apk/cache`, else are fetched). LX-43 without rsyslog points busybox `syslogd` at the receiver (`-R`, UDP only). LX-40, LX-41 and LX-42 look in `/etc/crontabs`, `/etc/periodic`, `/etc/local.d`, `/etc/conf.d`, `/etc/doas.conf` and `/var/log/messages`. LX-21 reads doas rules like sudo lines (`doas -C` checks a change). LX-20 and LX-21 work without `usermod`. LX-25 `--save` uses `/etc/local.d`.
+- **Rocky, Fedora** (firewalld, SELinux): LX-25 offers to open the kept ports in firewalld too, or it would still block them. Files put back by an undo get their SELinux label back (`restorecon`).
+- **Ubuntu, Mint, Lubuntu** (ufw): LX-25 does the same for ufw. LX-26 also finds desktop sharing (Vino, KRfb, GNOME Remote Desktop, x0vncserver) and the MeshCentral agent.
+
 ---
 
 ## 10. Linux enum, `roles/linux/SH-05-linux-enum.sh` (SH-05)

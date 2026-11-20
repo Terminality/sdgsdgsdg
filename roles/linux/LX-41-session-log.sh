@@ -4,7 +4,7 @@
 # NAME:     Linux session & command logging
 # ROLE:     Linux  (wave 2 - start it once the box is hardened, beside LX-40)
 # KIND:     readonly - reads logs, changes nothing (unless --setup-auditd)
-# VERSION:  1.1.0
+# VERSION:  1.2.0
 #
 # PURPOSE
 #   Watches who logs in and what they run, saves it to log files, and prints
@@ -220,7 +220,8 @@ cc_color_init
 
 # ---- Find the auth log ------------------------------------------------------
 if [ -z "$AUTHLOG" ]; then
-    for _f in "$R/var/log/auth.log" "$R/var/log/secure"; do
+    # (Alpine: busybox syslogd writes everything, logins too, to /var/log/messages)
+    for _f in "$R/var/log/auth.log" "$R/var/log/secure" "$R/var/log/messages"; do
         [ -f "$_f" ] && { AUTHLOG=$_f; break; }
     done
 fi
@@ -232,7 +233,7 @@ elif [ -n "$AUTHLOG" ]; then
     [ -r "$AUTHLOG" ] || cc_warn "cannot read $AUTHLOG (need root): logins and sudo will be missed"
     cc_info "auth log: $AUTHLOG"
 else
-    cc_warn "no auth log found (looked for auth.log and secure): logins and sudo cannot be watched"
+    cc_warn "no auth log found (looked for auth.log, secure and messages): logins and sudo cannot be watched"
 fi
 
 # ---- Find the audit log -----------------------------------------------------
@@ -475,6 +476,22 @@ read_auth() {
                 u = word(after(s, " user=")); if (u == "") u = word(after(s, "logname="))
                 print ts() " SUDO-FAIL " u >> PRIV
                 emit(ts(), "MED", "priv", u, "sudo authentication failure")
+            }
+            next
+        }
+        # doas (Alpine): "doas: alice ran command ls as root from /home/alice"
+        / doas(\[[0-9]+\])?: / {
+            s = after($0, " doas"); sub(/^(\[[0-9]+\])?: */, "", s)
+            if (s ~ / ran command /) {
+                u = word(s); cmd = after(s, " ran command "); runas = ""
+                if (match(cmd, / as [^ ]+ from /)) { runas = word(substr(cmd, RSTART + 4)); cmd = substr(cmd, 1, RSTART - 1) }
+                print ts() " DOAS " u (runas != "" && runas != "root" ? " as " runas : "") ": " cmd >> PRIV
+                classify(ts(), "priv", u, runas, cmd, "")
+            } else if (s ~ /failed auth for |command not permitted for /) {
+                u = (s ~ /failed auth for /) ? word(after(s, "failed auth for ")) : word(after(s, "not permitted for "))
+                sub(/:$/, "", u)
+                print ts() " DOAS-FAIL " u ": " s >> PRIV
+                emit(ts(), isin(ADM, u) ? "MED" : "HIGH", "priv", u, "doas refused: " s)
             }
             next
         }

@@ -4,7 +4,7 @@
 # NAME:     Remote access lockdown (everything but SSH)
 # ROLE:     Linux  (wave 1, after SSH hardening; again after red team)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   SSH is handled by LX-22.  Red team also gets in through everything
@@ -17,7 +17,8 @@
 #           terminals (ttyd, gotty, shellinabox, wetty, tmate), bind / reverse
 #           shells (nc -e, ncat -e/--exec, socat ... exec:, a shell holding a
 #           network connection), remote desktops (x11vnc, Xvnc, vncserver,
-#           xrdp, NoMachine, TeamViewer, AnyDesk, RustDesk)
+#           xrdp, NoMachine, TeamViewer, AnyDesk, RustDesk, Vino, KRfb,
+#           GNOME Remote Desktop, MeshCentral agent)
 #     MED   admin panels (Webmin 10000, Cockpit 9090, Usermin, ISPConfig,
 #           Virtualmin), file-sharing listeners (python -m http.server,
 #           php -S, busybox httpd)
@@ -142,21 +143,23 @@ case "$BOX" in splunk) SCORED_PORTS="22 8000 8089 123" ;; webmail) SCORED_PORTS=
 cat >"$W/table" <<'EOF'
 HIGH|tunnel|ngrok chisel frpc frps cloudflared bore gost ligolo ligolo-ng ligolo-agent rathole inlets pgrok zrok sshuttle|ngrok cloudflared frpc frps chisel|a tunnel out past the firewall
 HIGH|web terminal|ttyd gotty shellinaboxd shellinabox wetty tmate butterfly|ttyd shellinabox wetty|a shell in a web browser
-HIGH|remote desktop|x11vnc Xvnc Xtightvnc Xtigervnc vncserver vnc4server xrdp xrdp-sesman nxserver nxd nxnode teamviewerd TeamViewer anydesk rustdesk hbbs hbbr|xrdp xrdp-sesman x11vnc vncserver nxserver teamviewerd anydesk rustdesk|a remote desktop
+HIGH|remote desktop|x11vnc Xvnc Xtightvnc Xtigervnc x0vncserver vncserver vnc4server xrdp xrdp-sesman nxserver nxd nxnode teamviewerd TeamViewer anydesk rustdesk hbbs hbbr vino-server krfb gnome-remote-de grd-daemon meshagent|xrdp xrdp-sesman x11vnc vncserver nxserver teamviewerd anydesk rustdesk gnome-remote-desktop meshagent|a remote desktop
 MED|admin panel|miniserv.pl cockpit-ws cockpit-tls usermin ispconfig virtualmin|webmin cockpit cockpit.socket usermin|a web admin panel (root on the box from a browser)
 EOF
 # ps: pid|comm|args
 # (zombies - already dead, waiting for their parent - are left out)
 ps -eo pid=,stat=,comm=,args= 2>/dev/null | awk '$2 !~ /^Z/ { p = $1; c = $3; $1 = ""; $2 = ""; $3 = ""; sub(/^   /, ""); print p "|" c "|" $0 }' >"$W/ps"
 # listening: port|pid|comm  (tcp and udp)
-ss -lntup 2>/dev/null | awk 'NR > 1 { n = split($5, a, ":"); port = a[n]; pid = ""; c = ""; if (match($0, /pid=[0-9]+/)) pid = substr($0, RSTART + 4, RLENGTH - 4); if (match($0, /\(\("[^"]+"/)) c = substr($0, RSTART + 3, RLENGTH - 4); print port "|" pid "|" c }' | sort -u >"$W/listen"
+if cc_have ss; then
+    ss -lntup 2>/dev/null | awk 'NR > 1 { n = split($5, a, ":"); port = a[n]; pid = ""; c = ""; if (match($0, /pid=[0-9]+/)) pid = substr($0, RSTART + 4, RLENGTH - 4); if (match($0, /\(\("[^"]+"/)) c = substr($0, RSTART + 3, RLENGTH - 4); print port "|" pid "|" c }' | sort -u >"$W/listen"
+else
+    # Alpine: no ss, busybox netstat ("PID/name" in the last column).
+    netstat -lntup 2>/dev/null | awk '$1 ~ /^(tcp|udp)/ { n = split($4, a, ":"); pid = ""; c = ""; if (match($NF, /^[0-9]+\//)) { pid = substr($NF, 1, RLENGTH - 1); c = substr($NF, RLENGTH + 1) } print a[n] "|" pid "|" c }' | sort -u >"$W/listen"
+fi
 # exe PID -> the program file (or "(deleted)")
 exe() { ls -l "/proc/$1/exe" 2>/dev/null | sed 's/.* -> //'; }
 port_of() { awk -F'|' -v p="$1" '$2 == p { printf "%s ", $1 }' "$W/listen" | sed 's/ $//'; }
-svc_exists() {
-    if [ "$CC_INIT" = systemd ]; then systemctl list-unit-files "$1" "$1.service" 2>/dev/null | grep -q "^$1"; return; fi
-    [ -x "/etc/init.d/$1" ]
-}
+svc_exists() { cc_svc exists "$1"; }
 
 # Findings: level<TAB>kind<TAB>name<TAB>pid<TAB>service<TAB>file<TAB>what
 : >"$W/find"
@@ -173,7 +176,7 @@ while IFS='|' read -r _lv _kind _progs _svcs _what; do
         svc_exists "$_s" || continue
         awk -F'\037' -v s="$_s" '$5 == s { f = 1 } END { exit !f }' "$W/find" && continue
         _on=no
-        if [ "$CC_INIT" = systemd ]; then systemctl is-enabled -q "$_s" 2>/dev/null && _on=yes; else ls /etc/rc[2345].d/S*"$_s" >/dev/null 2>&1 && _on=yes; fi
+        cc_svc is-enabled "$_s" >/dev/null 2>&1 && _on=yes
         [ "$_on" = yes ] && add "$_lv" "$_kind" "$_s" "" "$_s" "" "$_what: the $_s service starts at boot"
     done
 done <"$W/table"
@@ -248,6 +251,9 @@ svc_off() {   # svc_off NAME -> stop and disable; undo enables and starts
     if [ "$CC_INIT" = systemd ] && [ -z "${BT_SERVICE:-}" ]; then
         cc_undo_add "enable and start $1 again" "systemctl enable $1; systemctl start $1"
         systemctl stop "$1" && systemctl disable "$1"
+    elif [ "${BT_SVC_INIT:-$CC_INIT}" = openrc ] && [ -z "${BT_SERVICE:-}" ]; then
+        cc_undo_add "enable and start $1 again" "$(cc_svc_cmd enable "$1"); $(cc_svc_cmd start "$1")"
+        cc_svc stop "$1"; cc_svc disable "$1"
     else
         cc_undo_add "enable and start $1 again" "update-rc.d $1 enable 2>/dev/null; $SERVICE $1 start"
         "$SERVICE" "$1" stop; update-rc.d "$1" disable 2>/dev/null; return 0

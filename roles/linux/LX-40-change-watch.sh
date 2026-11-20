@@ -4,7 +4,7 @@
 # NAME:     Linux change watch
 # ROLE:     Linux  (wave 2, first 15 minutes - start it once the box is hardened)
 # KIND:     readonly - changes nothing on the host
-# VERSION:  2.0.0
+# VERSION:  2.1.0
 #
 # PURPOSE
 #   Takes a baseline of the places red teams use to get back in, then checks
@@ -353,17 +353,28 @@ snap() {
              "$R/etc/ld.so.conf" "$R/etc/ld.so.conf.d" "$R/etc/profile" "$R/etc/profile.d" "$R/etc/bash.bashrc" \
              "$R/etc/bashrc" "$R/etc/environment" "$R/etc/hosts" "$R/etc/resolv.conf" "$R/etc/nsswitch.conf" \
              "$R/etc/ssh/sshd_config" "$R/etc/ssh/sshd_config.d" "$R/etc/sysctl.conf" "$R/etc/sysctl.d" \
-             "$R/root/.bashrc" "$R/root/.profile" "$R/root/.bash_profile" | sort >"$_sd/files"
+             "$R/root/.bashrc" "$R/root/.profile" "$R/root/.bash_profile" \
+             "$R/etc/doas.conf" "$R/etc/doas.d" "$R/root/.ashrc" "$R/etc/apk/repositories" "$R/etc/apk/keys" | sort >"$_sd/files"
     # cron: every cron and at file, plus systemd timers by name
     { hashlist "$R/etc/crontab" "$R/etc/cron.d" "$R/etc/cron.hourly" "$R/etc/cron.daily" "$R/etc/cron.weekly" \
-               "$R/etc/cron.monthly" "$R/var/spool/cron" "$R/var/spool/at" "$R/var/spool/anacron" "$R/etc/anacrontab"
+               "$R/etc/cron.monthly" "$R/var/spool/cron" "$R/var/spool/at" "$R/var/spool/anacron" "$R/etc/anacrontab" \
+               "$R/etc/crontabs" "$R/etc/periodic"
       if [ -n "$SYSCTL" ]; then
           "$SYSCTL" list-timers --all --no-legend --no-pager 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /\.timer$/) print "timer " $i "|" }'
       fi; } | sort -u >"$_sd/cron"
     # units: services that start at boot
     hashlist "$R/etc/systemd/system" "$R/lib/systemd/system" "$R/usr/lib/systemd/system" "$R/etc/init.d" \
-             "$R/etc/rc.local" "$R/etc/rc.d" | sort >"$_sd/units"
-    # running: services running now (systemd only)
+             "$R/etc/rc.local" "$R/etc/rc.d" "$R/etc/local.d" "$R/etc/conf.d" | sort >"$_sd/units"
+    # OpenRC (Alpine): which services start in which runlevel (the links in /etc/runlevels)
+    for _rl in "$R"/etc/runlevels/*/; do
+        [ -d "$_rl" ] || continue
+        for _l in "$_rl"*; do [ -e "$_l" ] || [ -L "$_l" ] || continue; printf '%s|runlevel %s\n' "${_l#"$R"}" "$(basename "$_rl")"; done
+    done | sort >>"$_sd/units"
+    sort -o "$_sd/units" "$_sd/units"
+    # running: services running now (systemd, or OpenRC's rc-status)
+    if [ -z "$SYSCTL" ] && [ -z "$R" ] && [ "$CC_INIT" = openrc ] && cc_have rc-status; then
+        rc-status -s 2>/dev/null | awk '/\[ *started/ { print $1 "|" }' | sort -u >"$_sd/running"
+    fi
     if [ -n "$SYSCTL" ]; then
         "$SYSCTL" list-units --type=service --state=running --no-legend --no-pager 2>/dev/null |
             awk '{ for (i = 1; i <= NF; i++) if ($i ~ /\.service$/) { print $i "|"; break } }' | sort -u >"$_sd/running"
@@ -517,15 +528,17 @@ compare() {
                 } else if (sec == "files") {
                     why = "config file"
                     if (k ~ /sudoers/) why = "sudo rules (who can become root)"
+                    else if (k ~ /doas/) why = "doas rules (who can become root)"
+                    else if (k ~ /apk\/(repositories|keys)/) why = "where packages come from (apk)"
                     else if (k ~ /pam\.d|security\//) why = "login checks (PAM)"
                     else if (k ~ /ld\.so\.preload/) why = "code loaded into EVERY program"
                     else if (k ~ /ld\.so\.conf/) why = "where programs load libraries from"
-                    else if (k ~ /(profile|bashrc|bash_profile|environment)/) why = "runs at every login"
+                    else if (k ~ /(profile|bashrc|bash_profile|ashrc|environment)/) why = "runs at every login"
                     else if (k ~ /hosts$/) why = "name lookups (/etc/hosts)"
                     else if (k ~ /(resolv\.conf|nsswitch)/) why = "DNS / name lookup settings"
                     else if (k ~ /sshd_config/) why = "SSH server settings"
                     else if (k ~ /sysctl/) why = "kernel settings"
-                    sev = (k ~ /(sudoers|pam\.d|ld\.so\.preload|security\/)/ || c == "added") ? "HIGH" : "MED"
+                    sev = (k ~ /(sudoers|doas|pam\.d|ld\.so\.preload|security\/|apk\/keys)/ || c == "added") ? "HIGH" : "MED"
                     d = why ": file " c
                 } else if (sec == "cron") {
                     sev = (c == "removed") ? "LOW" : "HIGH"
@@ -533,10 +546,12 @@ compare() {
                     if (c != "removed" && k !~ /^timer /) d = d " - look at what it runs"
                 } else if (sec == "units") {
                     sev = (c == "added") ? "HIGH" : (c == "removed" ? "LOW" : "MED")
-                    d = "boot service file " c (c == "removed" ? "" : " - check its ExecStart line")
+                    if (k ~ /^\/etc\/runlevels\//) d = "starts at boot (OpenRC runlevel): " c (c == "added" ? " - is this service yours?" : "")
+                    else if (k ~ /^\/etc\/local\.d\//) d = "runs at boot (OpenRC local.d) " c (c == "removed" ? "" : " - look at what it runs")
+                    else d = "boot service file " c (c == "removed" ? "" : (k ~ /init\.d|conf\.d/ ? " - check what it starts" : " - check its ExecStart line"))
                 } else if (sec == "running") {
                     if (c == "added") { sev = "LOW"; d = "service started" }
-                    else if (k ~ /^(auditd|rsyslog|syslog|syslog-ng|systemd-journald|splunk.*|SplunkForwarder|wazuh.*|ossec.*|osqueryd|falco.*|fail2ban|sysmon.*|auditbeat|filebeat|crowdsec)\.service$/) { sev = "HIGH"; d = "logging or security service STOPPED - the red team may be hiding something" }
+                    else if (k ~ /^(auditd|rsyslog|syslog|syslog-ng|systemd-journald|splunk.*|SplunkForwarder|wazuh.*|ossec.*|osqueryd|falco.*|fail2ban|sysmon.*|auditbeat|filebeat|crowdsec)(\.service)?$/) { sev = "HIGH"; d = "logging or security service STOPPED - the red team may be hiding something" }
                     else d = "service stopped running - if it is scored, it is down"
                 } else if (sec == "keys") {
                     sev = (c == "removed") ? "MED" : "HIGH"

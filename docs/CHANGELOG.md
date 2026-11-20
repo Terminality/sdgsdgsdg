@@ -2,6 +2,19 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-20: Linux scripts on Alpine, Rocky/Fedora and Ubuntu/Mint (library 0.4.0)
+
+Same options and questions as before; what differs per box is found by itself.
+
+- **Library 0.4.0** (`lib/lib.sh`; `lib/lib.ps1` version only): `cc_svc` and `cc_svc_cmd` start, stop, enable and disable a service on systemd, OpenRC or SysV. `cc_relabel` and `cc_relabel_cmd` restore SELinux labels; the undo lines of `cc_backup_file` and `cc_quarantine` do it too.
+- **LX-46**: `apk` on Alpine: sources and keys, pins in `/etc/apk/world` as holds, `apk list -u` (every update counts as security: Alpine marks none), rollback from `/etc/apk/cache` or `apk fetch`, Samba and NFS as their own group. Services restart through OpenRC. busybox `netstat` when there is no `ss`.
+- **LX-25**: on firewalld (Rocky, Fedora) and ufw (Ubuntu, Mint) the kept ports they would still block are shown, and opened there too on a yes (with rollback). `--save` on OpenRC (`/etc/local.d`) and on systemd boxes without an nftables.conf (a small `bt-firewall.service`); firewalld rules made permanent.
+- **LX-43**: on Alpine without rsyslog, busybox `syslogd -R` sends to the receiver (UDP).
+- **LX-40, LX-41, LX-42**: Alpine places: `/etc/crontabs`, `/etc/periodic`, `/etc/local.d`, `/etc/conf.d`, OpenRC runlevels, doas, apk sources and keys, `/var/log/messages`. LX-42 knows apk's package files, and on OpenRC an init script it removes is also stopped and disabled.
+- **LX-21**: doas rules read like sudo lines (nopass for a group, a user that does not exist); a change checked with `doas -C`. sync, halt and shutdown (group root on Alpine) are no longer called admins.
+- **LX-26**: Vino, KRfb, GNOME Remote Desktop, x0vncserver and the MeshCentral agent; services stopped through OpenRC; busybox `netstat`.
+- Tested: lx21, lx25, lx26, lx40, lx41, lx42, lx43, lx46 under seven shells and three awks, and the built copies; LX-20, LX-21, LX-26, LX-42, LX-46 live in an Alpine 3.23 chroot (stand-in `rc-service`/`rc-update`).
+
 ## 2026-11-19: Network scripts without CSV; host list as text; NW-10 on MikroTik (library 0.3.0)
 
 - **Library 0.3.0** (`lib/lib.sh`; `lib/lib.ps1` version only): text tables instead of CSV (`cc_table_new`, `cc_table_row`, `cc_table_align`, `cc_table_sort_flags`, `CC_AWK_TABLE`): a `.txt` file with the column names on the first line and columns separated by ` | `, readable and parseable. With `CC_TABLES=1` a script's flags go to `flags.txt` the same way. `cc_hosts_rows` reads the host list.

@@ -4,7 +4,7 @@
 # NAME:     Safe security updates
 # ROLE:     Linux  (wave 2, once the services are backed up)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Patches the holes red team will use (OpenSSH, OpenSSL, sudo, Apache,
@@ -41,7 +41,7 @@
 #
 # OPTIONS
 #   --apply           install (without it, dry run only)
-#   --no-refresh      do not run apt-get update / dnf makecache first
+#   --no-refresh      do not run apt-get update / dnf makecache / apk update first
 #   --no-restart      never offer to restart services still on old code
 #   --all             default to [u] for the non-security updates too
 #   --kernel          default to [u] for the kernel too
@@ -51,11 +51,12 @@
 #
 # OUTPUTS  (under --out, in updates-N/)
 #   output.txt, sources.txt, updates.txt, versions-before.txt,
-#   versions-after.txt, summary.txt, old-packages/ (the saved .deb files);
+#   versions-after.txt, summary.txt, old-packages/ (the saved .deb / .apk files);
 #   the rollback lines go in the undo log
 #
 # DEPENDS ON
-#   apt-get + dpkg (Debian, Ubuntu) or dnf / yum (Red Hat family); ss.
+#   apt-get + dpkg (Debian, Ubuntu), dnf / yum (Red Hat family: Rocky,
+#   Fedora) or apk (Alpine); ss (or busybox netstat).
 #
 # TESTED ON
 #   Stand-in apt-get, dpkg-query, apt-mark and ss (no real package is
@@ -71,14 +72,20 @@
 #     feature.  Click through the site after a web or PHP group.
 #   - Updates restart services: a scoring check that lands in those
 #     seconds fails.  Do it early, one group at a time.
+#   - Alpine: apk marks no update as "security", but a stable branch (3.23)
+#     only gets fixes, so its updates are treated as security updates (the
+#     kernel still defaults to skip).  Alpine mirrors keep only the newest
+#     version: the rollback works only when the old .apk is in apk's cache
+#     (/etc/apk/cache), else you are asked before updating without one.
+#     A pin in /etc/apk/world (openssh=9.6_p1-r0, or openssh<9.7) is a hold.
 # =============================================================================
 
-# >>> BT-LIB  (lib/lib.sh 0.3.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.4.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.3.0
+# VERSION:  0.4.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -149,7 +156,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.3.0"
+CC_LIB_VERSION="0.4.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -535,7 +542,7 @@ cc_backup_file() {
     (umask 077; mkdir -p "$(dirname "$_cc_bk_dst")") || { cc_err "backup: cannot create $(dirname "$_cc_bk_dst")"; return 1; }
     if cp -pR "$_cc_bk_src" "$_cc_bk_dst" 2>>"$CC_LOG"; then
         CC_LAST_BACKUP=$_cc_bk_dst
-        cc_undo_add "restore $_cc_bk_src" "cp -pR $(cc_shquote "$_cc_bk_dst") $(cc_shquote "$_cc_bk_src")"
+        cc_undo_add "restore $_cc_bk_src" "cp -pR $(cc_shquote "$_cc_bk_dst") $(cc_shquote "$_cc_bk_src")$(cc_relabel_cmd "$_cc_bk_src")"
         cc_debug "backup: $_cc_bk_src -> $_cc_bk_dst"
         return 0
     fi
@@ -969,6 +976,60 @@ cc_detect_os() {
 }
 
 # -----------------------------------------------------------------------------
+# Services and SELinux (systemd, OpenRC or SysV init)
+# -----------------------------------------------------------------------------
+
+# cc_svc ACTION NAME -> run ACTION on service NAME with this box's init system.
+#   ACTION: start stop restart reload enable disable is-active is-enabled exists
+#   systemd: systemctl; OpenRC (Alpine): rc-service / rc-update; SysV: service
+#   and update-rc.d or chkconfig.  Returns the tool's exit code.  BT_SVC_INIT
+#   overrides the detected init (the tests use it).
+cc_svc() {
+    _cc_sv_i=${BT_SVC_INIT:-${CC_INIT:-}}
+    [ -n "$_cc_sv_i" ] || { cc_detect_os; _cc_sv_i=$CC_INIT; }
+    case "$_cc_sv_i:$1" in
+        systemd:exists)      systemctl list-unit-files "$2.service" "$2" 2>/dev/null | grep -q "^$2[.@ ]" ;;
+        systemd:*)           systemctl "$1" "$2" ;;
+        openrc:exists)       [ -x "/etc/init.d/$2" ] ;;
+        openrc:is-active)    rc-service "$2" status >/dev/null 2>&1 ;;
+        openrc:is-enabled)   rc-update show -v 2>/dev/null | awk -v s="$2" '$1 == s && $3 != "" { f = 1 } END { exit !f }' ;;
+        openrc:enable)       rc-update add "$2" default ;;
+        openrc:disable)      rc-update -a del "$2" ;;
+        openrc:*)            rc-service "$2" "$1" ;;
+        *:exists)            [ -x "/etc/init.d/$2" ] ;;
+        *:is-active)         service "$2" status >/dev/null 2>&1 ;;
+        *:is-enabled)        ls /etc/rc[2345].d/S*"$2" >/dev/null 2>&1 ;;
+        *:enable)            if cc_have update-rc.d; then update-rc.d "$2" enable; else chkconfig "$2" on; fi ;;
+        *:disable)           if cc_have update-rc.d; then update-rc.d "$2" disable; else chkconfig "$2" off; fi ;;
+        *)                   service "$2" "$1" ;;
+    esac
+}
+# cc_svc_cmd ACTION NAME -> the same as a command line (for undo lines)
+cc_svc_cmd() {
+    _cc_sc_i=${BT_SVC_INIT:-${CC_INIT:-}}
+    case "$_cc_sc_i:$1" in
+        systemd:*)         printf 'systemctl %s %s' "$1" "$(cc_shquote "$2")" ;;
+        openrc:enable)     printf 'rc-update add %s default' "$(cc_shquote "$2")" ;;
+        openrc:disable)    printf 'rc-update -a del %s' "$(cc_shquote "$2")" ;;
+        openrc:*)          printf 'rc-service %s %s' "$(cc_shquote "$2")" "$1" ;;
+        *:enable)          printf '{ update-rc.d %s enable || chkconfig %s on; }' "$(cc_shquote "$2")" "$(cc_shquote "$2")" ;;
+        *:disable)         printf '{ update-rc.d %s disable || chkconfig %s off; }' "$(cc_shquote "$2")" "$(cc_shquote "$2")" ;;
+        *)                 printf 'service %s %s' "$(cc_shquote "$2")" "$1" ;;
+    esac
+}
+# cc_selinux_on -> true when SELinux is enforcing or permissive on this box
+cc_selinux_on() {
+    [ -n "${BT_SELINUX:-}" ] && { [ "$BT_SELINUX" = 1 ]; return; }
+    cc_have selinuxenabled && selinuxenabled 2>/dev/null
+}
+# cc_relabel_cmd PATH -> "; restorecon ..." to add to an undo line on an
+#   SELinux box (a file put back by cp or mv may carry the wrong label, and a
+#   service then cannot read it); nothing elsewhere.
+cc_relabel_cmd() { cc_selinux_on && cc_have restorecon && printf '; restorecon -R %s 2>/dev/null' "$(cc_shquote "$1")"; return 0; }
+# cc_relabel PATH... -> restore the SELinux label of new or replaced files (no-op elsewhere)
+cc_relabel() { cc_selinux_on && cc_have restorecon || return 0; restorecon -R "$@" 2>/dev/null; return 0; }
+
+# -----------------------------------------------------------------------------
 # Hashing, passwords, quarantine
 # -----------------------------------------------------------------------------
 
@@ -1035,7 +1096,7 @@ cc_quarantine() {
     if mv "$_cc_q_src" "$_cc_q_dst" 2>>"$CC_LOG"; then
         CC_N_DONE=$((CC_N_DONE + 1))
         cc_log DO "quarantined $_cc_q_src -> $_cc_q_dst (sha256 ${_cc_q_hash:-n/a})"
-        cc_undo_add "un-quarantine $_cc_q_src" "mv $(cc_shquote "$_cc_q_dst") $(cc_shquote "$_cc_q_src")"
+        cc_undo_add "un-quarantine $_cc_q_src" "mv $(cc_shquote "$_cc_q_dst") $(cc_shquote "$_cc_q_src")$(cc_relabel_cmd "$_cc_q_src")"
         return 0
     fi
     CC_N_FAIL=$((CC_N_FAIL + 1))
@@ -1515,6 +1576,7 @@ CC_TEE=$OUTF
 W="$CC_RUN_DIR/.work"; mkdir -p "$W"
 AETC=${BT_TEST_ETC:-/etc}   # tests point this at a fake /etc
 ACACHE=${BT_TEST_APTCACHE:-/var/cache/apt/archives}
+ACACHE_APK=${BT_TEST_APKCACHE:-/etc/apk/cache}
 header() { cc_show "" ""; cc_show "$C_CYN" "==========[ $1 ]=========="; }
 export DEBIAN_FRONTEND=noninteractive
 APTO="-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
@@ -1526,8 +1588,9 @@ CAN=0; [ "$CC_APPLY" = 1 ] && cc_is_root && CAN=1
 
 # ---- 1. Sources and holds ---------------------------------------------------------------------
 header "1/6  where updates come from"
-PM=""; if cc_have apt-get && cc_have dpkg-query; then PM=apt; elif cc_have dnf; then PM=dnf; elif cc_have yum; then PM=yum; fi
-[ -n "$PM" ] || { cc_show "$C_RED" "  [x] no apt-get, dnf or yum here"; rm -rf "$W"; cc_finish; exit 3; }
+PM=${BT_TEST_PM:-}   # (the tests choose one)
+if [ -n "$PM" ]; then :; elif cc_have apt-get && cc_have dpkg-query; then PM=apt; elif cc_have dnf; then PM=dnf; elif cc_have yum; then PM=yum; elif cc_have apk; then PM=apk; fi
+[ -n "$PM" ] || { cc_show "$C_RED" "  [x] no apt-get, dnf, yum or apk here"; rm -rf "$W"; cc_finish; exit 3; }
 cc_show "" "  package manager: $PM"
 if [ "$PM" = apt ] && _busy=$(ps -eo comm= 2>/dev/null | grep -xE 'apt|apt-get|dpkg|unattended-upgr|aptitude' | sort -u | tr '\n' ' ') && [ -n "$_busy" ]; then
     cc_show "$C_YEL" "  [*] another package job is running ($_busy): wait for it, or this run cannot install"
@@ -1539,7 +1602,7 @@ src_line() {  # src_line LEVEL TEXT
     case "$1" in '[!]') cc_show "$C_RED" "  $1 $2" ;; '[*]') cc_show "$C_YEL" "  $1 $2" ;; *) cc_show "$C_GRN" "  $1 $2" ;; esac
     NSRC=$((NSRC + 1))
 }
-OFFICIAL='(^|\.)(ubuntu\.com|debian\.org|launchpadcontent\.net|launchpad\.net|canonical\.com|rockylinux\.org|almalinux\.org|centos\.org|fedoraproject\.org|redhat\.com|oracle\.com)$'
+OFFICIAL='(^|\.)(ubuntu\.com|debian\.org|launchpadcontent\.net|launchpad\.net|canonical\.com|rockylinux\.org|almalinux\.org|centos\.org|fedoraproject\.org|redhat\.com|oracle\.com|alpinelinux\.org)$'
 if [ "$PM" = apt ]; then
     {
         cat "$AETC"/apt/sources.list "$AETC"/apt/sources.list.d/*.list 2>/dev/null | sed 's/#.*//' | awk '$1 == "deb" { o = ""; u = ""; for (i = 2; i <= NF; i++) { if ($i ~ /^\[/) { while (i <= NF && $i !~ /\]$/) { o = o " " $i; i++ } o = o " " $i; continue } u = $i; break } print u "|" o }'
@@ -1560,6 +1623,22 @@ if [ "$PM" = apt ]; then
     done | while IFS='|' read -r _f _p; do src_line '[*]' "a pin that blocks updates (Pin-Priority below 0) for$_p in $_f: red team uses this like a hold"; done
     grep -rhsiE '^[^#]*Acquire::(http|https|ftp)::Proxy' "$AETC"/apt/apt.conf "$AETC"/apt/apt.conf.d 2>/dev/null | while IFS= read -r _l; do src_line '[*]' "apt goes through a proxy: $_l (yours? a proxy can hand out old packages)"; done
     apt-mark showhold 2>/dev/null | grep . >"$W/held"
+elif [ "$PM" = apk ]; then
+    # /etc/apk/repositories: one URL per line ("@tag URL" for a tagged repository)
+    sed 's/#.*//' "$AETC/apk/repositories" 2>/dev/null | awk 'NF { print $NF }' | sort -u >"$W/src"
+    while IFS= read -r _u; do
+        _h=$(printf '%s' "$_u" | sed 's|^[a-z+]*://||; s|[/:].*||')
+        case "$_u" in /*) src_line '[*]' "a local folder as a package source: $_u (yours? anything put there gets installed)"; continue ;; esac
+        if printf '%s' "$_h" | grep -qE "$OFFICIAL"; then src_line '[ok]' "$_u"
+        else src_line '[*]' "not alpinelinux.org: $_u (a mirror your team chose? if not, delete it from /etc/apk/repositories)"; fi
+    done <"$W/src"
+    # signing keys apk trusts: Alpine's are alpine-devel@lists.alpinelinux.org-*.rsa.pub
+    for _k in "$AETC"/apk/keys/*; do
+        [ -f "$_k" ] || continue
+        case "${_k##*/}" in alpine-devel@lists.alpinelinux.org-*) ;; *) src_line '[!]' "an extra package signing key: /etc/apk/keys/${_k##*/} (packages signed with it get installed: yours? if not, delete it)" ;; esac
+    done
+    # a version pin in /etc/apk/world (name=1.2-r0, name<1.3, name~1.2) never updates: a hold
+    sed -n 's/^\([A-Za-z0-9][A-Za-z0-9._+-]*\)[=<>~].*/\1/p' "$AETC/apk/world" 2>/dev/null | grep . >"$W/held"
 else
     for _f in "$AETC"/yum.repos.d/*.repo; do
         [ -f "$_f" ] || continue
@@ -1588,7 +1667,10 @@ else cc_show "$C_GRN" "  [ok] no packages held"; fi
 header "2/6  services before"
 # Ports below 32768 only: higher ones are usually short-lived (they come and
 # go on their own and would look like a broken service).
-ports() { ss -ltnH 2>/dev/null | awk '{ a = $4; sub(/.*:/, "", a); if (a + 0 < 32768) print a }' | sort -un; }
+ports() {
+    if cc_have ss; then ss -ltnH 2>/dev/null | awk '{ a = $4; sub(/.*:/, "", a); if (a + 0 < 32768) print a }'
+    else netstat -ltn 2>/dev/null | awk '$1 ~ /^tcp/ { a = $4; sub(/.*:/, "", a); if (a + 0 < 32768) print a }'; fi | sort -un
+}
 web() { cc_have curl || return 0; curl -s -m 8 -o /dev/null -w '%{http_code}' "$URL" 2>/dev/null; }
 dbok() { _c=$(cc_first mariadb-admin mysqladmin) || return 0; "$_c" --connect-timeout=5 ping >/dev/null 2>&1 && echo up && return; "$_c" ping 2>&1 | grep -qi 'access denied' && echo up; }
 ports >"$W/ports0"; WEB0=$(web); DB0=$(dbok)
@@ -1600,17 +1682,17 @@ cc_show "" "  listening TCP ports: $(tr '\n' ' ' <"$W/ports0")"
 header "3/6  pending updates"
 if [ "$REFRESH" = 1 ]; then
     if [ "$CAN" = 1 ] || { [ "$CC_APPLY" != 1 ] && cc_is_root; }; then
-        cc_ask "Refresh the package lists first (apt-get update / dnf makecache)?" Y "yes, so the newest fixes show" "no, use the lists from the last refresh" && {
-            if [ "$PM" = apt ]; then apt-get update -q </dev/null >>"$CC_LOG" 2>&1; else $PM -q makecache </dev/null >>"$CC_LOG" 2>&1; fi || cc_show "$C_YEL" "  [*] the refresh failed (no internet?): using the old lists"
+        cc_ask "Refresh the package lists first (apt-get update / dnf makecache / apk update)?" Y "yes, so the newest fixes show" "no, use the lists from the last refresh" && {
+            if [ "$PM" = apt ]; then apt-get update -q </dev/null >>"$CC_LOG" 2>&1; elif [ "$PM" = apk ]; then apk update -q </dev/null >>"$CC_LOG" 2>&1; else $PM -q makecache </dev/null >>"$CC_LOG" 2>&1; fi || cc_show "$C_YEL" "  [*] the refresh failed (no internet?): using the old lists"
         }
     fi
 fi
 # grp NAME -> the group a package belongs to
 grp() {
     case "$1" in
-        linux-image*|linux-headers*|linux-modules*|linux-generic*|linux-virtual*|linux-aws*|linux-azure*|linux-gcp*|kernel|kernel-core|kernel-modules*|kernel-headers) echo kernel ;;
+        linux-image*|linux-headers*|linux-modules*|linux-generic*|linux-virtual*|linux-aws*|linux-azure*|linux-gcp*|kernel|kernel-core|kernel-modules*|kernel-headers|linux-lts|linux-virt|linux-edge|linux-firmware*) echo kernel ;;
         openssh*) echo ssh ;;
-        openssl*|libssl*) echo openssl ;;
+        openssl*|libssl*|libcrypto*) echo openssl ;;
         sudo|sudo-*) echo sudo ;;
         apache2*|libapache2*|httpd*|mod_*|nginx*|libnginx*) echo web ;;
         php*|libphp*) echo php ;;
@@ -1618,6 +1700,7 @@ grp() {
         postfix*|dovecot*|roundcube*) echo mail ;;
         bind9*|bind|named*) echo dns ;;
         vsftpd*|proftpd*|pure-ftpd*) echo ftp ;;
+        samba*|libsmb*|nfs-utils*|nfs-kernel-server*) echo files ;;
         *) echo system ;;
     esac
 }
@@ -1626,6 +1709,7 @@ grp_units() {
     case "$1" in
         ssh) echo "ssh sshd" ;; web) echo "apache2 httpd nginx" ;; php) echo "php-fpm php8.3-fpm php8.2-fpm php8.1-fpm php7.4-fpm" ;;
         database) echo "mariadb mysql mysqld" ;; mail) echo "postfix dovecot" ;; dns) echo "bind9 named" ;; ftp) echo "vsftpd proftpd" ;;
+        files) echo "samba smb smbd nfs nfs-server" ;;
     esac
 }
 : >"$W/upd"
@@ -1636,6 +1720,14 @@ if [ "$PM" = apt ]; then
                    if (!match($0, /\([^)]*\)/)) next; p = substr($0, RSTART + 1, RLENGTH - 2); split(p, a, " ")
                    s = (p ~ /-security|Debian-Security|security\./) ? "security" : "other"
                    print n "|" o "|" a[1] "|" s }' >"$W/upd0"
+elif [ "$PM" = apk ]; then
+    # "apk list -u": NAME-NEWVER ARCH {ORIGIN} (LICENSE) [upgradable from: NAME-OLDVER]
+    # Alpine marks nothing "security"; a stable branch gets fixes only (see the header).
+    apk list -u 2>/dev/null </dev/null | awk '/upgradable from: / {
+        nv = $1; o = $0; sub(/.*upgradable from: /, "", o); sub(/\].*/, "", o)
+        n = nv; sub(/-[0-9][^-]*-r[0-9]+$/, "", n); v = substr(nv, length(n) + 2); ov = substr(o, length(n) + 2)
+        print n "|" ov "|" v "|security" }' >"$W/upd0"
+    [ -s "$W/upd0" ] && cc_show "$C_GRY" "  (Alpine marks no update as security; on a stable branch they are fixes, so they are treated as security)"
 else
     $PM -q check-update --security </dev/null 2>/dev/null | awk 'NF == 3 && $2 ~ /[0-9]/ { n = $1; sub(/\.[^.]*$/, "", n); print n }' | sort -u >"$W/sec"
     $PM -q check-update </dev/null 2>/dev/null | awk 'NF == 3 && $2 ~ /[0-9]/ { n = $1; sub(/\.[^.]*$/, "", n); print n "|" $2 }' | sort -u | while IFS='|' read -r _n _v; do
@@ -1656,7 +1748,7 @@ NUPD=$(grep -c . "$W/upd"); NSEC=$(grep -c '|security|' "$W/upd")
 if [ "$NUPD" -eq 0 ]; then cc_show "$C_GRN" "  [ok] nothing to update"
 else
     cc_show "$([ "$NSEC" -gt 0 ] && printf '%s' "$C_RED" || printf '%s' "$C_YEL")" "  $NUPD update(s), $NSEC of them security (full list: $CC_RUN_DIR/updates.txt)"
-    for _g in ssh openssl sudo web php database mail dns ftp system kernel; do
+    for _g in ssh openssl sudo web php database mail dns ftp files system kernel; do
         _l=$(awk -F'|' -v g="$_g" '$1 == g { printf "%s%s", (n++ ? ", " : ""), $3 }' "$W/upd")
         [ -n "$_l" ] || continue
         _ns=$(grep -c "^$_g|security|" "$W/upd")
@@ -1677,16 +1769,20 @@ ask_group() {  # ask_group GROUP KIND DEFAULT TEXT
     cc_choose "$4 ($_n: $_pk): what now?" "$3" "u=update them (checked after; rolled back if a service broke)" "s=skip them"
     [ "$CC_CHOICE" = u ] && printf '%s|%s|%s\n' "$1" "$2" "$_pk" >>"$W/plan"
 }
-for _g in ssh openssl sudo web php database mail dns ftp system; do ask_group "$_g" security u "Security updates for $_g"; done
+for _g in ssh openssl sudo web php database mail dns ftp files system; do ask_group "$_g" security u "Security updates for $_g"; done
 ask_group kernel kernel "$KERN" "Kernel updates (only take effect after a REBOOT; a reboot mid-game drops every service for minutes)"
-for _g in ssh openssl sudo web php database mail dns ftp system; do ask_group "$_g" other "$ALL" "Non-security updates for $_g"; done
+for _g in ssh openssl sudo web php database mail dns ftp files system; do ask_group "$_g" other "$ALL" "Non-security updates for $_g"; done
 NPLAN=$(grep -c . "$W/plan"); NREL=$(grep -c . "$W/release")
 [ "$NPLAN" -eq 0 ] && [ "$NREL" -eq 0 ] && cc_show "$C_GRN" "  [ok] nothing chosen"
 
 # ---- 5. Apply -------------------------------------------------------------------------------
 header "5/6  apply"
 NOK=0; NBAD=0; NROLL=0; APPLIED=0
-ver_list() { if [ "$PM" = apt ]; then dpkg-query -W -f '${Package} ${Version}\n' 2>/dev/null; else rpm -qa --qf '%{NAME} %{VERSION}-%{RELEASE}\n' 2>/dev/null; fi | sort; }
+ver_list() {
+    if [ "$PM" = apt ]; then dpkg-query -W -f '${Package} ${Version}\n' 2>/dev/null
+    elif [ "$PM" = apk ]; then apk info -v 2>/dev/null | awk '{ n = $1; sub(/-[0-9][^-]*-r[0-9]+$/, "", n); print n " " substr($1, length(n) + 2) }'
+    else rpm -qa --qf '%{NAME} %{VERSION}-%{RELEASE}\n' 2>/dev/null; fi | sort
+}
 # broke -> the checks that passed before and fail now (empty: all fine); waits up to 15 s
 broke() {
     _t=0
@@ -1712,6 +1808,10 @@ elif cc_ask "Apply: $NPLAN group(s) of updates$([ "$NREL" -gt 0 ] && echo ", $NR
     ver_list >"$CC_RUN_DIR/versions-before.txt"
     while IFS= read -r _p; do
         if [ "$PM" = apt ]; then apt-mark unhold "$_p" >>"$CC_LOG" 2>&1 </dev/null; _rc=$?; cc_undo_add "hold $_p again" "apt-mark hold $(cc_shquote "$_p")"
+        elif [ "$PM" = apk ]; then
+            # the pin in /etc/apk/world: "apk add NAME" puts the plain name there
+            _pin=$(grep -E "^${_p}[=<>~]" "$AETC/apk/world" | head -n 1)
+            apk add "$_p" >>"$CC_LOG" 2>&1 </dev/null; _rc=$?; cc_undo_add "pin $_p again" "apk add $(cc_shquote "$_pin")"
         else $PM versionlock delete "$_p" >>"$CC_LOG" 2>&1 </dev/null; _rc=$?; cc_undo_add "lock $_p again" "$PM versionlock add $(cc_shquote "$_p")"; fi
         if [ "$_rc" = 0 ]; then NOK=$((NOK + 1)); cc_show "$C_GRN" "  [+] released the hold on $_p"; else NBAD=$((NBAD + 1)); cc_show "$C_RED" "  [x] could not release $_p"; fi
     done <"$W/release"
@@ -1731,6 +1831,17 @@ elif cc_ask "Apply: $NPLAN group(s) of updates$([ "$NREL" -gt 0 ] && echo ", $NR
                 elif (cd "$OLD" && apt-get download "$_p=$_o" </dev/null >>"$CC_LOG" 2>&1); then _back="$_back $_p=$_o"; else _miss="$_miss $_p"; fi
             done
             _undo=""; [ -n "$_back" ] && _undo="cd $(cc_shquote "$OLD") && DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades $APTO$(for _x in $_back; do printf ' ./%s_%s_*.deb' "${_x%%=*}" "$(printf '%s' "${_x#*=}" | sed 's/:/%3a/')"; done)"
+        elif [ "$PM" = apk ]; then
+            # apk's cache first (only when /etc/apk/cache is set up), then the mirror
+            # (Alpine mirrors usually keep only the newest version)
+            for _p in $_pk; do
+                _o=$(awk -F'|' -v p="$_p" '$3 == p { print $4; exit }' "$W/upd")
+                [ -n "$_o" ] || continue
+                _cf=$(ls "$ACACHE_APK"/"$_p-$_o".*.apk "$ACACHE_APK"/"$_p-$_o".apk 2>/dev/null | head -n 1)
+                if [ -n "$_cf" ] && cp "$_cf" "$OLD/$_p-$_o.apk" 2>>"$CC_LOG"; then _back="$_back $_p-$_o"
+                elif apk fetch -q -o "$OLD" "$_p=$_o" </dev/null >>"$CC_LOG" 2>&1; then _back="$_back $_p-$_o"; else _miss="$_miss $_p"; fi
+            done
+            _undo=""; [ -n "$_back" ] && _undo="cd $(cc_shquote "$OLD") && apk add$(for _x in $_back; do printf ' ./%s.apk' "$_x"; done)"
         else
             _undo=""   # set after the update: the number of its dnf transaction
         fi
@@ -1741,17 +1852,20 @@ elif cc_ask "Apply: $NPLAN group(s) of updates$([ "$NREL" -gt 0 ] && echo ", $NR
         if [ "$PM" = apt ]; then
             # shellcheck disable=SC2086  # word splitting wanted: options and packages
             apt-get install -y --only-upgrade $APTO $_pk </dev/null >>"$CC_LOG" 2>&1
+        elif [ "$PM" = apk ]; then
+            # shellcheck disable=SC2086  # word splitting wanted: the packages
+            apk add -u $_pk </dev/null >>"$CC_LOG" 2>&1
         else
             # shellcheck disable=SC2086
             $PM -y upgrade $_pk </dev/null >>"$CC_LOG" 2>&1
         fi
         _rc=$?
-        if [ "$PM" != apt ] && [ "$_rc" = 0 ]; then
+        if [ "$PM" != apt ] && [ "$PM" != apk ] && [ "$_rc" = 0 ]; then
             # Undo this transaction by its number, not "last" (a later one would be undone instead).
             _tid=$($PM -q history list 2>/dev/null | awk '$1 ~ /^[0-9]+$/ { print $1; exit }')
             [ -n "$_tid" ] && _undo="$PM -y history undo $_tid"
         fi
-        [ -n "$_undo" ] && { [ -n "$_back" ] || [ "$PM" != apt ]; } && cc_undo_add "roll back $_g updates" "$_undo"
+        [ -n "$_undo" ] && { [ -n "$_back" ] || { [ "$PM" != apt ] && [ "$PM" != apk ]; }; } && cc_undo_add "roll back $_g updates" "$_undo"
         _why=$(broke)
         if [ "$_rc" != 0 ]; then
             NBAD=$((NBAD + 1)); cc_show "$C_RED" "  [x] $_g: the package manager failed (see $CC_LOG)"
@@ -1775,7 +1889,7 @@ elif cc_ask "Apply: $NPLAN group(s) of updates$([ "$NREL" -gt 0 ] && echo ", $NR
     done <"$W/plan"
     ver_list >"$CC_RUN_DIR/versions-after.txt"
     # Config files the package wanted to replace: yours were kept.
-    find "$AETC" -newer "$CC_RUN_DIR/versions-before.txt" \( -name '*.dpkg-dist' -o -name '*.dpkg-new' -o -name '*.rpmnew' \) 2>/dev/null | while IFS= read -r _f; do
+    find "$AETC" -newer "$CC_RUN_DIR/versions-before.txt" \( -name '*.dpkg-dist' -o -name '*.dpkg-new' -o -name '*.rpmnew' -o -name '*.apk-new' \) 2>/dev/null | while IFS= read -r _f; do
         cc_show "$C_YEL" "  [*] new default config from the package, yours kept: $_f (compare later, do not just copy it over)"
     done
     # Services still running the old library code.
@@ -1786,17 +1900,18 @@ elif cc_ask "Apply: $NPLAN group(s) of updates$([ "$NREL" -gt 0 ] && echo ", $NR
     done | sort -u >"$W/stale"
     _rs=""
     [ "$RESTART" = 1 ] || : >"$W/stale"
-    for _u in ssh sshd apache2 httpd nginx php8.3-fpm php8.2-fpm php8.1-fpm php7.4-fpm php-fpm mariadb mysql postfix dovecot named bind9 vsftpd cron rsyslog; do
-        case "$_u" in ssh|sshd) _c=sshd ;; mariadb) _c=mariadbd ;; mysql) _c=mysqld ;; postfix) _c=master ;; php*) _c=php-fpm ;; *) _c=$_u ;; esac
+    for _u in ssh sshd apache2 httpd nginx php8.3-fpm php8.2-fpm php8.1-fpm php7.4-fpm php-fpm php-fpm83 php-fpm82 mariadb mysql postfix dovecot named bind9 vsftpd samba smb cron rsyslog; do
+        case "$_u" in ssh|sshd) _c=sshd ;; mariadb) _c=mariadbd ;; mysql) _c=mysqld ;; postfix) _c=master ;; php*) _c=php-fpm ;; samba|smb) _c=smbd ;; *) _c=$_u ;; esac
         grep -q "^$_c" "$W/stale" || continue
         if [ "$CC_INIT" = systemd ]; then systemctl is-active -q "$_u" 2>/dev/null || continue; else [ -x "/etc/init.d/$_u" ] || continue; fi
+        [ "$CC_INIT" = openrc ] && { cc_svc is-active "$_u" || continue; }
         cc_is_protected service "$_u" && continue
         case " $_rs " in *" $_c "*) continue ;; esac
         _rs="$_rs $_u"
     done
     if [ -n "$_rs" ] && cc_ask "  Still running the old (unpatched) code:$_rs. Restart them now?" Y "yes, restart them (a few seconds each)" "no, they stay on the old code until restarted"; then
         for _u in $_rs; do
-            if [ "$CC_INIT" = systemd ]; then systemctl restart "$_u" </dev/null >>"$CC_LOG" 2>&1; else service "$_u" restart </dev/null >>"$CC_LOG" 2>&1; fi && cc_show "$C_GRN" "  [+] restarted $_u" || cc_show "$C_RED" "  [x] $_u did not restart: SV-50 can bring it back"
+            cc_svc restart "$_u" </dev/null >>"$CC_LOG" 2>&1 && cc_show "$C_GRN" "  [+] restarted $_u" || cc_show "$C_RED" "  [x] $_u did not restart: SV-50 can bring it back"
         done
         _why=$(broke); [ -n "$_why" ] && cc_show "$C_RED" "  [!] after the restarts: $_why"
     fi

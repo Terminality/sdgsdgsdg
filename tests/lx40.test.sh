@@ -188,4 +188,23 @@ if command -v script >/dev/null 2>&1; then
 else
     t_ok "script(1) not installed - skipped" true
 fi
+t_start "Alpine: busybox cron, OpenRC boot, doas"
+mkdir -p "$R/etc/crontabs" "$R/etc/periodic/15min" "$R/etc/local.d" "$R/etc/runlevels/default"
+run --batch --accept >/dev/null 2>&1
+printf '*/5 * * * * /tmp/.y\n' >"$R/etc/crontabs/root"
+printf '#!/bin/sh\n/tmp/.y\n' >"$R/etc/periodic/15min/sync"
+printf '#!/bin/sh\nnc -l -p 4444 -e /bin/sh &\n' >"$R/etc/local.d/net.start"
+ln -s /etc/init.d/evil "$R/etc/runlevels/default/evil"
+printf 'permit nopass mallory as root\n' >"$R/etc/doas.conf"
+out=$(run --batch 2>&1)
+t_has "$out" "[!] HIGH cron        added   /etc/crontabs/root" "busybox crontab HIGH"
+t_has "$out" "[!] HIGH cron        added   /etc/periodic/15min/sync" "a periodic job HIGH"
+t_has "$out" "[!] HIGH units       added   /etc/local.d/net.start" "OpenRC local.d HIGH"
+t_has "$out" "runs at boot (OpenRC local.d) added - look at what it runs" "explained"
+t_has "$out" "[!] HIGH units       added   /etc/runlevels/default/evil" "a new service in a runlevel HIGH"
+t_has "$out" "starts at boot (OpenRC runlevel): added - is this service yours?" "explained"
+t_has "$out" "[!] HIGH files       added   /etc/doas.conf" "doas rules HIGH"
+t_has "$out" "doas rules (who can become root)" "explained"
+run --batch --accept >/dev/null 2>&1
+
 t_done
