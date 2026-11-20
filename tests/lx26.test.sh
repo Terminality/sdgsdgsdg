@@ -58,6 +58,25 @@ if [ "$(id -u)" = 0 ]; then
     t_has "$out" "[+] stopped: a tunnel out past the firewall" "it says so"
     stop_all
 
+    if [ "$HAVE_NC" = 1 ]; then
+        t_start "a tool someone is connected through is kept (VNC, telnet ...)"
+        cp "$(command -v nc)" "$B/ttyd" 2>/dev/null
+        "$B/ttyd" -lk 17681 >/dev/null 2>&1 & TP=$!; PIDS="$PIDS $TP"
+        _i=0; while ! ps -eo comm= | grep -qx ttyd && [ "$_i" -lt 20 ]; do sleep 1; _i=$((_i + 1)); done
+        # A stand-in for ss: a live connection to 17681 from outside, and one from loopback.
+        printf '17681|10.100.102.9\n17681|127.0.0.1\n' >"$T_TMP/estab"
+        out=$(export BT_TEST_ESTAB="$T_TMP/estab"; run --batch --no-protected --apply --no-timer 2>&1)
+        t_has "$out" "IN USE NOW: 1 connection(s) from 10.100.102.9" "the live connection is shown (loopback is not counted)"
+        t_has "$out" "[?] HIGH web terminal: a shell in a web browser: ttyd" "it is still asked"
+        t_has "$out" "[s/K/a] k (default): keep it" "with keep as the default"
+        t_ok "--batch keeps it running" up "$TP"
+        : >"$T_TMP/estab"
+        out=$(export BT_TEST_ESTAB="$T_TMP/estab"; run --batch --no-protected --apply --no-timer 2>&1)
+        t_hasnt "$out" "IN USE NOW" "no connection: no warning"
+        t_fail "and it is stopped as before" up "$TP"
+        stop_all
+    fi
+
     t_start "questions on a terminal"
     if command -v script >/dev/null 2>&1; then
         cp "$SLEEP" "$B/ngrok"; cp "$SLEEP" "$B/x11vnc"

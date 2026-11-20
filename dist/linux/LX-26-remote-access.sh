@@ -34,6 +34,9 @@
 #         a home folder or /var/tmp)
 #     [k] keep it
 #     [a] all the rest: take their defaults
+#   A tool someone is connected through right now from another machine (the
+#   boxes may be reached over VNC or telnet - maybe it is you) is marked IN USE
+#   NOW and kept by default.
 #   Defaults: stop for HIGH, keep for MED.  Scored services and anything on
 #   the protected list are never offered.
 #
@@ -1756,6 +1759,25 @@ else
     NETSTAT=netstat; cc_have netstat || { cc_have busybox && NETSTAT="busybox netstat"; }
     $NETSTAT -lntup 2>/dev/null | awk '$1 ~ /^(tcp|udp)/ { n = split($4, a, ":"); pid = ""; c = ""; if (match($NF, /^[0-9]+\//)) { pid = substr($NF, 1, RLENGTH - 1); c = substr($NF, RLENGTH + 1) } print a[n] "|" pid "|" c }' | sort -u >"$W/listen"
 fi
+# Live connections from another machine: localport|remote address, from
+#   ss (or netstat).  A tool someone is logged in through right now - maybe
+#   you, over VNC or telnet - is kept by default.  BT_TEST_ESTAB names a
+#   stand-in file of "port|address" lines for the tests.
+if [ -n "${BT_TEST_ESTAB:-}" ]; then cat "$BT_TEST_ESTAB" >"$W/estab" 2>/dev/null || : >"$W/estab"
+elif cc_have ss; then
+    ss -tn state established 2>/dev/null | awk '$1 ~ /^[0-9]+$/ { n = split($3, a, ":"); r = $4; sub(/:[0-9]+$/, "", r); gsub(/^\[|\]$/, "", r); print a[n] "|" r }' >"$W/estab"
+else
+    ${NETSTAT:-netstat} -tn 2>/dev/null | awk '$6 == "ESTABLISHED" { n = split($4, a, ":"); r = $5; sub(/:[0-9]+$/, "", r); print a[n] "|" r }' >"$W/estab"
+fi
+awk -F'|' '$2 !~ /^(127\.|::1$|::ffff:127\.)/' "$W/estab" >"$W/estab.t" && mv "$W/estab.t" "$W/estab"
+# in_use PID -> "N connection(s) from A B" when a port of PID has a live
+#   connection from another machine; nothing otherwise.
+in_use() {
+    [ -n "$1" ] || return 0
+    for _iu in $(port_of "$1"); do awk -F'|' -v p="$_iu" '$1 == p { print $2 }' "$W/estab"; done | sort -u >"$W/iu"
+    [ -s "$W/iu" ] && printf '%s connection(s) from %s' "$(grep -c . "$W/iu")" "$(head -n 3 "$W/iu" | tr '\n' ' ' | sed 's/ $//')"
+    return 0
+}
 # exe PID -> the program file (or "(deleted)")
 exe() { ls -l "/proc/$1/exe" 2>/dev/null | sed 's/.* -> //'; }
 port_of() { awk -F'|' -v p="$1" '$2 == p { printf "%s ", $1 }' "$W/listen" | sed 's/ $//'; }
@@ -1818,6 +1840,7 @@ sort -u "$W/keep" | awk -F'\037' '{ print ($1 == "HIGH" ? 1 : ($1 == "MED" ? 2 :
 while IFS="$TAB" read -r _lv _kind _n _pid _svc _f _what _skip; do
     case "$_lv" in HIGH) _c=$C_RED; _m='[!]' ;; MED) _c=$C_YEL; _m='[*]' ;; *) _c=$C_GRY; _m='[-]' ;; esac
     cc_show "$_c" "  $_m $_lv $_kind: $_what${_skip:+   (kept: $_skip)}"
+    _iu=$(in_use "$_pid"); [ -n "$_iu" ] && cc_show "$C_RED" "      IN USE NOW: $_iu - if that is you or your team, keep it (stopping it cuts the session)"
 done <"$W/find"
 [ -s "$W/find" ] || cc_show "$C_GRN" "  [ok] no tunnel, web terminal, remote desktop, admin panel or network shell found"
 
@@ -1828,10 +1851,13 @@ awk -F'\037' '$1 != "LOW" && $8 == ""' "$W/find" >"$W/ask"
 _all=0
 while IFS="$TAB" read -r _lv _kind _n _pid _svc _f _what _skip; do
     _d=k; [ "$_lv" = HIGH ] && _d=s
+    # Someone is connected through it now (maybe you, over VNC or telnet): keep by default.
+    _iu=$(in_use "$_pid"); [ -n "$_iu" ] && _d=k
     if [ "$_all" = 0 ]; then
+        [ -n "$_iu" ] && cc_show "$C_RED" "  [!] IN USE NOW ($_iu): stopping it cuts that session - keep it if it is you"
         _how="kill it"; [ -n "$_svc" ] && _how="stop the $_svc service and disable it at boot"
         case "$_f" in /tmp/*|/var/tmp/*|/dev/shm/*|/home/*|/root/*|*"(deleted)"*) _how="$_how; quarantine $_f" ;; esac
-        cc_choose "$_lv $_kind: $_what?" "$_d" "s=stop it ($_how)" "k=keep it" "a=all the rest: take their defaults (HIGH stopped, MED kept)"
+        cc_choose "$_lv $_kind: $_what?" "$_d" "s=stop it ($_how)" "k=keep it" "a=all the rest: take their defaults (HIGH stopped, MED and in-use kept)"
         case "$CC_CHOICE" in a) _all=1 ;; s) printf '%s\n' "$_lv$TAB$_kind$TAB$_n$TAB$_pid$TAB$_svc$TAB$_f$TAB$_what" >>"$W/chosen"; continue ;; k) continue ;; esac
     fi
     [ "$_d" = s ] && printf '%s\n' "$_lv$TAB$_kind$TAB$_n$TAB$_pid$TAB$_svc$TAB$_f$TAB$_what" >>"$W/chosen"

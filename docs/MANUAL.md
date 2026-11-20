@@ -467,6 +467,10 @@ Do this on the oldest and the newest Windows you expect to defend. It ends with 
 | Git shows every line of a `.sh` file as changed | Line endings were converted | `.gitattributes` forces LF for `.sh`. Run `git add --renormalize .` |
 | A script printed a password | A script passed a secret to `cc_log`, `cc_run` or a description | Treat that password as exposed and rotate it. Fix the script to use `cc_run_quiet` / `-Secret` |
 
+### Never cut the session you are on (VNC, telnet)
+
+The boxes may be reached over SSH, VNC, telnet or RDP. LX-26 (remote access) and SV-30 (telnet, rsh) look for a live connection from another machine to the tool they would stop. If there is one, they show `IN USE NOW: ... connected from ADDRESS` in red and the default answer becomes **keep**. Stop it only once you are in another way (SSH) and that address is not yours.
+
 ### Which box is this (`--box`)
 
 Every script with `--box` asks the same question and takes the same answers: splunk, webmail, ecomm, fileshare, gitea, web, other. It first guesses from the box's files and makes the guess the answer for Enter, for example "This box looks like: gitea (/etc/gitea/app.ini)". It knows Splunk, Roundcube or postfix plus dovecot (webmail), Gitea, a Samba share or NFS export (fileshare) and a web server (web). It only reads files. `--batch` takes the guess.

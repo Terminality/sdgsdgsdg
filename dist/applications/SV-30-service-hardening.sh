@@ -61,7 +61,8 @@
 #   ftp-chroot      [service]  jail FTP users to their home folder
 #   ftp-tls         [service]  (reports the lines to require FTPS/TLS)
 #   ftp-disable     [access]   stop and disable the FTP service
-#   telnet-disable  [access]   stop and disable telnet (cleartext)
+#   telnet-disable  [access]   stop and disable telnet (cleartext); default no
+#                              while someone is logged in through it
 #   rsh-disable     [access]   disable rsh/rlogin/rexec (cleartext)
 #   tftp-disable    [access]   stop and disable TFTP
 #   snmp-default    [safe]     (reports) default SNMP community strings
@@ -1957,6 +1958,16 @@ if [ -z "$CONSIDER" ]; then
     exit 0
 fi
 
+# live_on PORT... -> the addresses with a live connection to one of these
+#   ports from another machine (someone logged in through telnet or rsh right
+#   now - maybe you).  BT_TEST_ESTAB names a stand-in "port|address" file.
+live_on() {
+    if [ -n "${BT_TEST_ESTAB:-}" ]; then cat "$BT_TEST_ESTAB" 2>/dev/null
+    elif cc_have ss; then ss -tn state established 2>/dev/null | awk '$1 ~ /^[0-9]+$/ { n = split($3, a, ":"); r = $4; sub(/:[0-9]+$/, "", r); gsub(/^\[|\]$/, "", r); print a[n] "|" r }'
+    else { netstat -tn 2>/dev/null || busybox netstat -tn 2>/dev/null; } | awk '$6 == "ESTABLISHED" { n = split($4, a, ":"); r = $5; sub(/:[0-9]+$/, "", r); print a[n] "|" r }'
+    fi | awk -F'|' -v ps=" $* " '$2 !~ /^(127\.|::1$|::ffff:127\.)/ && index(ps, " " $1 " ") { print $2 }' | sort -u | head -n 3 | tr '\n' ' ' | sed 's/ $//'
+}
+
 # ---- Questions (sqlmap style) -----------------------------------------------
 # One per action in play.  safe/service default yes, access defaults no.
 CHOSEN=""
@@ -1968,6 +1979,12 @@ for _a in $CONSIDER; do
     # access defaults to no, unless the action was named explicitly in --only.
     _def=Y; [ "$_risk" = access ] && _def=N
     case ",$ONLY," in *",$_a,"*) _def=Y ;; esac
+    # Someone is logged in through it right now (the boxes may be reached by telnet): no.
+    _live=""; case "$_a" in telnet-disable) _live=$(live_on 23) ;; rsh-disable) _live=$(live_on 512 513 514) ;; esac
+    if [ -n "$_live" ]; then
+        cc_show "$C_RED" "  [!] IN USE NOW: connected from $_live - turning it off cuts that session; keep it if it is you or your team"
+        _def=N
+    fi
     if cc_ask "[$_risk] $(act_desc "$_a")?" "$_def" "yes, do it" "no, skip it"; then CHOSEN="$CHOSEN $_a"; fi
 done
 if [ -z "$CHOSEN" ]; then
