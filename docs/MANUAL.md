@@ -823,7 +823,7 @@ In `<out>/web-enum-N/`: `output.txt` (the screen without colour), `summary.txt`,
 | `runtimes.csv` | Languages installed (with version), app servers running (gunicorn, uwsgi, Node, Java/Tomcat, puma, dotnet ...), app folders (`package.json`, `manage.py`, `Gemfile`, `.war` ...), and unknown programs on web ports |
 | `webroots.txt` | Each web root: owner, mode, file counts, files owned by the web account, world-writable files |
 | `files.txt` | Every file that should not be in a web root, with its kind (`webshell`, `upload_code`, `dump`, `env`, `vcs`, `phpinfo`, `config_readable`, `backup`) |
-| `php.csv` | The risky settings of each `php.ini`, after its `conf.d` overrides |
+| `php.txt` | The risky settings of each `php.ini`, after its `conf.d` overrides |
 | `apps.csv` | Each web app found: version, folder, config file, database name, user and host (never the password) |
 | `db_users.txt` | MySQL and PostgreSQL accounts: how they log in, empty password, superuser, file access, grant rights |
 | `db_settings.txt`, `db_databases.txt`, `db_objects.txt` | Server settings; databases with size; triggers, events, routines and user-defined functions |
@@ -1098,9 +1098,9 @@ Run the backup (LX-31) first. **Put every account the scoring engine logs in wit
 Just run it. It asks like sqlmap: Enter takes the default.
 
 ```sh
-sudo sh LX-20-password-rotation.sh --protected /root/protected.txt          # asks about every account
-sudo sh LX-20-password-rotation.sh --apply --batch --protected /root/protected.txt   # defaults, no questions
-sudo sh LX-20-password-rotation.sh --apply --batch --protected /root/protected.txt --keep /root/team.txt --kick
+sudo sh LX-20-password-rotation.sh          # asks about every account
+sudo sh LX-20-password-rotation.sh --apply --batch   # defaults, no questions
+sudo sh LX-20-password-rotation.sh --apply --batch --keep /root/team.txt --kick
 ```
 
 What a run looks like:
@@ -1194,7 +1194,7 @@ Shows every SSH key on the box and every important sshd setting, asks key by key
 
 ```sh
 sudo sh LX-22-ssh-hardening.sh                        # look and plan: asks, changes nothing
-sudo sh LX-22-ssh-hardening.sh --apply --protected /root/protected.txt
+sudo sh LX-22-ssh-hardening.sh --apply
 sudo sh LX-22-ssh-hardening.sh --apply --batch        # recommended answers, no questions
 sudo sh LX-22-ssh-hardening.sh --apply --allow-keys team.pub   # keep only the team's keys
 ```
@@ -1267,7 +1267,7 @@ Shows every open port on the box, says what each one is and which program is beh
 
 ```sh
 sudo sh LX-25-firewall.sh                       # look and plan: asks, changes nothing
-sudo sh LX-25-firewall.sh --apply --protected /root/protected.txt    # ask, then load the rules
+sudo sh LX-25-firewall.sh --apply    # ask, then load the rules
 # then, from a NEW ssh session, within 2 minutes:
 sudo sh /root/bt-out/firewall-1/keep-firewall.sh
 # once scoring is green, keep the rules across a reboot:
@@ -1464,8 +1464,8 @@ Reads the login logs, counts failed logins per address, and bans an address that
 
 ```sh
 sudo sh SV-26-banning.sh                                       # asks; dry run (shows who would be banned)
-sudo sh SV-26-banning.sh --protected /root/protected.txt --apply          # asks, then bans
-sudo sh SV-26-banning.sh --protected /root/protected.txt --apply --batch --loop 60 --team 10.0.0.0/24
+sudo sh SV-26-banning.sh --apply          # asks, then bans
+sudo sh SV-26-banning.sh --apply --batch --loop 60 --team 10.0.0.0/24
 sudo sh SV-26-banning.sh --list                                # who is banned and why
 sudo sh SV-26-banning.sh --apply --unban 10.6.6.66             # lift one ban
 sudo sh SV-26-banning.sh --apply --unban-all                   # lift every ban now
@@ -1773,7 +1773,7 @@ If the first session closes early (some devices end the session after a password
 export BT_NET_PASS='current password'
 sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.txt                       # dry run
 sh NW-10-device-passwords.sh --out ~/bt-out --device r1,10.0.0.1,cisco-ios,admin --apply   # ONE device first
-sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.txt --apply --protected protected.txt
+sh NW-10-device-passwords.sh --out ~/bt-out --hosts config/hosts.txt --apply
 ```
 
 | Option | What it does |
@@ -2237,9 +2237,9 @@ Each level includes the ones before it. If you don't pass `--level`, it asks. It
 
 ```sh
 sh SV-30-service-hardening.sh                                    # dry run, safe, asks
-sudo sh SV-30-service-hardening.sh --apply --protected prot.csv  # apply the safe FTP fixes
-sudo sh SV-30-service-hardening.sh --apply --level service --protected prot.csv
-sudo sh SV-30-service-hardening.sh --apply --level access --only ftp-disable --protected prot.csv
+sudo sh SV-30-service-hardening.sh --apply  # apply the safe FTP fixes
+sudo sh SV-30-service-hardening.sh --apply --level service
+sudo sh SV-30-service-hardening.sh --apply --level access --only ftp-disable
 ```
 
 `--apply` needs a protected list (`--protected FILE`, or `--no-protected` to accept the risk) — that's what stops it disabling a scored service by accident. `--exclude vsftpd` leaves a service alone; `--force-scored` allows disabling one the host list marks scored.
@@ -2283,7 +2283,7 @@ Finds the ways an attacker makes sure they get back in or their code keeps runni
 sudo sh LX-42-persistence-sweep.sh                    # asks what to scan, then looks
 sudo sh LX-42-persistence-sweep.sh --batch            # full scan, no questions
 sudo sh LX-42-persistence-sweep.sh --areas cron,ssh,systemd
-sudo sh LX-42-persistence-sweep.sh --apply --protected /root/protected.txt   # look, then ask what to remove
+sudo sh LX-42-persistence-sweep.sh --apply   # look, then ask what to remove
 ```
 
 ### The questions
@@ -2348,7 +2348,7 @@ sudo sh SV-15-site-backup.sh                                   # asks what to do
 sudo sh SV-15-site-backup.sh --backup --batch                  # back up every site
 sudo sh SV-15-site-backup.sh --check --batch                   # what changed? (changes nothing)
 sudo sh SV-15-site-backup.sh --restore                         # dry run: shows what it would put back
-sudo sh SV-15-site-backup.sh --restore --protected p.csv --apply
+sudo sh SV-15-site-backup.sh --restore --apply
 ```
 
 ### The questions
@@ -2403,8 +2403,8 @@ Locks down MySQL/MariaDB behind the web apps without breaking them. It lists eve
 
 ```sh
 sudo sh SV-20-db-hardening.sh                                         # dry run, asks
-sudo sh SV-20-db-hardening.sh --protected p.csv --apply --level service
-sudo sh SV-20-db-hardening.sh --protected p.csv --apply --batch --level safe --url http://127.0.0.1/shop/
+sudo sh SV-20-db-hardening.sh --apply --level service
+sudo sh SV-20-db-hardening.sh --apply --batch --level safe --url http://127.0.0.1/shop/
 ```
 
 ### The questions
@@ -2470,15 +2470,15 @@ Makes the web apps hard to take over and makes an uploaded web shell useless, wi
 
 ```sh
 sudo sh SV-21-web-hardening.sh                                         # dry run, asks
-sudo sh SV-21-web-hardening.sh --protected p.csv --apply --level service
-sudo sh SV-21-web-hardening.sh --protected p.csv --apply --batch --level safe --url http://127.0.0.1/shop/
+sudo sh SV-21-web-hardening.sh --apply --level service
+sudo sh SV-21-web-hardening.sh --apply --batch --level safe --url http://127.0.0.1/shop/
 ```
 
 ### The questions
 
 | Question | Answers | Flag |
 | --- | --- | --- |
-| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [f]ileshare [g]itea [b] web [o]ther` (guessed from the box's files) | `--box` |
 | How far should I go? | `[s]afe`, `[v]` service, `[a]ccess` | `--level` |
 | Each fix | `[y]` do it / `[n]` skip it (access-level fixes default to no) | `--only` / `--skip` |
 | Each new WordPress admin | `[k]eep` / `[d]emote` to subscriber | `--admins` |
@@ -2537,15 +2537,15 @@ New passwords for every MySQL/MariaDB and PostgreSQL account that logs in with o
 
 ```sh
 sudo sh SV-42-db-passwords.sh                                    # dry run, asks
-sudo sh SV-42-db-passwords.sh --protected p.csv --apply          # asks about each account
-sudo sh SV-42-db-passwords.sh --protected p.csv --apply --batch --url http://127.0.0.1/shop/
+sudo sh SV-42-db-passwords.sh --apply          # asks about each account
+sudo sh SV-42-db-passwords.sh --apply --batch --url http://127.0.0.1/shop/
 ```
 
 ### The questions
 
 | Question | Answers | Flag |
 | --- | --- | --- |
-| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [f]ileshare [g]itea [b] web [o]ther` (guessed from the box's files) | `--box` |
 | Go through each account one by one? | `[y]` / `[n]` (use the table's defaults) | `--batch` |
 | Each account | `[r]andom` `[s]et` (typed twice, not shown) `[l]ock` `[k]eep` `[a]ll the rest default` | `--users`, `--exclude`, `--passwords` |
 | A protected account | extra `[y]` / `[n]`, default no | protected list |
@@ -2595,15 +2595,15 @@ New passwords for the mail users: the IMAP, SMTP and webmail logins. It reads Do
 
 ```sh
 sudo sh SV-40-mail-passwords.sh                                  # dry run, asks
-sudo sh SV-40-mail-passwords.sh --protected p.csv --apply        # asks about each user
-sudo sh SV-40-mail-passwords.sh --protected p.csv --apply --batch
+sudo sh SV-40-mail-passwords.sh --apply        # asks about each user
+sudo sh SV-40-mail-passwords.sh --apply --batch
 ```
 
 ### The questions
 
 | Question | Answers | Flag |
 | --- | --- | --- |
-| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [f]ileshare [g]itea [b] web [o]ther` (guessed from the box's files) | `--box` |
 | Go through each user one by one? | `[y]` / `[n]` (use the table's defaults) | `--batch` |
 | Each user | `[r]andom` `[s]et` (typed twice, not shown) `[l]ock` `[k]eep` `[a]ll the rest default` | `--users`, `--exclude`, `--passwords` |
 | A protected user | extra `[y]` / `[n]`, default no | protected list |
@@ -2656,9 +2656,9 @@ Services: web (apache2, httpd, nginx), php-fpm (also Alpine's `php-fpm83`), data
 
 ```sh
 sudo sh SV-50-service-recovery.sh                                    # check everything, dry run
-sudo sh SV-50-service-recovery.sh --protected p.csv --apply          # check and fix (asks each fix)
-sudo sh SV-50-service-recovery.sh --protected p.csv --apply --batch --services web,mysql
-sudo sh SV-50-service-recovery.sh --protected p.csv --watch 30 --auto-restart --apply   # keep it running
+sudo sh SV-50-service-recovery.sh --apply          # check and fix (asks each fix)
+sudo sh SV-50-service-recovery.sh --apply --batch --services web,mysql
+sudo sh SV-50-service-recovery.sh --watch 30 --auto-restart --apply   # keep it running
 ```
 
 ### The questions
@@ -2729,8 +2729,8 @@ For the Splunk box. Splunk is three scored checks (`splunk-mgmt` on 8089, `splun
 
 ```sh
 sudo sh SV-44-splunk-hardening.sh                                 # look + dry run (asks for the admin login)
-sudo sh SV-44-splunk-hardening.sh --protected p.csv --apply
-sudo sh SV-44-splunk-hardening.sh --protected p.csv --apply --batch --auth-file admin.txt --exclude scorer
+sudo sh SV-44-splunk-hardening.sh --apply
+sudo sh SV-44-splunk-hardening.sh --apply --batch --auth-file admin.txt --exclude scorer
 ```
 
 `admin.txt` is one line, `admin CURRENTPASSWORD`. Delete it after.
@@ -2796,9 +2796,9 @@ Finds the PHP files red team uses to get back into a site: web shells. SV-15 onl
 
 ```sh
 sudo sh SV-16-webshell-hunter.sh                                     # scan, dry run
-sudo sh SV-16-webshell-hunter.sh --protected p.csv --apply           # asks about each file
-sudo sh SV-16-webshell-hunter.sh --protected p.csv --apply --batch --url http://127.0.0.1/shop/
-sudo sh SV-16-webshell-hunter.sh --protected p.csv --watch 60 --auto-quarantine --apply   # keep watching
+sudo sh SV-16-webshell-hunter.sh --apply           # asks about each file
+sudo sh SV-16-webshell-hunter.sh --apply --batch --url http://127.0.0.1/shop/
+sudo sh SV-16-webshell-hunter.sh --watch 60 --auto-quarantine --apply   # keep watching
 ```
 
 ### What it looks for
@@ -2857,8 +2857,8 @@ After passwords (LX-20), this goes through **every account, one by one**, shows 
 
 ```sh
 sudo sh LX-21-account-lockdown.sh                                  # look + dry run
-sudo sh LX-21-account-lockdown.sh --protected p.csv --apply        # asks about each account
-sudo sh LX-21-account-lockdown.sh --protected p.csv --apply --batch
+sudo sh LX-21-account-lockdown.sh --apply        # asks about each account
+sudo sh LX-21-account-lockdown.sh --apply --batch
 ```
 
 **Put your team's accounts and the scoring account on the protected list first.** They're never locked, and anything else needs an extra yes.
@@ -2878,7 +2878,7 @@ Clean accounts that can't log in aren't shown (they're in `accounts.txt`).
 
 | Question | Answers | Flag |
 | --- | --- | --- |
-| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [f]ileshare [g]itea [b] web [o]ther` (guessed from the box's files) | `--box` |
 | Go through the flagged accounts one by one? | `[y]` / `[n]` (the defaults) | `--batch` |
 | Each account | `[k]eep` `[l]ock` `[d]` take admin away `[r]emove its SSH keys` `[b]oth d and r` `[n]o-login shell` `[a]ll the rest default`: only the answers that fit are shown | `--all` asks about every account |
 | A protected account | extra `[y]` / `[n]`, default no | protected list |
@@ -2919,8 +2919,8 @@ The quiet backdoors red team leaves in a mail server: a copy of every mail sent 
 
 ```sh
 sudo sh SV-31-mail-tamper.sh                                  # look + dry run
-sudo sh SV-31-mail-tamper.sh --protected p.csv --apply        # asks about each fix
-sudo sh SV-31-mail-tamper.sh --protected p.csv --apply --batch --domain shop.local
+sudo sh SV-31-mail-tamper.sh --apply        # asks about each fix
+sudo sh SV-31-mail-tamper.sh --apply --batch --domain shop.local
 ```
 
 ### What it finds
@@ -2936,7 +2936,7 @@ sudo sh SV-31-mail-tamper.sh --protected p.csv --apply --batch --domain shop.loc
 
 | Question | Answers | Flag |
 | --- | --- | --- |
-| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [f]ileshare [g]itea [b] web [o]ther` (guessed from the box's files) | `--box` |
 | Each fix | `[y]` / `[n]`: default yes for HIGH, no for MED | `--batch` |
 | Apply? | `[y]` / `[n]` | `--apply` |
 
@@ -2971,8 +2971,8 @@ In `mail-tamper-N/`: `output.txt`, `findings.txt`, `plan.txt`, `summary.txt`, `r
 
 ```sh
 sudo sh SV-41-roundcube-hardening.sh                                  # look + dry run
-sudo sh SV-41-roundcube-hardening.sh --protected p.csv --apply        # asks about each fix
-sudo sh SV-41-roundcube-hardening.sh --protected p.csv --apply --batch --url http://127.0.0.1/roundcube/
+sudo sh SV-41-roundcube-hardening.sh --apply        # asks about each fix
+sudo sh SV-41-roundcube-hardening.sh --apply --batch --url http://127.0.0.1/roundcube/
 ```
 
 ### What it checks
@@ -2992,7 +2992,7 @@ sudo sh SV-41-roundcube-hardening.sh --protected p.csv --apply --batch --url htt
 
 | Question | Answers | Flag |
 | --- | --- | --- |
-| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [f]ileshare [g]itea [b] web [o]ther` (guessed from the box's files) | `--box` |
 | Each fix | `[y]` / `[n]` | `--only` / `--skip` |
 | Apply? | `[y]` / `[n]` | `--apply` |
 
@@ -3077,8 +3077,8 @@ SSH is LX-22. This covers **every other way in**: a remote screen, a shell in a 
 
 ```sh
 sudo sh LX-26-remote-access.sh                                  # look + dry run
-sudo sh LX-26-remote-access.sh --protected p.csv --apply        # asks about each one
-sudo sh LX-26-remote-access.sh --protected p.csv --apply --batch
+sudo sh LX-26-remote-access.sh --apply        # asks about each one
+sudo sh LX-26-remote-access.sh --apply --batch
 ```
 
 ### What it finds
@@ -3095,7 +3095,7 @@ Things on a scored port for the box, or on the protected list, are shown as kept
 
 | Question | Answers | Flag |
 | --- | --- | --- |
-| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [f]ileshare [g]itea [b] web [o]ther` (guessed from the box's files) | `--box` |
 | Each finding | `[s]top` / `[k]eep` / `[a]ll the rest default` (default: stop for HIGH, keep for MED) | `--batch` |
 | Stop these? | `[y]` / `[n]` | `--apply` |
 
@@ -3124,8 +3124,8 @@ LX-42 finds what red team leaves to come back. This finds **what hides**: a root
 
 ```sh
 sudo sh LX-45-rootkit-scan.sh                                  # scan, dry run
-sudo sh LX-45-rootkit-scan.sh --protected p.csv --apply        # asks about each finding
-sudo sh LX-45-rootkit-scan.sh --protected p.csv --apply --batch
+sudo sh LX-45-rootkit-scan.sh --apply        # asks about each finding
+sudo sh LX-45-rootkit-scan.sh --apply --batch
 ```
 
 ### What it checks
@@ -3176,7 +3176,7 @@ AppArmor gives a program a list of what it may touch, and the kernel holds it to
 
 ```sh
 sudo sh LX-44-apparmor.sh                                  # status, dry run
-sudo sh LX-44-apparmor.sh --protected p.csv --apply        # step by step
+sudo sh LX-44-apparmor.sh --apply        # step by step
 ```
 
 Run it three times, with time between:
@@ -3232,8 +3232,8 @@ Patches the holes red team will use (OpenSSH, OpenSSL, sudo, Apache, PHP, the da
 
 ```sh
 sudo sh LX-46-safe-updates.sh                                  # list, dry run
-sudo sh LX-46-safe-updates.sh --protected p.csv --apply        # step by step
-sudo sh LX-46-safe-updates.sh --protected p.csv --apply --batch   # security updates only, no kernel
+sudo sh LX-46-safe-updates.sh --apply        # step by step
+sudo sh LX-46-safe-updates.sh --apply --batch   # security updates only, no kernel
 ```
 
 ### What it does
@@ -3281,8 +3281,8 @@ HTTPS, IMAPS and SMTP all hang on a certificate and its private key. Red team sw
 
 ```sh
 sudo sh SV-32-tls-check.sh                                  # look, dry run
-sudo sh SV-32-tls-check.sh --protected p.csv --apply        # asks each fix
-sudo sh SV-32-tls-check.sh --protected p.csv --apply --batch
+sudo sh SV-32-tls-check.sh --apply        # asks each fix
+sudo sh SV-32-tls-check.sh --apply --batch
 ```
 
 Run it once early: the first run saves the fingerprints as the baseline (`tls-baseline-HOST.txt` in `--out`). Later runs flag a certificate that changed.
@@ -3616,8 +3616,8 @@ Gitea (or Forgejo) is scored: people log in, browse and clone. It is also an eas
 
 ```sh
 sudo sh SV-45-gitea-hardening.sh                                  # look + dry run
-sudo sh SV-45-gitea-hardening.sh --protected p.csv --apply        # asks about each fix
-sudo sh SV-45-gitea-hardening.sh --protected p.csv --apply --batch --skip no-register
+sudo sh SV-45-gitea-hardening.sh --apply        # asks about each fix
+sudo sh SV-45-gitea-hardening.sh --apply --batch --skip no-register
 ```
 
 ### What it shows
@@ -3661,8 +3661,8 @@ A file share is scored: someone connects and reads or writes a file. It is also 
 
 ```sh
 sudo sh SV-46-fileshare-hardening.sh                                  # look + dry run
-sudo sh SV-46-fileshare-hardening.sh --protected p.csv --apply        # asks about each fix
-sudo sh SV-46-fileshare-hardening.sh --protected p.csv --apply --batch --skip root-squash
+sudo sh SV-46-fileshare-hardening.sh --apply        # asks about each fix
+sudo sh SV-46-fileshare-hardening.sh --apply --batch --skip root-squash
 ```
 
 ### What it shows

@@ -63,4 +63,7 @@ if [ -n "$PS" ] && [ -f "$T_TMP/d/windows-ad/WN-43-safe-fixes.ps1" ]; then
 else
     t_start "(skipped: no pwsh)"
 fi
+t_start "role manuals"
+t_ok "docs/manual-*.md match the playbooks and docs/MANUAL.md (sh tools/role-manuals.sh)" sh "$T_ROOT/tools/role-manuals.sh" --check
+
 t_done
