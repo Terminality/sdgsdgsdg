@@ -2104,13 +2104,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bt-out\WN-25_<host>_<time
 powershell -NoProfile -ExecutionPolicy Bypass -File WN-25-firewall.ps1 -Out C:\bt-out -Undo latest -Apply      # put the old firewall back
 ```
 
+
+### The questions
+
+It looks like LX-25: the questions, the plan (`[+]` allowed in, `[-]` not opened and why, `[x]` rules turned off), the change, and the summary.
+
+| Question | Default | Parameter |
+| --- | --- | --- |
+| Which box is this? (its scored ports stay open: web and ecomm 80, 443; fileshare 139, 445; database 1433) | the guess | `-Box` |
+| Addresses that may reach everything here (your team, the scoring engine)? | none | `-AdminFrom` |
+| Other ports to keep open, even if nothing listens on them yet? | none | `-Allow` |
+| Allow ping? | yes | `-NoPing` answers no |
+| Also turn off every other inbound allow rule (strict)? | no | `-Strict` answers yes |
+| Load this firewall now? (put back by itself unless you run `keep-firewall.ps1` from a NEW connection) | **no** | `-Apply` |
+
+`-Batch` takes every default: a dry run unless `-Apply` is given.
 ### What it allows in
 
 | Source | Rule |
 | --- | --- |
 | Protected list `port` entries | Always, even when nothing listens now (a scored service that is down) |
 | `-Allow 80/tcp,53/udp,5000-5100/tcp` | Always |
-| Listening now | Every port something listens on, except: loopback only; ports 49152 and up; known backdoor ports (4444, 1337, 31337 ...); a shell, netcat or tunnel listening; a program in Temp, AppData, Users\Public, Downloads; `-Exclude`. Each one left closed is in `not-allowed.csv` with the reason |
+| Listening now | Every port something listens on, except: loopback only; ports 49152 and up; known backdoor ports (4444, 1337, 31337 ...); a shell, netcat or tunnel listening; a program in Temp, AppData, Users\Public, Downloads; `-Exclude`. Each one left closed is in `not-allowed.txt` with the reason |
 | Protected list `host` entries and `-AdminFrom` | Everything from those addresses (the scoring engine, the team's machines). Names are not used, only addresses and networks |
 | Ping | ICMP echo, unless `-NoPing` |
 | Domain controller | DNS, Kerberos, LDAP, LDAPS, global catalog, SMB, RPC (endpoint mapper and dynamic), NTP, password change |
@@ -2135,7 +2150,7 @@ Existing inbound allow rules that undo the firewall: one that allows every port,
 
 ### Logs
 
-`plan.csv` (each allow rule and why), `disabled.csv` (each rule turned off and why), `not-allowed.csv` (each listener not opened and why), `summary.txt`, the script log, and Windows' own dropped-connection log at `%windir%\System32\LogFiles\Firewall\pfirewall.log` (turned on unless `-NoLog`).
+`firewall-N\` (a new number each run) with `output.txt`, `plan.txt` (each allow rule and why), `disabled.txt` (each rule turned off and why), `not-allowed.txt` (each listener not opened and why), `run.txt`, `summary.txt`, the script log, and Windows' own dropped-connection log at `%windir%\System32\LogFiles\Firewall\pfirewall.log` (turned on unless `-NoLog`).
 
 ### Problems and fixes
 
