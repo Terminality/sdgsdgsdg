@@ -2,6 +2,10 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-20: LX-26 for file-share, Gitea, web and desktop boxes
+
+- **LX-26** (1.2.0): the box question has three more answers, the old ones unchanged: `fileshare` (keeps 139, 445, 2049, 111), `gitea` (3000, 2222, 80, 443), `web` for a ticket, help-desk or shop site (80, 443); `--box` takes them too. Also found now: mesh VPNs (Tailscale, ZeroTier) and DNS/ICMP tunnels (iodine, dnscat2, ptunnel), wstunnel and sshx (HIGH); code-server and Jupyter (a shell in a browser, HIGH); Guacamole, DWService, Chrome Remote Desktop and xpra (remote desktops, HIGH); KDE Connect, Barrier, Synergy and Input Leap (keyboard and mouse from another machine, MED). With neither `ss` nor `netstat`, busybox `netstat` gives the ports.
+- Tested: lx26 under dash, bash, ksh93, mksh, yash and busybox sh; gawk, mawk and busybox awk; the built copy. Stand-ins for the new programs; a stand-in busybox `netstat` with Alpine's output.
 ## 2026-11-20: LX-44 on SELinux and Alpine boxes
 
 - **LX-44** (1.1.0): on Rocky and Fedora it says plainly that SELinux does this job and LX-44 has nothing to do, then shows SELinux now and after a reboot (`/etc/selinux/config`): enforcing is `[ok]`; permissive gets `setenforce 1` and where denials are logged; disabled gets the relabel-and-reboot steps; enforcing now but not in the config is flagged (a reboot would turn it off). Found by SELinux being on, `/etc/selinux/config`, or the OS, not only by `getenforce`. On Alpine it says AppArmor is off unless booted with it, instead of the "container" message. `apk add apparmor` when the parser is missing on Alpine. No questions or flags changed.

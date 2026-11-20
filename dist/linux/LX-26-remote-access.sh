@@ -4,7 +4,7 @@
 # NAME:     Remote access lockdown (everything but SSH)
 # ROLE:     Linux  (wave 1, after SSH hardening; again after red team)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.1.0
+# VERSION:  1.2.0
 #
 # PURPOSE
 #   SSH is handled by LX-22.  Red team also gets in through everything
@@ -13,15 +13,19 @@
 #   ports and as installed services - and offers to stop each one:
 #
 #     HIGH  tunnels out (ngrok, chisel, frpc/frps, cloudflared, bore, gost,
-#           ligolo, rathole, inlets, pinggy/localtunnel ssh -R), web
-#           terminals (ttyd, gotty, shellinabox, wetty, tmate), bind / reverse
+#           ligolo, rathole, inlets, pinggy/localtunnel ssh -R, wstunnel,
+#           sshx), mesh VPNs (Tailscale, ZeroTier), DNS and ICMP tunnels
+#           (iodine, dnscat2, ptunnel), web terminals (ttyd, gotty,
+#           shellinabox, wetty, tmate, code-server, Jupyter), bind / reverse
 #           shells (nc -e, ncat -e/--exec, socat ... exec:, a shell holding a
 #           network connection), remote desktops (x11vnc, Xvnc, vncserver,
 #           xrdp, NoMachine, TeamViewer, AnyDesk, RustDesk, Vino, KRfb,
-#           GNOME Remote Desktop, MeshCentral agent)
+#           GNOME Remote Desktop, MeshCentral agent, Guacamole, DWService,
+#           Chrome Remote Desktop, xpra)
 #     MED   admin panels (Webmin 10000, Cockpit 9090, Usermin, ISPConfig,
 #           Virtualmin), file-sharing listeners (python -m http.server,
-#           php -S, busybox httpd)
+#           php -S, busybox httpd), desktop control (KDE Connect, Barrier,
+#           Synergy, Input Leap: keyboard and mouse from another machine)
 #     LOW   database panels on the web (phpMyAdmin, Adminer): listed
 #
 #   For each one (Enter = the default in capitals):
@@ -34,7 +38,7 @@
 #   the protected list are never offered.
 #
 #   QUESTIONS (a flag answers each):
-#     which box                                --box NAME
+#     which box (its scored ports are kept)    --box NAME
 #     each finding: [s]top [k]eep [a]ll        --batch takes the defaults
 #     apply?                                   --apply
 #
@@ -45,7 +49,10 @@
 #
 # OPTIONS
 #   --apply            make the changes (without it, dry run only)
-#   --box NAME         splunk | webmail | ecomm | other (asked)
+#   --box NAME         splunk | webmail | ecomm | fileshare | gitea | web |
+#                      other (asked).  fileshare keeps 139, 445, 2049, 111;
+#                      gitea keeps 3000 and 2222 (its SSH), 80, 443; web
+#                      (a ticket, help-desk or shop site) keeps 80, 443
 #   --timer SECONDS    revert countdown (default 120); --no-timer
 #   --no-color         no colours
 #   --help             this text plus the common options
@@ -54,7 +61,7 @@
 #   output.txt, findings.txt, plan.txt, summary.txt, run.txt, revert.sh
 #
 # DEPENDS ON
-#   ps, ss; systemctl or service; BT_SERVICE may name a stand-in for
+#   ps, ss (or netstat, or busybox netstat); systemctl, OpenRC or service; BT_SERVICE may name a stand-in for
 #   "service" (tests).
 #
 # TESTED ON
@@ -1525,7 +1532,7 @@ LX-26 Remote access lockdown - tunnels, web terminals, remote desktops, admin pa
   sudo sh LX-26-remote-access.sh --protected p.csv --apply
 
   --apply            make the changes (without it, dry run only)
-  --box NAME         splunk | webmail | ecomm | other
+  --box NAME         splunk | webmail | ecomm | fileshare | gitea | web | other
   --timer SECONDS    revert countdown (default 120); --no-timer
   --no-color         no colours
   --help             show this text
@@ -1546,7 +1553,7 @@ while [ $# -gt 0 ]; do
         *)          cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-case "$BOX" in ''|splunk|webmail|ecomm|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm or other" ;; esac
+case "$BOX" in ''|splunk|webmail|ecomm|fileshare|gitea|web|other) ;; *) cc_die 2 "--box must be splunk, webmail, ecomm, fileshare, gitea, web or other" ;; esac
 case "$TIMER" in ''|*[!0-9]*) cc_die 2 "--timer needs a whole number" ;; esac
 
 cc_init "LX-26" "Remote access lockdown" changes
@@ -1570,19 +1577,29 @@ cc_show "$C_CYN" "LX-26 Remote access lockdown | host $CC_HOST | results in $CC_
 cc_show "" "Legend: ${C_RED}[!] HIGH${C_OFF}   ${C_YEL}[*] MED${C_OFF}   ${C_GRY}[-] LOW${C_OFF}   ${C_GRN}[ok]${C_OFF} fine   ${C_YEL}[~] would stop${C_OFF}   ${C_GRN}[+] stopped${C_OFF}   ${C_RED}[x] failed${C_OFF}"
 
 if [ -z "$BOX" ]; then
-    cc_choose "Which box is this?" o "s=splunk" "w=webmail" "e=ecomm" "o=other"
-    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; *) BOX=other ;; esac
+    cc_choose "Which box is this? (its scored ports are never offered)" o "s=splunk" "w=webmail" "e=ecomm" "f=fileshare: Samba or NFS (139, 445, 2049, 111)" "g=gitea (3000, 2222, 80, 443)" "b=web: a ticket, help-desk or shop site (80, 443)" "o=other"
+    case "$CC_CHOICE" in s) BOX=splunk ;; w) BOX=webmail ;; e) BOX=ecomm ;; f) BOX=fileshare ;; g) BOX=gitea ;; b) BOX=web ;; *) BOX=other ;; esac
 fi
 # Ports that are scored on this box: never offered.
-case "$BOX" in splunk) SCORED_PORTS="22 8000 8089 123" ;; webmail) SCORED_PORTS="22 25 80 443 143 993 587" ;; ecomm) SCORED_PORTS="80 443" ;; *) SCORED_PORTS="" ;; esac
+case "$BOX" in
+    splunk)    SCORED_PORTS="22 8000 8089 123" ;;
+    webmail)   SCORED_PORTS="22 25 80 443 143 993 587" ;;
+    ecomm|web) SCORED_PORTS="80 443" ;;
+    fileshare) SCORED_PORTS="139 445 2049 111" ;;
+    gitea)     SCORED_PORTS="3000 2222 80 443" ;;
+    *)         SCORED_PORTS="" ;;
+esac
 
 # ---- What to look for --------------------------------------------------------------------
 # level|kind|program names (ps comm, space separated)|service names|what it is
 cat >"$W/table" <<'EOF'
-HIGH|tunnel|ngrok chisel frpc frps cloudflared bore gost ligolo ligolo-ng ligolo-agent rathole inlets pgrok zrok sshuttle|ngrok cloudflared frpc frps chisel|a tunnel out past the firewall
-HIGH|web terminal|ttyd gotty shellinaboxd shellinabox wetty tmate butterfly|ttyd shellinabox wetty|a shell in a web browser
-HIGH|remote desktop|x11vnc Xvnc Xtightvnc Xtigervnc x0vncserver vncserver vnc4server xrdp xrdp-sesman nxserver nxd nxnode teamviewerd TeamViewer anydesk rustdesk hbbs hbbr vino-server krfb gnome-remote-de grd-daemon meshagent|xrdp xrdp-sesman x11vnc vncserver nxserver teamviewerd anydesk rustdesk gnome-remote-desktop meshagent|a remote desktop
+HIGH|tunnel|ngrok chisel frpc frps cloudflared bore gost ligolo ligolo-ng ligolo-agent rathole inlets pgrok zrok sshuttle wstunnel sshx|ngrok cloudflared frpc frps chisel|a tunnel out past the firewall
+HIGH|tunnel|tailscaled tailscale zerotier-one|tailscaled zerotier-one|a mesh VPN (a way in that skips the firewall)
+HIGH|tunnel|iodine iodined dnscat dnscat2 dnscat2-server ptunnel ptunnel-ng icmptunnel|iodined|a DNS or ICMP tunnel (data hidden in lookups or pings)
+HIGH|web terminal|ttyd gotty shellinaboxd shellinabox wetty tmate butterfly code-server jupyter jupyter-lab jupyter-noteboo jupyter-notebook|ttyd shellinabox wetty code-server|a shell in a web browser
+HIGH|remote desktop|x11vnc Xvnc Xtightvnc Xtigervnc x0vncserver vncserver vnc4server xrdp xrdp-sesman nxserver nxd nxnode teamviewerd TeamViewer anydesk rustdesk hbbs hbbr vino-server krfb gnome-remote-de grd-daemon meshagent guacd dwagent chrome-remote-d chrome-remote-desktop xpra|xrdp xrdp-sesman x11vnc vncserver nxserver teamviewerd anydesk rustdesk gnome-remote-desktop meshagent guacd dwagent chrome-remote-desktop xpra|a remote desktop
 MED|admin panel|miniserv.pl cockpit-ws cockpit-tls usermin ispconfig virtualmin|webmin cockpit cockpit.socket usermin|a web admin panel (root on the box from a browser)
+MED|desktop control|kdeconnectd barriers barrierc synergys synergyc input-leaps input-leapc|barrier synergy|keyboard and mouse from another machine
 EOF
 # ps: pid|comm|args
 # (zombies - already dead, waiting for their parent - are left out)
@@ -1591,8 +1608,10 @@ ps -eo pid=,stat=,comm=,args= 2>/dev/null | awk '$2 !~ /^Z/ { p = $1; c = $3; $1
 if cc_have ss; then
     ss -lntup 2>/dev/null | awk 'NR > 1 { n = split($5, a, ":"); port = a[n]; pid = ""; c = ""; if (match($0, /pid=[0-9]+/)) pid = substr($0, RSTART + 4, RLENGTH - 4); if (match($0, /\(\("[^"]+"/)) c = substr($0, RSTART + 3, RLENGTH - 4); print port "|" pid "|" c }' | sort -u >"$W/listen"
 else
-    # Alpine: no ss, busybox netstat ("PID/name" in the last column).
-    netstat -lntup 2>/dev/null | awk '$1 ~ /^(tcp|udp)/ { n = split($4, a, ":"); pid = ""; c = ""; if (match($NF, /^[0-9]+\//)) { pid = substr($NF, 1, RLENGTH - 1); c = substr($NF, RLENGTH + 1) } print a[n] "|" pid "|" c }' | sort -u >"$W/listen"
+    # Alpine: no ss, busybox netstat ("PID/name" in the last column).  A
+    # box with neither: busybox's own.
+    NETSTAT=netstat; cc_have netstat || { cc_have busybox && NETSTAT="busybox netstat"; }
+    $NETSTAT -lntup 2>/dev/null | awk '$1 ~ /^(tcp|udp)/ { n = split($4, a, ":"); pid = ""; c = ""; if (match($NF, /^[0-9]+\//)) { pid = substr($NF, 1, RLENGTH - 1); c = substr($NF, RLENGTH + 1) } print a[n] "|" pid "|" c }' | sort -u >"$W/listen"
 fi
 # exe PID -> the program file (or "(deleted)")
 exe() { ls -l "/proc/$1/exe" 2>/dev/null | sed 's/.* -> //'; }
