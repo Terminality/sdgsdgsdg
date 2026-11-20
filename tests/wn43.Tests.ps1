@@ -18,6 +18,7 @@ $psExe = (Get-Process -Id $PID).Path
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('cctest_wn43_' + $PID)
 $out = Join-Path $tmp 'out'; $fake = Join-Path $tmp 'fake'
 $env:BT_SKIP_VERIFY = '1'; $env:BT_WN43_FAKE = $fake
+$env:BT_TEST_SCHTASKS = Join-Path ([IO.Path]::GetTempPath()) ('cctest_wn43_sch_' + $PID + '.log')   # the revert timer's task is only written down
 $script:pass = 0; $script:fail = 0
 function T-Start($t) { Write-Host "  -- $t" }
 function T-Eq($got, $want, $label) { if ("$got" -ceq "$want") { $script:pass++ } else { $script:fail++; Write-Host "     FAIL: $label"; Write-Host "           got [$got], wanted [$want]" } }
@@ -110,7 +111,7 @@ $r = Run @('-Out', $out)
 T-Eq $r.Code 0 'exits 0'
 T-Eq (Snap) $before 'stand-in state unchanged'
 T-Has $r.Text 'Would fix' 'lists what it would fix'
-T-True (-not (Test-Path -LiteralPath (Join-Path $r.Dir 'undo-plan.csv'))) 'no undo plan in a dry run'
+T-True (-not (Test-Path -LiteralPath (Join-Path $r.Dir 'undo-plan.txt'))) 'no undo plan in a dry run'
 
 T-Start 'apply the safe fixes to a badly configured DC'
 Plant; $start = Snap
@@ -175,11 +176,11 @@ T-Eq (Reg "$CCS\Control\Lsa" 'LmCompatibilityLevel') '1' 'NTLM level not touched
 T-Eq (Reg "$CV\Policies\System" 'LocalAccountTokenFilterPolicy') '1' 'LocalAccountTokenFilterPolicy not touched without -Include'
 T-Has $r.Text 'Not run (might affect a service; add with -Include): firewall, latfp' 'summary lists the fixes not run'
 # secrets and records
-$all = $r.Text + [IO.File]::ReadAllText((Join-Path $run1 'fixes.csv')) + [IO.File]::ReadAllText((Join-Path $run1 'summary.txt')) + [IO.File]::ReadAllText(@(Get-ChildItem -LiteralPath $out -Filter 'WN-43_*.log' | Sort-Object Name)[-1].FullName)
+$all = $r.Text + [IO.File]::ReadAllText((Join-Path $run1 'fixes.txt')) + [IO.File]::ReadAllText((Join-Path $run1 'summary.txt')) + [IO.File]::ReadAllText(@(Get-ChildItem -LiteralPath $out -Filter 'WN-43_*.log' | Sort-Object Name)[-1].FullName)
 T-HasNot $all 'Planted-Secret-Pw-42' 'the stored password is never shown or logged'
-T-True (@(Import-Csv -LiteralPath (Join-Path $run1 'undo-plan.csv')).Count -gt 20) 'undo plan written'
+T-True (@(Import-Csv -LiteralPath (Join-Path $run1 'undo-plan.txt')).Count -gt 20) 'undo plan written'
 T-Has ([IO.File]::ReadAllText((Join-Path $out ('undo-' + (@(Get-ChildItem -LiteralPath $out -Filter 'undo-*.log')[0].Name -replace '^undo-|\.log$', '') + '.log')))) 'WN-43 restore registry key' 'plain undo commands in the host undo log'
-T-Has $r.Text '-Undo WN-43_' 'summary says how to put the run back'
+T-Has $r.Text '-Undo safe-fixes-' 'summary says how to put the run back'
 
 T-Start 'a second run changes nothing'
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot)
@@ -249,7 +250,7 @@ $env:BT_WN43_FAIL = 'defrt-silent'
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-Only', 'defender')
 T-Eq $r.Code 5 'real-time protection still off afterwards: exits 5'
 T-Has $r.Text 'still off afterwards' 'and says so'
-T-Has ([IO.File]::ReadAllText((Join-Path $r.Dir 'fixes.csv'))) 'still off afterwards' 'fixes.csv has the corrected result'
+T-Has ([IO.File]::ReadAllText((Join-Path $r.Dir 'fixes.txt'))) 'still off afterwards' 'fixes.txt has the corrected result'
 Plant
 $env:BT_WN43_FAIL = 'sfc'
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot, '-Only', 'stickykeys')
@@ -275,7 +276,32 @@ T-Eq (Reg "$CCS\Services\Netlogon\Parameters" 'FullSecureChannelProtection') '0'
 T-Eq (Row 'services.csv' 'name' 'Spooler' 'state') 'Running' 'Spooler left alone off a DC'
 T-Eq (Row 'auditpol.csv' 'guid' '{0CCE923C-69AE-11D9-BED3-505054503030}' 'setting') '(none)' 'directory-change auditing only on a DC'
 
+T-Start 'the look and the questions'
+Plant
+$r = Run @('-Out', $out, '-Protected', $prot, '-Batch')
+T-Has $r.Text 'WN-43 Windows safe fixes | host' 'the title line'
+T-Has $r.Text '==========[ 1/3  questions (Enter = the default in capitals) ]==========' 'numbered headers'
+T-Has $r.Text '[?] Which safe fixes? (they cannot break a scored service) [A/c] a (default): all 20 of them' 'which fixes: all by default'
+T-Has $r.Text '[?] Might affect a service - rdpnla: RDP requires Network Level Authentication? [y/N] n (default)' 'each service fix: default no'
+T-Has $r.Text '==========[ 2/3  dry run: what would change ]==========' '-Batch without -Apply: a dry run'
+T-Has $r.Text '[~] wdigest' 'what would change is shown as it is found'
+T-True ($r.Dir -match 'safe-fixes-\d+$') 'a numbered safe-fixes-N folder'
+T-True (@(Get-ChildItem -LiteralPath $r.Dir -Recurse -Filter '*.csv').Count -eq 0) 'no CSV in the results'
+# c: choose each - only wdigest; no service fixes; apply: y; keep: y
+Plant
+$ans = @('c', 'y'); for ($i = 1; $i -lt 20; $i++) { $ans += 'n' }; for ($i = 0; $i -lt 8; $i++) { $ans += 'n' }; $ans += 'y'; $ans += 'y'
+$env:BT_TEST_ANSWERS = ($ans -join ';')
+$r = Run @('-Out', $out, '-Protected', $prot)
+Remove-Item Env:\BT_TEST_ANSWERS
+T-Has $r.Text '[?] wdigest: passwords no longer kept readable in memory?' 'c: each safe fix is asked'
+T-Eq (Reg "$CCS\Control\SecurityProviders\WDigest" 'UseLogonCredential') '0' 'y: wdigest fixed'
+T-Has $r.Text 'fixes run: wdigest' 'only the chosen fix ran'
+T-Has $r.Text '[?] Apply these 1 fix(es) now?' 'then: apply?'
+T-Has $r.Text 'Revert timer: everything is undone at' 'the revert timer runs'
+T-Has $r.Text 'Changes kept' 'keep: y'
+
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $env:BT_TEST_SCHTASKS -Force -ErrorAction SilentlyContinue
 Write-Host ("  {0} passed, {1} failed" -f $script:pass, $script:fail)
 if ($script:fail -gt 0) { exit 1 }
 exit 0
