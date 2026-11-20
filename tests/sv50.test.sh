@@ -139,6 +139,42 @@ if [ -n "$PY" ] && command -v ss >/dev/null 2>&1; then
     out=$(srun --services gitea)
     t_hasnt "$out" "SELinux blocks it" "not when SELinux is not enforcing"
     rm -f "$B/getenforce" "$B/ausearch"
+    # RabbitMQ and Home Assistant: installed (init scripts), not running.
+    for _u in rabbitmq-server home-assistant; do printf '#!/bin/sh\necho "init %s $1" >>"%s"\n' "$_u" "$L" >"$S/$_u"; chmod +x "$S/$_u"; done
+    out=$(srun --services rabbitmq,hass)
+    t_has "$out" "rabbitmq  rabbitmq-server" "RabbitMQ is checked"
+    t_has "$out" "hass      home-assistant" "Home Assistant is checked"
+    t_has "$out" "[~] start rabbitmq-server" "starting RabbitMQ is offered"
+    t_has "$out" "[~] start home-assistant" "starting Home Assistant is offered"
+    # Containers (a stand-in docker): one crashed, one done (exit 0), one paused, one running.
+    cat >"$B/fakedocker" <<STUB
+#!/bin/sh
+echo "docker \$*" >>"$L"
+case "\$1" in
+    ps) if [ "\$2" = -aq ]; then printf 'a\nb\nc\nd\n'; else printf 'pos|exited|Exited (137) 2 minutes ago|posapp:1\njob|exited|Exited (0) 1 hour ago|migrate:1\ncache|paused|Up 1 hour (Paused)|redis:7\nweb|running|Up 1 hour|nginx:1\n'; fi ;;
+    logs) echo "panic: cannot reach the database" ;;
+    inspect) echo running ;;
+esac
+STUB
+    chmod +x "$B/fakedocker"
+    out=$(export BT_TEST_CT="$B/fakedocker"; srun --services gitea)
+    t_hasnt "$out" "container pos" "--services without containers leaves them out"
+    out=$(export BT_TEST_CT="$B/fakedocker"; srun --services gitea,containers)
+    t_has "$out" "[!] container pos          Exited (137) 2 minutes ago (posapp:1)" "a crashed container is DOWN"
+    t_has "$out" "log: panic: cannot reach the database" "with its log"
+    t_has "$out" "[?] [container] start container pos (posapp:1)? [Y/n] y (default)" "starting it is asked, default yes"
+    t_has "$out" "[?] [container] start container job (migrate:1)? [y/N] n (default)" "one that ended with exit 0: default no"
+    t_has "$out" "unpause container cache" "a paused one is unpaused"
+    t_has "$out" "1 running" "running ones are counted"
+    out=$(export BT_TEST_CT="$B/fakedocker"; srun --services gitea,containers --apply)
+    c=$(cat "$L")
+    t_has "$c" "docker start pos" "--apply starts the crashed one"
+    t_hasnt "$c" "docker start job" "not the finished job (default no)"
+    t_has "$c" "docker unpause cache" "and unpauses the paused one"
+    t_has "$out" "[ok] container:pos is UP" "and checks it is up"
+    t_has "$(cat "$O"/undo-*.log)" "fakedocker stop pos" "undo stops it again"
+    out=$(export BT_TEST_CT="$B/fakedocker"; srun --services gitea --no-containers)
+    t_hasnt "$out" "container" "--no-containers leaves them out"
     kill "$GPID" 2>/dev/null; pkill -f "$B/gitea" 2>/dev/null
     # Wait until the port is free again (the next shell's run uses it).
     _i=0; while ss -ltn | grep -q ":$GP " && [ "$_i" -lt 20 ]; do sleep 1; _i=$((_i + 1)); done

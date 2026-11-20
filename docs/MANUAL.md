@@ -2649,7 +2649,7 @@ In `mail-passwords-N/` (mode 700): `output.txt`, `users.txt`, `plan.txt`, `summa
 
 Run this when a scored service goes red. It checks every service on the box the same way, finds **why** it's down, and offers the fix. A plain restart often fails because red team broke something underneath.
 
-Services: web (apache2, httpd, nginx), php-fpm (also Alpine's `php-fpm83`), database (mariadb, mysql, postgresql), mail (dovecot, postfix), splunk, ssh, time (chrony, ntp), file shares (Samba, NFS), Gitea (or Forgejo; its port from `HTTP_PORT` in `app.ini`, else 3000). Only the ones installed are checked. With two web servers, only the one in use counts. Works with systemd, OpenRC (Alpine) and SysV.
+Services: web (apache2, httpd, nginx), php-fpm (also Alpine's `php-fpm83`), database (mariadb, mysql, postgresql), mail (dovecot, postfix), splunk, ssh, time (chrony, ntp), file shares (Samba, NFS), Gitea (or Forgejo; its port from `HTTP_PORT` in `app.ini`, else 3000), RabbitMQ (5672, and the management page on 15672), Home Assistant (8123), the Docker service, and **Docker or Podman containers**. Only the ones installed are checked. With two web servers, only the one in use counts. Works with systemd, OpenRC (Alpine) and SysV.
 
 ### How to run it
 
@@ -2664,8 +2664,9 @@ sudo sh SV-50-service-recovery.sh --protected p.csv --watch 30 --auto-restart --
 
 | Question | Answers | Flag |
 | --- | --- | --- |
-| Which box is this? | `[s]plunk [w]ebmail [e]comm [o]ther` | `--box` |
+| Which box is this? | `[s]plunk [w]ebmail [e]comm [f]ileshare [g]itea [b] web [o]ther` (guessed) | `--box` |
 | Check which services? | `[a]ll` found / `[s]` only the scored ones for this box | `--services` |
+| Check the containers too? | `[Y]` / `[n]` (only when Docker or Podman has containers) | `--no-containers`, or `containers` in `--services` |
 | Each fix | `[y]` / `[n]` | `--fix KINDS` answers yes for those kinds |
 
 ### What it checks, per service
@@ -2680,9 +2681,11 @@ sudo sh SV-50-service-recovery.sh --protected p.csv --watch 30 --auto-restart --
 | Firewall | iptables DROP/REJECT on the port; nftables shown; a port **firewalld** (Rocky, Fedora) or **ufw** (Ubuntu, Mint) does not allow | remove the rule; open the port in firewalld (now and permanent) or ufw |
 | Tampered | config changed in the last 2 hours (also `/etc/samba`, `/etc/exports`, `/etc/gitea`), systemd override (`ExecStart=/bin/true`), package files changed (`dpkg -V`, `rpm -V`) | shown with what to do (SV-15 restore, `apt-get install --reinstall`, `dnf reinstall`) |
 
+**Containers:** each one that stopped is shown with its last log lines and the fix is asked: start it (default yes; default **no** when it ended with exit 0, which may be a one-off job), unpause a paused one. One that keeps restarting is shown with its log only. After a start it must be running; the undo stops it again.
+
 **For the whole box:** disk or inodes full, `/tmp` not writable or wrong mode, programs killed for lack of memory.
 
-Fixes run in order: unmask, firewall, kill, enable, start. Each fixed service is tested again (up to 10 s).
+Fixes run in order: unmask, firewall, kill, enable, start, containers. Each fixed service is tested again (up to 10 s).
 
 ### Watch mode (the automation)
 

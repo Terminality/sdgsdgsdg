@@ -52,6 +52,7 @@
 #   QUESTIONS (Enter takes the default in capitals; a flag answers each):
 #     which box                       --box NAME
 #     which services                  --services a,b (Enter = all found)
+#     check the containers too?       --no-containers (Enter = yes)
 #     each fix (yes / no)             --fix KINDS (always yes for these kinds)
 #
 # USAGE
@@ -65,10 +66,12 @@
 #   --box NAME         splunk | webmail | ecomm | fileshare | gitea | web |
 #                      other (asked)
 #   --services a,b     only these: web php-fpm mysql postgres imap smtp splunk
-#                      ssh ntp smb nfs gitea, or unit names (apache2, nginx ...)
+#                      ssh ntp smb nfs gitea rabbitmq hass docker containers,
+#                      or unit names (apache2, nginx ...)
+#   --no-containers    leave Docker / Podman containers out
 #   --fix KINDS        answer yes for these fix kinds: unmask enable firewall
-#                      kill start (default: each asked; --batch takes the
-#                      default shown)
+#                      kill start container (default: each asked; --batch
+#                      takes the default shown)
 #   --watch SECONDS    keep checking; print changes (Ctrl-C to stop)
 #   --auto-restart     with --watch and --apply: restart what goes down
 #   --watch-count N    with --watch: stop after N rounds (tests)
@@ -126,7 +129,9 @@ SV-50 Service recovery - why is a service down, and bring it back
 
   --apply            make the fixes (without it, dry run only)
   --box NAME         splunk | webmail | ecomm | fileshare | gitea | web | other
-  --services a,b     web php-fpm mysql postgres imap smtp splunk ssh ntp smb nfs gitea, or unit names
+  --services a,b     web php-fpm mysql postgres imap smtp splunk ssh ntp smb nfs gitea
+                     rabbitmq hass docker containers, or unit names
+  --no-containers    leave Docker / Podman containers out
   --fix KINDS        yes for these fix kinds: unmask enable firewall kill start
   --watch SECONDS    keep checking, print changes (Ctrl-C to stop)
   --auto-restart     with --watch and --apply: restart what goes down
@@ -137,16 +142,17 @@ USAGE
     cc_usage_common
 }
 
-BOX=""; ONLY=""; FIXK=""; WATCH=""; AUTOR=0; WCOUNT=0; COLOR=1
+BOX=""; ONLY=""; FIXK=""; WATCH=""; AUTOR=0; WCOUNT=0; COLOR=1; CTRS=""; SVCFLAG=0
 while [ $# -gt 0 ]; do
     if cc_common_flag "$@"; then shift "$CC_SHIFT"; continue; fi
     case "$1" in
         --apply)        CC_APPLY=1; shift ;;
         --box)          [ $# -ge 2 ] || cc_die 2 "--box needs a name"; BOX=$2; shift 2 ;;
-        --services)     [ $# -ge 2 ] || cc_die 2 "--services needs a list"; ONLY="$ONLY,$2"; shift 2 ;;
+        --services)     [ $# -ge 2 ] || cc_die 2 "--services needs a list"; ONLY="$ONLY,$2"; SVCFLAG=1; shift 2 ;;
         --fix)          [ $# -ge 2 ] || cc_die 2 "--fix needs a list"; FIXK="$FIXK,$2"; shift 2 ;;
         --watch)        [ $# -ge 2 ] || cc_die 2 "--watch needs seconds"; WATCH=$2; shift 2 ;;
         --auto-restart) AUTOR=1; shift ;;
+        --no-containers) CTRS=n; shift ;;
         --watch-count)  [ $# -ge 2 ] || cc_die 2 "--watch-count needs a number"; WCOUNT=$2; shift 2 ;;
         --no-color|--no-colour) COLOR=0; shift ;;
         --help|-h)      usage; exit 0 ;;
@@ -157,7 +163,7 @@ cc_box_valid "$BOX" || cc_die 2 "--box must be one of: $CC_BOXES"
 for _n in "$WATCH" "$WCOUNT"; do case "$_n" in *[!0-9]*) cc_die 2 "--watch and --watch-count need whole numbers" ;; esac; done
 [ -z "$WATCH" ] || [ "$WATCH" -ge 5 ] || cc_die 2 "--watch must be at least 5 seconds"
 for _k in $(printf '%s' "$FIXK" | tr ',' ' '); do
-    case "$_k" in unmask|enable|firewall|kill|start) ;; *) cc_die 2 "--fix: unknown kind '$_k' (unmask enable firewall kill start)" ;; esac
+    case "$_k" in unmask|enable|firewall|kill|start|container) ;; *) cc_die 2 "--fix: unknown kind '$_k' (unmask enable firewall kill start container)" ;; esac
 done
 [ "$AUTOR" = 1 ] && [ -z "$WATCH" ] && cc_die 2 "--auto-restart needs --watch"
 
@@ -199,6 +205,9 @@ ntp|ntp ntpd ntpsec|ntpd|u123|ntp
 smb|smbd smb samba|smbd|445 139|smb
 nfs|nfs-server nfs-kernel-server nfs|nfsd|2049|nfs
 gitea|gitea forgejo|gitea forgejo|GITEA_PORT|http
+rabbitmq|rabbitmq-server rabbitmq|beam.smp|5672 15672|amqp
+hass|home-assistant home-assistant@homeassistant homeassistant hass|hass|8123|http
+docker|docker|dockerd|-|none
 EOF
 # Gitea's web port: HTTP_PORT in its app.ini (3000 when not set).
 GITEA_PORT=""
@@ -231,10 +240,16 @@ while IFS='|' read -r _k _us _ps _pt _pr; do
     done
 done <"$W/table"
 for _s in $(printf '%s' "$ONLY" | tr ',' ' '); do
+    [ "$_s" = containers ] && continue
     awk -F'|' -v s="$_s" '$1 == s || $2 == s { f = 1 } END { exit !f }' "$W/rows" || \
         cc_die 2 "--services: '$_s' is not installed here (installed: $(cut -d'|' -f2 "$W/rows" | tr '\n' ' '))"
 done
-[ -s "$W/rows" ] || { cc_show "$C_GRY" "None of the services this script knows is installed here."; rm -rf "$W"; cc_finish; exit 0; }
+# Containers (Docker, Podman): a scored app may run in one.  BT_TEST_CT names a stand-in.
+CT=""
+if [ -n "${BT_TEST_CT:-}" ]; then CT=$BT_TEST_CT
+elif cc_have docker && docker info >/dev/null 2>&1; then CT=docker
+elif cc_have podman; then CT=podman; fi
+[ -s "$W/rows" ] || [ -n "$CT" ] || { cc_show "$C_GRY" "None of the services this script knows is installed here."; rm -rf "$W"; cc_finish; exit 0; }
 
 if [ -z "$BOX" ] && [ -z "$WATCH" ]; then
     cc_box_ask o "${R:-}"
@@ -251,6 +266,12 @@ if [ -z "$ONLY" ] && [ -z "$WATCH" ] && [ "$(grep -c . "$W/rows")" -gt 1 ]; then
     cc_choose "Check which services? (found: $(cut -d'|' -f2 "$W/rows" | tr '\n' ' ' | sed 's/ $//'))" a \
         "a=all of them" "s=only the scored ones for this box${SCORED:+ ($SCORED)}"
     [ "$CC_CHOICE" = s ] && [ -n "$SCORED" ] && ONLY=",$(printf '%s' "$SCORED" | tr ' ' ',')"
+fi
+# Containers: asked when there are some and --services did not name them.
+if [ -n "$CT" ] && [ -z "$CTRS" ] && [ -z "$WATCH" ]; then
+    if [ "$SVCFLAG" = 1 ]; then inlist containers "${ONLY#,}" && CTRS=y || CTRS=n
+    elif cc_ask "Check the $CT containers too? ($("$CT" ps -aq 2>/dev/null | grep -c .) found)" Y "yes, check them and offer to start stopped ones" "no, leave containers out"; then CTRS=y
+    else CTRS=n; fi
 fi
 if [ -n "$ONLY" ]; then
     awk -F'|' -v l="$ONLY," 'index(l, "," $1 ",") || index(l, "," $2 ",")' "$W/rows" >"$W/rows.t" && mv "$W/rows.t" "$W/rows"
@@ -396,6 +417,11 @@ probe_raw() {
                 _pd=1; break
             done
             [ -n "$_pd" ] || echo "bad nothing answers on $3" ;;
+        amqp)
+            if listening 5672 >/dev/null; then
+                _mg=""; listening 15672 >/dev/null && _mg=", management page HTTP $(http_code "http://127.0.0.1:15672/")"
+                echo "ok listening on 5672$_mg"
+            else echo "bad nothing on 5672"; fi ;;
         nfs)
             if listening 2049 >/dev/null; then
                 if cc_have showmount; then _o=$(timeout 10 showmount -e 127.0.0.1 2>&1) && echo "ok NFS answers ($(printf '%s\n' "$_o" | grep -c '^/') export(s))" || echo "bad listening on 2049 but showmount gets no answer"
@@ -641,6 +667,28 @@ while IFS='|' read -r _k _u _ps _pt _pr; do
     cc_csv_row "$SCSV" "$_k" "$_u" "$_run" "$_st" "$_cfg" "${_pinfo# }" "$_atx" "$(printf '%s' "$_probs" | sed 's/;$//; s/^ //')"
 done <"$W/rows"
 
+# Containers that stopped.  A container that ended with exit 0 may be a
+# one-off job: offered, default no.  One restarting over and over is shown
+# with its log (starting it again would not help).
+if [ -n "$CT" ] && [ "$CTRS" = y ]; then
+    "$CT" ps -a --format '{{.Names}}|{{.State}}|{{.Status}}|{{.Image}}' >"$W/ctr" 2>/dev/null
+    _nup=$(awk -F'|' '$2 == "running"' "$W/ctr" | grep -c .)
+    while IFS='|' read -r _cn _cs _cst _ci; do
+        case "$_cs" in running|created|'') continue ;; esac
+        NDOWN=$((NDOWN + 1))
+        cc_show "$C_RED" "  [!] $(printf '%-9s %-12s' container "$_cn") $_cst ($_ci)"
+        "$CT" logs --tail 3 "$_cn" 2>&1 | cut -c1-150 | while IFS= read -r _ll; do cc_show "$C_GRY" "        log: $_ll"; done
+        case "$_cs" in
+            paused)     addfix "container:$_cn" container "unpause container $_cn" y "$CT unpause $_cn" "$CT pause $_cn" ;;
+            restarting) cc_show "$C_YEL" "        - it keeps crashing: read the log above ($CT logs $_cn)" ;;
+            *)          _d=y; case "$_cst" in *"(0)"*) _d=n ;; esac
+                        addfix "container:$_cn" container "start container $_cn ($_ci)" "$_d" "$CT start $_cn" "$CT stop $_cn" ;;
+        esac
+        cc_csv_row "$SCSV" container "$_cn" no - - - - "$_cst"
+    done <"$W/ctr"
+    [ "$_nup" -gt 0 ] && cc_show "$C_GRN" "  [ok] $(printf '%-9s' container) $_nup running ($CT)"
+fi
+
 # ---- Fixes ------------------------------------------------------------------------------
 header "3/4  fixes"
 NFIX=$(grep -c . "$W/fixes")
@@ -666,7 +714,7 @@ elif [ "$CC_APPLY" != 1 ] || ! cc_is_root; then
 else
     # Order: unmask, firewall, kill, enable, then start - each fix clears
     # the way for the next.
-    for _kd in unmask firewall kill enable start; do
+    for _kd in unmask firewall kill enable start container; do
         awk -F'|' -v k="$_kd" '$2 == k' "$W/chosen" | while IFS='|' read -r _u _k2 _ds _cmd _un; do
             case "$_kd" in
                 unmask) cc_undo_add "mask $_u again" "systemctl mask $_u"; systemctl unmask "$_u" >>"$CC_LOG" 2>&1; _r=$? ;;
@@ -681,6 +729,7 @@ else
                         esac; _r=$? ;;
                 kill)   kill ${_cmd#kill } 2>>"$CC_LOG"; sleep 1; kill -0 ${_cmd#kill } 2>/dev/null && kill -9 ${_cmd#kill } 2>>"$CC_LOG"; _r=0 ;;
                 start)  svc_cmd "$_u" "$_cmd" >>"$CC_LOG" 2>&1; _r=$? ;;
+                container) cc_undo_add "$_ds: undone" "$_un"; sh -c "$_cmd" >>"$CC_LOG" 2>&1; _r=$? ;;
             esac
             if [ "$_r" = 0 ]; then cc_show "$C_GRN" "  [+] $_ds"; echo ok >>"$W/res"; else cc_show "$C_RED" "  [x] FAILED: $_ds (log: $CC_LOG)"; echo bad >>"$W/res"; fi
         done
@@ -692,6 +741,12 @@ else
     CC_N_FAIL=$NBAD
     # Test each fixed service again.
     cut -d'|' -f1 "$W/chosen" | sort -u | while IFS= read -r _u; do
+        case "$_u" in container:*)
+            sleep 2; _st=$("$CT" inspect -f '{{.State.Status}}' "${_u#container:}" 2>/dev/null)
+            if [ "$_st" = running ]; then cc_show "$C_GRN" "  [ok] $_u is UP"; printf '%s ok\n' "$_u" >>"$W/after"
+            else cc_show "$C_RED" "  [!] $_u is still DOWN (${_st:-gone}) - $CT logs ${_u#container:}"; printf '%s bad\n' "$_u" >>"$W/after"; fi
+            continue ;;
+        esac
         _row=$(awk -F'|' -v u="$_u" '$2 == u' "$W/rows")
         _ps=$(printf '%s' "$_row" | cut -d'|' -f3); _pt=$(printf '%s' "$_row" | cut -d'|' -f4); _pr=$(printf '%s' "$_row" | cut -d'|' -f5)
         _i=0; _ans="bad not running"
