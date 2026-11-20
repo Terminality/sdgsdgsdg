@@ -3057,14 +3057,39 @@ s_mac() {
     sec_csv mac "system,current,configured"
     F=$SEC_CSV
     _found=0
-    if cc_have getenforce || [ -f /etc/selinux/config ]; then
+    # PR: a fake system root for the tests (BT_TEST_ROOT); empty for real runs.
+    PR=${BT_TEST_ROOT:-}
+    if cc_have getenforce || [ -f "$PR/etc/selinux/config" ]; then
         _found=1
         _cur=$(getenforce 2>/dev/null || echo unknown)
-        _cfg=$(sed -n 's/^SELINUX=//p' /etc/selinux/config 2>/dev/null | tr -d '"' | head -n 1)
+        _cfg=$(sed -n 's/^SELINUX=//p' "$PR/etc/selinux/config" 2>/dev/null | tr -d '"' | head -n 1)
         cc_csv_row "$F" SELinux "$_cur" "${_cfg:-}"
         cc_have sestatus && cc_save sestatus sestatus
         if [ "$_cfg" = enforcing ] && [ "$_cur" != Enforcing ]; then
-            flag HIGH SELinux "configured as enforcing but currently $_cur: someone switched it off"
+            flag HIGH SELinux "configured as enforcing but currently $_cur: someone switched it off (setenforce 1, then check the scored services)"
+        elif [ "$_cur" = Permissive ] || [ "$_cur" = Disabled ]; then
+            flag MED SELinux "SELinux is $_cur (configured: ${_cfg:-not set}): it blocks nothing. Turn it on with care: setenforce 1, then check the scored services (denials: ausearch -m avc -ts recent)"
+        fi
+        case "$_cfg" in permissive|disabled) [ "$_cur" = Enforcing ] && flag HIGH SELinux "/etc/selinux/config says SELINUX=$_cfg: it goes off at the next boot" ;; esac
+        # Off on the kernel command line, now or at the next boot.
+        grep -Eq '(^| )(selinux=0|enforcing=0)( |$)' "$PR/proc/cmdline" 2>/dev/null &&
+            flag HIGH SELinux "the kernel was started with $(grep -Eo '(selinux|enforcing)=0' "$PR/proc/cmdline" | tr '\n' ' ')- SELinux is off from boot"
+        grep -Eq '^GRUB_CMDLINE_LINUX[A-Z_]*=.*(selinux=0|enforcing=0)' "$PR/etc/default/grub" 2>/dev/null &&
+            flag HIGH SELinux "/etc/default/grub turns SELinux off at boot ($(grep -Eo '(selinux|enforcing)=0' "$PR/etc/default/grub" | tr '\n' ' '))- check grubby --info=ALL too"
+        if cc_have semanage; then
+            # Programs exempted from SELinux one by one: a quiet way to switch it off.
+            semanage permissive -l -n 2>/dev/null | awk 'NF { print $1 }' | sort -u >"$W/seperm"
+            while IFS= read -r _t; do flag HIGH SELinux "permissive domain $_t: this program runs as if SELinux were off (semanage permissive -d $_t)"; done <"$W/seperm"
+            # Booleans and file labels changed from the defaults on this box.
+            semanage boolean -l -C -n 2>/dev/null | awk 'NF { print $1 " = " $2 }' | tr -d '(),' >"$W/sebool"
+            while IFS= read -r _b; do flag MED SELinux "boolean changed on this box: $_b - yours? (semanage boolean -l -C)"; done <"$W/sebool"
+            _fc=$(semanage fcontext -l -C -n 2>/dev/null | grep -c .)
+            [ "$_fc" -gt 0 ] && flag LOW SELinux "$_fc file label rule(s) added on this box (semanage fcontext -l -C)"
+        fi
+        if cc_have semodule; then
+            # Priority 400 is where locally added modules go; the distribution's are 100 and 200.
+            semodule --list-modules=full 2>/dev/null | awk '$1 == 400 { print $2 }' >"$W/semod"
+            while IFS= read -r _m; do flag MED SELinux "policy module $_m was added on this box (semodule -l): yours? (remove: semodule -r $_m)"; done <"$W/semod"
         fi
     fi
     if [ -r /sys/module/apparmor/parameters/enabled ]; then

@@ -129,6 +129,16 @@ if [ -n "$PY" ] && command -v ss >/dev/null 2>&1; then
     out=$(srun --batch --services gitea 2>&1)
     t_has "$out" "Which box is this? [s/w/e/f/g/b/O] o (default): other" "the box question offers the new boxes"
     for _b in fileshare gitea web; do srun --box "$_b" --services gitea >/dev/null; t_eq "$?" 0 "--box $_b is accepted"; done
+    # SELinux enforcing and a denial for gitea (stand-ins for getenforce and ausearch).
+    printf '#!/bin/sh\necho Enforcing\n' >"$B/getenforce"
+    printf '#!/bin/sh\necho "type=AVC msg=audit(1700000000.1:5): avc:  denied  { read } for  pid=12 comm=\\"gitea\\" name=\\"app.ini\\" dev=\\"sda1\\" ino=5 scontext=system_u:system_r:gitea_t:s0 tcontext=unconfined_u:object_r:user_home_t:s0 tclass=file permissive=0"\n' >"$B/ausearch"
+    chmod +x "$B/getenforce" "$B/ausearch"
+    out=$(srun --services gitea)
+    t_has "$out" "SELinux blocks it: read on app.ini (labelled user_home_t) - put the right label back: restorecon -Rv" "an SELinux denial is named, with the fix"
+    printf '#!/bin/sh\necho Permissive\n' >"$B/getenforce"
+    out=$(srun --services gitea)
+    t_hasnt "$out" "SELinux blocks it" "not when SELinux is not enforcing"
+    rm -f "$B/getenforce" "$B/ausearch"
     kill "$GPID" 2>/dev/null; pkill -f "$B/gitea" 2>/dev/null
     # Wait until the port is free again (the next shell's run uses it).
     _i=0; while ss -ltn | grep -q ":$GP " && [ "$_i" -lt 20 ]; do sleep 1; _i=$((_i + 1)); done
