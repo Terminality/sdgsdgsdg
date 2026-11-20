@@ -17,6 +17,8 @@ $psExe = (Get-Process -Id $PID).Path
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('cctest_wn25_' + $PID)
 $out = Join-Path $tmp 'out'; $fake = Join-Path $tmp 'fake'
 $env:BT_SKIP_VERIFY = '1'; $env:BT_WN25_FAKE = $fake
+$env:BT_TEST_KEEP_CSV = '1'   # keep the CSV working files in <run>\.work to read the rows whole
+$env:BT_TEST_BOX_GUESS = '-'   # no guess from this machine
 $script:pass = 0; $script:fail = 0
 function T-Start($t) { Write-Host "  -- $t" }
 function T-Eq($got, $want, $label) { if ("$got" -ceq "$want") { $script:pass++ } else { $script:fail++; Write-Host "     FAIL: $label"; Write-Host "           got [$got], wanted [$want]" } }
@@ -97,7 +99,7 @@ Plant; $start = Snap
 $r = Run @('-Out', $out, '-Protected', $prot, '-Allow', '8443/tcp', '-Exclude', '5985/tcp,9999/tcp', '-AdminFrom', '10.0.0.0/24')
 T-Eq $r.Code 0 'exits 0'
 T-Eq (Snap) $start 'nothing changed'
-$plan = [IO.File]::ReadAllText((Join-Path $r.Dir 'plan.csv'))
+$plan = [IO.File]::ReadAllText((Join-Path $r.Dir '.work\plan.csv'))
 T-Has $plan '"BT allow 25/tcp","TCP","25","","protected list (scored)"' 'a protected port is opened even though nothing listens now'
 T-Has $plan '"BT allow 80/tcp"' 'listening web port opened'
 T-Has $plan '"BT allow 3389/tcp"' 'RDP opened (listening)'
@@ -116,7 +118,7 @@ T-HasNot $plan '50123' 'dynamic port not opened'
 T-HasNot $plan '61000' 'dynamic UDP port not opened'
 T-HasNot $plan '5355' 'LLMNR (discovery) not opened'
 T-HasNot $plan '6000' 'a listener on another 127.x address is loopback too'
-$na = [IO.File]::ReadAllText((Join-Path $r.Dir 'not-allowed.csv'))
+$na = [IO.File]::ReadAllText((Join-Path $r.Dir '.work\not-allowed.csv'))
 T-Has $na 'nc.exe is listening: a shell or tunnel' 'the reason for 4444 is written'
 T-Has $na 'unusual folder' 'the reason for 8080 is written'
 T-Has $r.Text 'NOT opened, though something listens' 'the summary shows what is not opened'
@@ -150,7 +152,7 @@ T-True (Test-Path -LiteralPath (Join-Path $fake 'task.txt')) 'rollback task crea
 T-True (Test-Path -LiteralPath (Join-Path $run1 'firewall-before.wfw')) 'firewall exported first'
 T-Has $r.Text 'ROLLBACK at' 'says when it rolls back'
 T-Has $r.Text 'keep-firewall.ps1' 'says how to keep it'
-T-Has ([IO.File]::ReadAllText((Join-Path $run1 'disabled.csv'))) '"Allow All","","*","allows every port, protocol and address","turned off"' 'disabled.csv records what was turned off'
+T-Has ([IO.File]::ReadAllText((Join-Path $run1 '.work\disabled.csv'))) '"Allow All","","*","allows every port, protocol and address","turned off"' 'disabled.csv records what was turned off'
 $r = Run @('-Out', $out, '-Apply', '-Protected', $prot)
 T-Eq $r.Code 2 'a second change while one waits for confirmation is refused'
 T-Has $r.Text 'still waiting to be kept or rolled back' 'and says why'
@@ -247,6 +249,39 @@ Plant
 $p2 = Join-Path $tmp 'p2.csv'; [IO.File]::WriteAllLines($p2, [string[]]@('type,value,note', 'port,25/tcp,mail'))
 $r = Run @('-Out', $out, '-Protected', $p2)
 T-Has $r.Text 'WARNING: no admin or scoring addresses' 'a plan without admin addresses is warned about'
+
+T-Start 'the look and the questions'
+Plant
+$o9 = Join-Path $tmp 'out9'
+$r = Run @('-Out', $o9, '-Protected', $prot, '-Batch')
+T-Has $r.Text 'WN-25 Windows firewall | host' 'the title line'
+T-Has $r.Text '==========[ 1/4  questions (Enter = the default in capitals) ]==========' 'numbered headers'
+T-Has $r.Text '[?] Which box is this? (its scored ports stay open) [d/b/e/f/s/O] o (default): other' 'the box question'
+T-Has $r.Text '[?] Allow ping? (scoring often pings) [Y/n] y (default)' 'ping: default yes'
+T-Has $r.Text '[?] Also turn off every other inbound allow rule (strict)? [y/N] n (default)' 'strict: default no'
+T-Has $r.Text '==========[ 2/4  plan ]==========' 'the plan header'
+T-Has $r.Text '[+] allow 25/tcp' 'the plan lists what is allowed'
+T-Has $r.Text '==========[ 3/4  dry run: nothing is changed ]==========' '-Batch without -Apply: a dry run'
+T-True ($r.Dir -match 'firewall-\d+$') 'a numbered firewall-N folder'
+# Typed: web box, an admin address, a port, no ping, not strict, then load it.
+Plant
+$env:BT_TEST_ANSWERS = 'b;10.9.9.9;8081/tcp;n;n;y'
+$r = Run @('-Out', $o9, '-Protected', $prot)
+Remove-Item Env:\BT_TEST_ANSWERS
+T-Has $r.Text '[+] allow 80/tcp' 'web box: 80 kept open'
+T-Has $r.Text 'scored on a web box' 'and says why'
+T-Has $r.Text '[+] allow 8081/tcp' 'the typed port is allowed'
+T-Has $r.Text 'everything from 10.0.0.5,10.9.9.9' 'the typed address may reach everything (with the protected list host)'
+T-HasNot $r.Text '[+] allow ping' 'ping: no'
+T-Has $r.Text '[?] Load this firewall now?' 'then: load it?'
+T-Has $r.Text '==========[ 3/4  loading ]==========' 'y: it is loaded'
+T-Eq (Enabled 'BT allow 80/tcp') 'True' 'the rule is really added'
+T-Has $r.Text 'keep-firewall.ps1' 'and the rollback timer is set: keep it from a new connection'
+$k = @(Get-ChildItem -LiteralPath $o9 | Where-Object { $_.PSIsContainer -and $_.Name -match '^firewall-\d+$' } | Sort-Object { [int]($_.Name -replace '\D', '') })[-1].FullName
+$o = RunFile (Join-Path $k 'keep-firewall.ps1')
+T-Has $o 'Kept' 'keep-firewall.ps1 keeps it'
+$r = Run @('-Out', $o9, '-Undo', 'latest', '-Apply', '-Protected', $prot)
+T-Has $r.Text ('Undo of: ' + $k) '-Undo latest finds the newest numbered run'
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ("  {0} passed, {1} failed" -f $script:pass, $script:fail)
