@@ -1,6 +1,6 @@
 # Build status
 
-49 of 53 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+50 of 53 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -13,7 +13,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | wave1 | 3 | 3 |
 | Hardening: easy | 3 | 3 |
 | Hardening: medium | 2 | 2 |
-| Hardening: hard | 4 | 6 |
+| Hardening: hard | 5 | 6 |
 | Management | 4 | 4 |
 | Alerts | 4 | 5 |
 | Kit | 3 | 3 |
@@ -95,7 +95,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | WN-25 | Windows firewall | access | built | `roles/windows-ad/WN-25-firewall.ps1` |
 | LX-25 | Linux firewall | access | built | `roles/linux/LX-25-firewall.sh` |
 | WN-27 | Windows remote access lockdown | access | planned |  |
-| WN-23 | Account lockdown (Windows / AD) | access | planned |  |
+| WN-23 | Account lockdown (Windows / AD) | access | built | `roles/windows-ad/WN-23-ad-lockdown.ps1` |
 | NW-21 | Network device hardening | access | built | `roles/network/NW-21-device-hardening.sh` |
 | NW-20 | Firewall ruleset | service | built | `roles/network/NW-20-firewall-ruleset.sh` |
 
