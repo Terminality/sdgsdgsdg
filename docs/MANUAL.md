@@ -64,6 +64,7 @@ Contents:
 54. Gitea hardening, `roles/applications/SV-45-gitea-hardening.sh` (SV-45)
 55. File share hardening (Samba and NFS), `roles/applications/SV-46-fileshare-hardening.sh` (SV-46)
 56. Account lockdown (Windows / AD), `roles/windows-ad/WN-23-ad-lockdown.ps1` (WN-23)
+57. Windows persistence sweep, `roles/windows-ad/WN-42-persistence-sweep.ps1` (WN-42)
 
 ---
 
@@ -3786,3 +3787,47 @@ Never touched: the account running it, the built-in Administrator, krbtgt and ac
 - `-Admins` names that are not accounts stop the script before anything changes (a typo would remove the admin you meant to keep).
 - In `<out>\ad-lockdown-N\`: `output.txt`, `findings.txt` (level, kind, account, what was found, what was done), `summary.txt`, `run.txt`, `undo.txt`, `revert.ps1`.
 - Not yet run against a real domain: try it on a VM first.
+
+## 57. Windows persistence sweep, `roles/windows-ad/WN-42-persistence-sweep.ps1` (WN-42)
+
+Where a red team leaves a way back in on Windows, and what to do with each. The Windows twin of LX-42. Run it on Borgar and Vattar after the first 15 minutes, and again whenever you think red team was on the box.
+
+### How to run it
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-42-persistence-sweep.ps1                     # look + dry run
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-42-persistence-sweep.ps1 -Apply              # asks about each
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-42-persistence-sweep.ps1 -Apply -Batch -Areas tasks,runkeys,wmi
+```
+
+### Where it looks
+
+| Area | What is HIGH (offered for removal, default yes) | Fix |
+| --- | --- | --- |
+| tasks | a command that downloads and runs, hidden PowerShell, or runs from a temp or user folder | the task is disabled (not deleted) |
+| runkeys | the same, in Run / RunOnce (machine, 32-bit, every logged-on user) | the value is removed (its old value is in the undo) |
+| startup | a script in a startup folder is MED; a file from a temp folder or with download-and-run code is HIGH | quarantined |
+| winlogon | Userinit or Shell changed from Windows' own | set back |
+| services | a service from a temp or user folder, or with download-and-run code | start mode Disabled, stopped |
+| wmi | every WMI event subscription (a favourite fileless backdoor) | the binding is removed; filter and consumer stay, so the undo can bind them again |
+| ifeo | a "debugger" on a program (it runs instead). Sticky keys and the other logon-screen tools are WN-43's | the value is removed |
+| admins | members of Administrators and Remote Desktop Users (MED; not on a domain controller: WN-23) | removed from the group |
+
+MED findings (a shell or script, an unknown admin) are offered with default **keep**; LOW ones (a non-Windows task, a normal Run value) are only listed in `findings.txt`. Each line shows what it runs.
+
+### The questions
+
+| Question | Answers | Parameter |
+| --- | --- | --- |
+| Which areas to look in? | `[A]`ll / `[q]`uick (tasks, Run keys, services, WMI) | `-Areas` |
+| Each finding | `[r]`emove, `[k]`eep, `[a]`ll the rest: their default | `-Exclude` names one never offered |
+| Apply these N change(s)? | `[y]` / `[N]` | `-Apply` |
+
+`-Batch` takes every default: a dry run unless `-Apply` is given.
+
+### Safety and output
+
+- Dry run unless `-Apply`; the revert timer runs with `-Apply` (120 s, `-Timer`): everything is undone unless you answer "keep". `revert.ps1 -Force` in the run folder undoes the run later.
+- Never touched: anything on the protected list (service, account, path, process), the account running it, the built-in Administrator.
+- In `<out>\persistence-N\`: `output.txt`, `findings.txt` (level, area, name, what it runs, why, what was done), `summary.txt`, `run.txt`, `undo.txt`, `revert.ps1`.
+- Not yet run on real Windows: try it on a VM first.
