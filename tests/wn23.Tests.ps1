@@ -143,7 +143,7 @@ T-Eq (Uac 'delegated') 524800 'k: kept'
 T-Eq (Uac 'nopass') 512 'f: fixed'
 T-Eq (Uac 'roastme') 512 'a: the rest take their default (fix)'
 T-True (InGroup 'Domain Admins' 'sysupd') 'a: an admin without -Admins takes its default (keep)'
-T-Has ([IO.File]::ReadAllText($sch)) '/SC ONCE' 'the revert timer is set'
+T-Has ([IO.File]::ReadAllText($sch)) 'once at ' 'the revert timer is set'
 T-Has $r.Text 'Changes kept' 'keep: y'
 Remove-Item Env:\BT_TEST_SCHTASKS
 

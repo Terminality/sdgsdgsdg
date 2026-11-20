@@ -111,6 +111,15 @@ T-Eq (State 'tasks' '\Updater') 'on' 'revert.ps1 puts the task back'
 T-Eq (State 'wmi' 'wmi-1') 'on' 'and the WMI binding'
 Remove-Item Env:\BT_TEST_SCHTASKS
 
+T-Start 'Server Core: a different Shell is only reported'
+Plant
+W 'winlogon' @('"Userinit","Userinit","C:\Windows\system32\userinit.exe,","","on"', '"Shell","Shell","cmd.exe","","on"')
+[IO.File]::WriteAllText((Join-Path $fake 'no-explorer'), '')
+$r = Run @('-Out', $out, '-Protected', $prot, '-Batch', '-Areas', 'winlogon')
+T-Has $r.Text 'there is no explorer.exe (Server Core?): check it by hand' 'reported'
+T-HasNot $r.Text 'HIGH winlogon: Shell' 'not offered for a fix'
+Remove-Item -LiteralPath (Join-Path $fake 'no-explorer') -Force
+
 T-Start '-Areas, -Exclude and the questions'
 Plant
 $r = Run @('-Out', $out, '-Protected', $prot, '-Batch', '-Areas', 'wmi,ifeo')

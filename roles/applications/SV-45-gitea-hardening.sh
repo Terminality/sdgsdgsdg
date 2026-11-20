@@ -304,8 +304,9 @@ do_fix() {   # do_fix FIX ARG
             # Gitea reads it as RUN_USER: give the file to that group before closing it to others.
             grep -q "^$RUNU:" "$(P /etc/group)" 2>/dev/null && chgrp "$RUNU" "$CF" 2>/dev/null
             chmod 640 "$CF" ;;
-        # shellcheck disable=SC2086  # ARG is "SECTION KEY VALUE"
-        *) set -- $2; ini_set "$1" "$2" "$3" ;;
+        *) # ARG is "SECTION KEY VALUE": split on purpose.
+           # shellcheck disable=SC2086
+           set -- $2; ini_set "$1" "$2" "$3" ;;
     esac
 }
 login_url() { [ -n "$URL" ] && { printf '%s' "$URL"; return; }; printf '%s://127.0.0.1:%s/user/login' "$PROTO" "$HTTP_PORT"; }

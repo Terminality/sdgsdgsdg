@@ -653,8 +653,7 @@ function ConvertTo-CcTableFile {
 #   by itself unless the operator answers "keep" (Complete-CcTimer), having
 #   logged in again from a NEW session.  The revert is a one-time scheduled
 #   task running as SYSTEM, so it still happens if this RDP or PowerShell
-#   session is cut off - which is the point.  Scheduled tasks start on the
-#   minute, so the time is rounded up to the next minute.
+#   session is cut off - which is the point.
 #   Files in the run folder: undo.txt (this run's undo lines), revert.ps1
 #   (runs them, newest first), revert.log, KEEP (made by "keep", or by hand
 #   from another session: New-Item <run folder>\KEEP).
@@ -689,11 +688,25 @@ if (Get-Command schtasks.exe -ErrorAction SilentlyContinue) { & schtasks.exe /De
     [IO.File]::WriteAllText($revert, $body.Replace('TASKID', $c.Id).Replace('TASKNAME', $task))
     if (-not (Test-Path -LiteralPath $c.RunUndo)) { [IO.File]::WriteAllText($c.RunUndo, '') }
     $at = [DateTime]::Now.AddSeconds($Seconds)
-    if ($at.Second -gt 0) { $at = $at.AddSeconds(60 - $at.Second) }
-    $tr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $revert + '"'
-    $args2 = @('/Create', '/TN', $task, '/SC', 'ONCE', '/ST', $at.ToString('HH:mm'), '/RU', 'SYSTEM', '/RL', 'HIGHEST', '/F', '/TR', $tr)
+    # The task is made from an XML file: a /TR command with quotes inside
+    # quotes is mangled by Windows PowerShell 5.1 on its way to schtasks.exe,
+    # and the XML trigger keeps the exact time (no rounding to the minute).
+    $arg = '-NoProfile -ExecutionPolicy Bypass -File "' + $revert + '"'
+    $xml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>Blue team revert timer: undo $($c.Id) $($c.Ts) unless it was kept</Description></RegistrationInfo>
+  <Triggers><TimeTrigger><StartBoundary>$($at.ToString('yyyy-MM-ddTHH:mm:ss'))</StartBoundary><Enabled>true</Enabled></TimeTrigger></Triggers>
+  <Principals><Principal id="Author"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
+  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><ExecutionTimeLimit>PT30M</ExecutionTimeLimit><Enabled>true</Enabled></Settings>
+  <Actions Context="Author"><Exec><Command>powershell.exe</Command><Arguments>$([Security.SecurityElement]::Escape($arg))</Arguments></Exec></Actions>
+</Task>
+"@
+    $xf = Join-Path $c.RunDir 'revert-task.xml'
+    [IO.File]::WriteAllText($xf, $xml, [Text.Encoding]::Unicode)
+    $args2 = @('/Create', '/TN', $task, '/XML', $xf, '/F')
     if ($env:BT_TEST_SCHTASKS) {
-        [IO.File]::AppendAllText($env:BT_TEST_SCHTASKS, ('schtasks ' + ($args2 -join ' ') + "`r`n"))
+        [IO.File]::AppendAllText($env:BT_TEST_SCHTASKS, ('schtasks ' + ($args2 -join ' ') + '  # once at ' + $at.ToString('HH:mm:ss') + ', as SYSTEM' + "`r`n"))
     } else {
         $o = Invoke-CcProgram -FilePath schtasks.exe -Arguments $args2
         if ($LASTEXITCODE -ne 0) {
@@ -701,9 +714,8 @@ if (Get-Command schtasks.exe -ErrorAction SilentlyContinue) { & schtasks.exe /De
             return
         }
     }
-    if ($at.Date -ne [DateTime]::Now.Date) { Write-CcShow -Color Yellow -Text ('[*] The revert time is after midnight: check it with  schtasks /Query /TN ' + $task) }
     $c.TimerTask = $task; $c.TimerAt = $at
-    Write-CcShow -Color Yellow -Text ('[*] Revert timer: everything is undone at {0} unless you keep it at the end.' -f $at.ToString('HH:mm'))
+    Write-CcShow -Color Yellow -Text ('[*] Revert timer: everything is undone at {0} unless you keep it at the end.' -f $at.ToString('HH:mm:ss'))
 }
 # Stop-CcTimer   -> remove the scheduled revert (the changes stay).
 function Stop-CcTimer {
@@ -730,11 +742,11 @@ function Complete-CcTimer {
         return $true
     }
     if (-not (Test-CcCanAsk)) {
-        Write-CcShow -Color Yellow -Text ('[*] No console to ask. The changes are undone at {0} unless you run, from any session:  New-Item "{1}"' -f $c.TimerAt.ToString('HH:mm'), $keep)
+        Write-CcShow -Color Yellow -Text ('[*] No console to ask. The changes are undone at {0} unless you run, from any session:  New-Item "{1}"' -f $c.TimerAt.ToString('HH:mm:ss'), $keep)
         return $true
     }
     Write-CcShow -Color Yellow -Text '[*] Check you can still get in: open a NEW RDP or PowerShell session and log in now.'
-    if (Read-CcAsk -Question ('Keep these changes? (undone by themselves at ' + $c.TimerAt.ToString('HH:mm') + ')') -Default N -Yes 'yes, keep them (I logged in from a new session)' -No 'no, put everything back now') {
+    if (Read-CcAsk -Question ('Keep these changes? (undone by themselves at ' + $c.TimerAt.ToString('HH:mm:ss') + ')') -Default N -Yes 'yes, keep them (I logged in from a new session)' -No 'no, put everything back now') {
         if (Test-Path -LiteralPath $rev) { Write-CcShow -Color Red -Text '[!] Too late: the timer ran out and the changes were undone'; return $false }
         [IO.File]::WriteAllText($keep, ''); Stop-CcTimer
         Write-CcShow -Color Green -Text ('[+] Changes kept. Revert later: powershell -NoProfile -ExecutionPolicy Bypass -File "' + $revert + '" -Force')
@@ -2122,7 +2134,13 @@ function F-winlogon {
         else { Fine winlogon "$k\Userinit" $ui.Data }
     }
     $sh = R-Get $k 'Shell'
-    if ($null -ne $sh -and (Lc $sh.Data).Trim() -ne 'explorer.exe' -and $sh.Data.Trim() -ne '') { RegSetRaw winlogon $k 'Shell' 'String' $sh.Data 'explorer.exe' }
+    # Server Core has no explorer.exe: setting Shell to it would leave every
+    # logon with no shell at all.  There it is only reported.
+    $hasExplorer = $true
+    if ($Fake) { $hasExplorer = -not (Test-Path -LiteralPath (Fake-Path 'no-explorer')) }
+    elseif ($env:SystemRoot) { $hasExplorer = Test-Path -LiteralPath (Join-Path $env:SystemRoot 'explorer.exe') }
+    if ($null -ne $sh -and (Lc $sh.Data).Trim() -ne 'explorer.exe' -and $sh.Data.Trim() -ne '' -and -not $hasExplorer) { Res winlogon "$k\Shell" $sh.Data $sh.Data 'left: no explorer.exe here (Server Core?) - check the Shell value by hand' }
+    elseif ($null -ne $sh -and (Lc $sh.Data).Trim() -ne 'explorer.exe' -and $sh.Data.Trim() -ne '') { RegSetRaw winlogon $k 'Shell' 'String' $sh.Data 'explorer.exe' }
     elseif ($null -ne $sh) { Fine winlogon "$k\Shell" $sh.Data }
     # A stored logon password is readable by any admin.  Its value is never
     # shown or logged; the key backup (admin-only) keeps it for -Undo.

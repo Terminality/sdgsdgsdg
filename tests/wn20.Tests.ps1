@@ -190,6 +190,20 @@ Remove-Item Env:\BT_TEST_ANSWERS
 T-Eq (Act $r.Dir 'alice') 'would change' 'apply: no is a dry run'
 T-True ($null -eq (SetPw 'alice')) 'nothing changed'
 
+T-Start 'many accounts: one question first'
+Reset
+$acf = Join-Path $fake 'accounts.csv'; $acSave = [IO.File]::ReadAllText($acf)
+Add-Content -LiteralPath $acf -Value @('extra1,local,S-1-5-21-1-2-3-1101,False,', 'extra2,local,S-1-5-21-1-2-3-1102,False,', 'extra3,local,S-1-5-21-1-2-3-1103,False,')
+$env:BT_TEST_ANSWERS = 'n'
+$r = Run @('-Out', $o7, '-Protected', $prot)
+Remove-Item Env:\BT_TEST_ANSWERS
+$cnt = @(Rows $r.Dir | Where-Object { $_.action -eq 'would change' }).Count
+if ($cnt -gt 5) {
+    T-Has $r.Text ('[?] ' + $cnt + ' accounts get a new password. Go through them one by one?') 'more than 5: asked once first'
+    T-HasNot $r.Text 'new password?' 'Enter = random for all: no question per account'
+} else { T-True $false ('only ' + $cnt + ' accounts: the test needs more than 5') }
+[IO.File]::WriteAllText($acf, $acSave)
+
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ("  {0} passed, {1} failed" -f $script:pass, $script:fail)
 if ($script:fail -gt 0) { exit 1 }
