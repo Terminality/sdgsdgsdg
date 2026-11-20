@@ -291,6 +291,10 @@ t_eq "$(printf '%s\n' "$r" | sed -n 2p)" "fw1|10.0.0.1|network|edge|ssh||admin||
 t_eq "$(printf '%s\n' "$r" | grep -c .)" 2 "comments, a header line and blank lines skipped"
 printf 'host,ip,os,role,connect,port,user,scored_services,notes,vendor\r\nr1,10.0.0.1,network,core,ssh,22,admin,,"Cisco, IOS",cisco-ios\r\n' >"$T_TMP/hosts.csv"
 t_eq "$(run "$S/hostlist.sh" "$T_TMP/hosts.csv")" "r1|10.0.0.1|network|core|ssh|22|admin||Cisco, IOS|cisco-ios" "an older CSV host list is still read"
+r=$(run "$S/hostlist.sh" "$T_ROOT/config/hosts.flokid.txt")
+t_eq "$(printf '%s\n' "$r" | grep -c .)" 10 "the Flokid host list: all 10 boxes from the team packet"
+t_has "$r" "vigra|192.168.220.2|openwrt|router|ssh|22|root|" "the router line"
+t_has "$r" "djupi|192.168.220.222|linux|pos|" "Djupi at .222"
 
 t_start "questions and the revert timer"
 mk ask 'while [ $# -gt 0 ]; do cc_common_flag "$@" && { shift "$CC_SHIFT"; continue; }; shift; done
