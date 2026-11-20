@@ -338,6 +338,6 @@ t_has "$(bx '' e)" "BOX=ecomm" "but a web server does not replace the ecomm defa
 t_has "$(bx '' w)" "BOX=webmail" "or the webmail default"
 t_has "$(bx gitea o)" "BOX=gitea" "every box kind is valid"
 t_has "$(bx nope o)" "invalid nope" "an unknown one is not"
-t_has "$(BOX=fileshare bx '' o)" "BOX=fileshare" "a given --box is kept, no question"
+t_has "$(export BOX=fileshare; bx '' o)" "BOX=fileshare" "a given --box is kept, no question"
 
 t_done
