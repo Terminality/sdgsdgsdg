@@ -133,12 +133,12 @@ if ($Help) {
 }
 if ($List) { foreach ($l in $ItemHelp) { Write-Host $l }; exit 0 }
 
-# >>> BT-LIB  (lib/lib.ps1 0.5.0 pasted in by tools/build.sh - edit lib/lib.ps1, not this copy)
+# >>> BT-LIB  (lib/lib.ps1 0.6.0 pasted in by tools/build.sh - edit lib/lib.ps1, not this copy)
 # =============================================================================
 # ID:       LB-02
 # NAME:     PowerShell library (lib.ps1)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.5.0
+# VERSION:  0.6.0
 #
 # PURPOSE
 #   The jobs every Windows script in this kit repeats, written once.  It is the
@@ -212,7 +212,7 @@ if ($List) { foreach ($l in $ItemHelp) { Write-Host $l }; exit 0 }
 #     session, because there is no file to hash.
 # =============================================================================
 
-$script:CcLibVersion = '0.5.0'
+$script:CcLibVersion = '0.6.0'
 
 # All library state lives in one hashtable so it is easy to inspect while
 # debugging: type  $Cc  at a prompt after dot-sourcing a script.
@@ -940,10 +940,11 @@ function Show-CcFlagReport {
 # -----------------------------------------------------------------------------
 
 # Test-CcSelf
-#   Rule 15: the kit's hash is checked before each run.  If a MANIFEST.sha256
-#   (written by tools/build.sh) sits in the script's folder or one of the two
-#   folders above it, or $env:BT_MANIFEST points to one, the running script's
-#   hash must match its line there.  A mismatch stops the script with exit 3:
+#   Rule 15: the kit's hash is checked before each run.  tools/build.sh
+#   writes SCRIPT.sha256 next to each script; when it is there (or
+#   $env:BT_MANIFEST names a hash list), the running script's hash must match
+#   it.  An older kit's MANIFEST.sha256 in the script's folder or one of the
+#   two folders above is still read.  A mismatch stops the script with exit 3:
 #   the file on this host is not the one you built.
 #   $env:BT_SKIP_VERIFY = '1' turns the check off (for development).
 function Test-CcSelf {
@@ -951,6 +952,7 @@ function Test-CcSelf {
     if ($env:BT_SKIP_VERIFY -eq '1') { Write-CcLog -Level DEBUG -Message 'verify: skipped (BT_SKIP_VERIFY=1)'; return }
     if (-not $c.ScriptPath) { Write-CcLog -Level DEBUG -Message 'verify: script was not started from a file, nothing to hash'; return }
     $man = $env:BT_MANIFEST
+    if (-not $man -and (Test-Path -LiteralPath ($c.ScriptPath + '.sha256'))) { $man = $c.ScriptPath + '.sha256' }
     if (-not $man) {
         $d = $c.Kit
         for ($i = 0; $i -lt 3 -and $d; $i++) {

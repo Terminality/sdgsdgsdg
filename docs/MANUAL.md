@@ -256,7 +256,7 @@ cc_finish
 | `cc_flag_report [MAX]` | Print HIGH then MED flags, at most MAX lines (default 30), then counts. LOW flags are counted, never listed |
 | `CC_AWK_CSV` | An awk `csvsplit()` function for reading the kit's CSV files correctly |
 | `cc_shquote STR` / `cc_abspath PATH` | Quote for a shell; make a path absolute |
-| `cc_verify_self` | Check the running script against `MANIFEST.sha256` (called by `cc_init`) |
+| `cc_verify_self` | Check the running script against `SCRIPT.sha256` next to it (or an older `MANIFEST.sha256`; called by `cc_init`) |
 | `cc_finish [CODE]` | Print the summary and exit |
 
 ### What to watch for
@@ -268,7 +268,7 @@ cc_finish
 - **`cc_genpass` prints the password and nothing else.** Capture it with `p=$(cc_genpass)` and send it only to the operator's credential file.
 - **No `local`.** A new function's temporary variables must have their own prefix or they will overwrite another function's.
 - **No `set -e`.** A failed step is counted and the script continues. Check the return value of `cc_run` if a later step depends on it.
-- **The kit hash check does nothing yet.** It activates when a `MANIFEST.sha256` exists beside the scripts, which the build step (LB-03) will create.
+- **The kit hash check** works when the script's `.sha256` file (written by `tools/build.sh`) is next to it; a copy without it is not checked.
 
 ### Problems and fixes
 
@@ -350,7 +350,7 @@ Library state is in one hashtable, `$Cc`: `$Cc.Apply`, `$Cc.Out`, `$Cc.Log`, `$C
 | `Add-CcFlag -Severity -Section -Item -Detail` | Record something unusual (`HIGH`, `MED`, `LOW`) |
 | `Show-CcFlagReport [-Max]` / `Get-CcFlagReport` | Print, or return, the HIGH then MED flags and the counts |
 | `ConvertTo-CcQuoted` / `Resolve-CcPath` | Quote for PowerShell; make a path absolute |
-| `Test-CcSelf` | Check the running script against `MANIFEST.sha256` (called by `Initialize-Cc`) |
+| `Test-CcSelf` | Check the running script against `SCRIPT.sha256` next to it (or an older `MANIFEST.sha256`; called by `Initialize-Cc`) |
 | `Complete-Cc [-ExitCode]` | Print the summary and exit |
 
 ### What to watch for
@@ -3402,13 +3402,36 @@ Run NW-01 before (backup) and after (the changes become the saved copy).
 
 A non-default SNMP community is reported, but its value is never shown or written. The management limit always keeps this box (`--me`, else found with `ip route get`). Linux devices: use LX-22 and LX-25. pfSense / OPNsense: the web GUI places are listed.
 
+**OpenWRT** (log in as root). Every fix is a `uci` setting, committed, and only that service reloaded; every one has an undo line:
+
+| Found | Fix |
+| --- | --- |
+| Web admin (LuCI) over plain HTTP | `uhttpd.main.redirect_https=1` |
+| The web admin on every address | on the router's lan address (a management change: you confirm a login from another team machine) |
+| SSH on the outside (wan) | shown, **left by default**: the team logs in from outside. `[f]ix` puts SSH on `lan` only. To limit who may connect from outside, use NW-20 |
+| UPnP on | off, and `miniupnpd` disabled |
+| Telnet started at boot | stopped and disabled |
+| No SSH idle timeout | `IdleTimeout` = `--timeout` minutes |
+| Logs not sent to `--log-host` / time not from `--ntp` | `log_ip` / added to `system.ntp.server` |
+| No login banner | `/etc/bt-banner` and dropbear's `BannerFile` |
+| Default SNMP community | reported only |
+
 ### The questions
 
 | Question | Answers | Flag |
 | --- | --- | --- |
+| Which devices: the host list `config/hosts.txt`, or each typed (OpenWRT first) | | `--hosts`, `--device` |
+| Device password (hidden) | | `BT_NET_PASS`, `--ask-password` |
+| Your team's addresses? (management is limited to them and this box) | addresses or networks, Enter = do not limit | `--team` |
+| Send the devices' logs to a log server? / Take the time from a time server? | an address, Enter = no | `--log-host`, `--ntp` |
 | Each finding | `[f]ix` (default) / `[l]eave` / `[a]ll the rest default` | `--batch` |
 | Do these? | `[y]` / `[n]` | `--apply` |
-| After a management or telnet change: log in from another team machine, keep? | `[y]` within `--timer` seconds (60), else put back | `--batch` keeps |
+| After a management or telnet change: log in from another team machine, keep? | `[y]` within `--timer` seconds (60), else put back | none: a person answers |
+
+**It never locks the team out.** A change that can stop someone logging in (a management limit, telnet or HTTP management off, SSH or the web admin limited) is:
+- never the default for a limit on who may log in: the default is `[l]eave`, and the question says who would be locked out (`--fix-access` makes fix the default; the confirmation below still happens)
+- never kept without a person confirming a login from ANOTHER machine within `--timer` seconds
+- with `--batch` or no terminal: not made at all, only shown ("left: ... run without --batch"). The other fixes (logging, time, banner, SNMP, idle timeout) still go in.
 
 ### How a device is changed
 

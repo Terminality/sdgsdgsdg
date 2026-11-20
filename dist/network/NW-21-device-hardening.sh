@@ -4,7 +4,7 @@
 # NAME:     Network device hardening
 # ROLE:     Network  (wave 2, after NW-01 backup and NW-10 passwords)
 # KIND:     changes - dry run unless --apply
-# VERSION:  1.0.0
+# VERSION:  1.1.0
 #
 # PURPOSE
 #   Locks down how the firewalls, routers and switches themselves are
@@ -29,15 +29,35 @@
 #        it fails -> everything is put back through the open session
 #   Every change has an undo script (needs BT_NET_PASS when run).
 #
-#   Brands: cisco-ios, cisco-asa, paloalto, fortigate, vyos, mikrotik.
+#   Brands: cisco-ios, cisco-asa, paloalto, fortigate, vyos, mikrotik,
+#   openwrt (log in as root; every change is a uci setting, committed and
+#   only that service reloaded):
+#     web admin (LuCI) over plain HTTP     -> redirected to HTTPS
+#     web admin on every address           -> on the router's lan address
+#     SSH on the outside (wan)             -> shown; left by default (the team
+#                                             logs in from outside; NW-20 can
+#                                             limit who may)
+#     UPnP on                              -> off
+#     telnet started at boot               -> stopped and disabled
+#     no SSH idle timeout                  -> --timeout minutes
+#     no log server / time server / banner -> --log-host / --ntp / --banner
 #   Linux devices: use LX-22 (SSH) and LX-25 (firewall).  pfSense /
 #   OPNsense: listed with where to do it in the web GUI.
 #
 #   QUESTIONS (Enter takes the default in capitals; a flag answers each):
+#     which devices (the host list, or typed)  --hosts FILE / --device SPEC
+#     the device password (hidden)              $BT_NET_PASS / --ask-password
+#     your team's addresses                     --team CIDR,...
+#     a log server? a time server?              --log-host IP / --ntp IP
 #     each finding               [f]ix (default) / [l]eave / [a]ll the rest default
 #     do these?                  --apply
 #     keep the changes? (after a management change, from another machine)
-#                                Y within --timer seconds, else put back; --batch keeps
+#                                Y within --timer seconds, else put back
+#   Never locks the team out: a change that can stop someone logging in
+#   (management limits, telnet / HTTP off, SSH or the web admin limited) is
+#   never the default answer for a management limit, and is never made
+#   without a person confirming a login from another machine - with --batch
+#   or no terminal it is shown and left.
 #
 # USAGE
 #   BT_NET_PASS='pw' sh NW-21-device-hardening.sh --hosts hosts.txt --team 10.0.0.0/24
@@ -57,6 +77,9 @@
 #   --ntp IP           take time from here
 #   --banner TEXT      login banner (default "Authorized access only.
 #                      Activity is monitored.")
+#   --fix-access       make "fix" the default answer for limiting who may log in
+#                      to a device (default: leave); a person still confirms a
+#                      login from another machine before it is kept
 #   --timeout MIN      idle timeout for management logins (default 10)
 #   --wait N           seconds before the new-login test (default 5)
 #   --commit-wait N    Palo Alto: seconds for a commit (default 120)
@@ -93,12 +116,12 @@
 #   - Palo Alto syslog and SNMP need profiles in the web GUI: reported only.
 # =============================================================================
 
-# >>> BT-LIB  (lib/lib.sh 0.5.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
+# >>> BT-LIB  (lib/lib.sh 0.6.0 pasted in by tools/build.sh - edit lib/lib.sh, not this copy)
 # =============================================================================
 # ID:       LB-01
 # NAME:     Shell library (lib.sh)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.5.0
+# VERSION:  0.6.0
 #
 # PURPOSE
 #   The jobs every Unix script in this kit repeats, written once:
@@ -169,7 +192,7 @@
 # The variables below are read by the scripts that source this file.  The
 # linter cannot see that, so its 'unused variable' warning is turned off.
 # shellcheck disable=SC2034
-CC_LIB_VERSION="0.5.0"
+CC_LIB_VERSION="0.6.0"
 
 # State.  ':=' keeps a value the caller already exported (for example CC_DEBUG=1
 # in the environment) and only fills in a default when the variable is empty.
@@ -1554,22 +1577,24 @@ cc_net_ask_password() {
 # -----------------------------------------------------------------------------
 
 # cc_verify_self
-#   Rule 15: the kit's hash is checked before each run.  If a MANIFEST.sha256
-#   (written by tools/build.sh) sits in the script's folder or one of the two
-#   folders above it, or BT_MANIFEST points to one, the running script's
-#   hash must match its line there.  A mismatch stops the script: the file on
+#   Rule 15: the kit's hash is checked before each run.  tools/build.sh
+#   writes SCRIPT.sha256 next to each script; when it is there (or
+#   BT_MANIFEST names a hash list), the running script's hash must match it.
+#   An older kit's MANIFEST.sha256 in the script's folder or one of the two
+#   folders above is still read.  A mismatch stops the script: the file on
 #   this host is not the one you built, and a red team may have edited it.
 #   BT_SKIP_VERIFY=1 turns the check off (for development).
 cc_verify_self() {
     [ "${BT_SKIP_VERIFY:-0}" = 1 ] && { cc_debug "verify: skipped (BT_SKIP_VERIFY=1)"; return 0; }
     [ -f "$0" ] || { cc_debug "verify: script was not started from a file, nothing to hash"; return 0; }
     _cc_vs_man=${BT_MANIFEST:-}
+    [ -z "$_cc_vs_man" ] && [ -r "$0.sha256" ] && _cc_vs_man="$0.sha256"
     if [ -z "$_cc_vs_man" ]; then
         for _cc_vs_d in "$CC_KIT" "$CC_KIT/.." "$CC_KIT/../.."; do
             if [ -r "$_cc_vs_d/MANIFEST.sha256" ]; then _cc_vs_man="$_cc_vs_d/MANIFEST.sha256"; break; fi
         done
     fi
-    [ -n "$_cc_vs_man" ] && [ -r "$_cc_vs_man" ] || { cc_debug "verify: no MANIFEST.sha256 found (unbuilt copy), not checked"; return 0; }
+    [ -n "$_cc_vs_man" ] && [ -r "$_cc_vs_man" ] || { cc_debug "verify: no $(basename "$0").sha256 or MANIFEST.sha256 found (unbuilt copy), not checked"; return 0; }
     _cc_vs_name=$(basename "$0")
     _cc_vs_want=$(awk -v n="$_cc_vs_name" '{ f=$2; sub(/.*\//, "", f); if (f == n) { print $1; exit } }' "$_cc_vs_man")
     [ -n "$_cc_vs_want" ] || { cc_warn "verify: $_cc_vs_name is not listed in $_cc_vs_man"; return 0; }
@@ -1599,7 +1624,7 @@ cc_finish() {
 }
 # <<< BT-LIB
 
-VENDORS="cisco-ios cisco-asa paloalto fortigate vyos mikrotik linux pfsense opnsense"
+VENDORS="cisco-ios cisco-asa paloalto fortigate vyos mikrotik linux pfsense opnsense openwrt"
 
 usage() {
     cat <<'USAGE'
@@ -1615,6 +1640,7 @@ NW-21 Network device hardening - management access, telnet/HTTP, SNMP, logs, tim
   --log-host IP      send device logs here (Splunk)
   --ntp IP           take time from here
   --banner TEXT      login banner text
+  --fix-access       fix limits on who may log in by default (still confirmed)
   --timeout MIN      idle timeout for management logins (default 10)
   --wait N           seconds before the new-login test (default 5)
   --commit-wait N    Palo Alto commit time (default 120)
@@ -1629,7 +1655,7 @@ USAGE
 
 NL='
 '
-HOSTS=""; DEVICES=""; DEFUSER="admin"; ASK=0; ENABLE=0; TEAM=""; ME=""; LOGHOST=""; NTP=""
+HOSTS=""; DEVICES=""; DEFUSER="admin"; USERSET=0; ASK=0; FIXACC=0; ENABLE=0; TEAM=""; ME=""; LOGHOST=""; NTP=""
 BANNER="Authorized access only. Activity is monitored."; TO=10; WAIT=5; CWAIT=120; TIMER=60; CONFIGS=""; LEGACY=0; COLOR=1
 num() { case "$2" in ''|*[!0-9]*) cc_die 2 "$1 needs a whole number" ;; esac; }
 ipv4() { printf '%s' "$2" | grep -q '^[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}$' || cc_die 2 "$1 needs an IPv4 address"; }
@@ -1639,7 +1665,8 @@ while [ $# -gt 0 ]; do
         --apply)        CC_APPLY=1; shift ;;
         --hosts)        [ $# -ge 2 ] || cc_die 2 "--hosts needs a file"; [ -r "$2" ] || cc_die 2 "--hosts: cannot read $2"; HOSTS=$2; shift 2 ;;
         --device)       [ $# -ge 2 ] || cc_die 2 "--device needs NAME,ADDRESS,VENDOR"; DEVICES="$DEVICES$2$NL"; shift 2 ;;
-        --user)         [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; shift 2 ;;
+        --user)         [ $# -ge 2 ] || cc_die 2 "--user needs a name"; DEFUSER=$2; USERSET=1; shift 2 ;;
+        --fix-access)   FIXACC=1; shift ;;
         --ask-password) ASK=1; shift ;;
         --enable-env)   ENABLE=1; shift ;;
         --team)         [ $# -ge 2 ] || cc_die 2 "--team needs addresses"; TEAM="$TEAM,$2"; shift 2 ;;
@@ -1658,7 +1685,6 @@ while [ $# -gt 0 ]; do
         *)              cc_die 2 "unknown option: $1 (try --help)" ;;
     esac
 done
-[ -n "$HOSTS$DEVICES" ] || cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
 TEAM=${TEAM#,}
 for _t in $(printf '%s' "$TEAM" | tr ',' ' '); do
     printf '%s' "$_t" | grep -q '^[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\(/[0-9]\{1,2\}\)\{0,1\}$' || cc_die 2 "--team: IPv4 addresses or CIDRs (10.0.0.0/24)"
@@ -1671,6 +1697,10 @@ cc_init "NW-21" "Network device hardening" changes
 # shellcheck disable=SC2034  # read by cc_color_init
 [ "$COLOR" = 1 ] || CC_NOCOLOR=1
 cc_color_init
+# No device named, no host list and nobody to ask: stop before a run folder.
+if [ -z "$HOSTS$DEVICES" ] && ! _cc_can_ask && ! cc_net_hostfile >/dev/null; then
+    cc_die 2 "give --hosts FILE or --device NAME,ADDRESS,VENDOR (try --help)"
+fi
 cc_use_numbered_dir device-hardening
 rmdir "$CC_RUN_DIR/raw" 2>/dev/null
 OUTF="$CC_RUN_DIR/output.txt"
@@ -1688,16 +1718,40 @@ mkdir -p "$CONFIGS" 2>/dev/null
 SSH=${BT_SSH:-$(cc_which ssh)} || cc_die 3 "ssh not found"
 SSHPASS_BIN=${BT_SSHPASS:-$(cc_which sshpass)} || cc_die 3 "sshpass not found (apt install sshpass): device logins use the password"
 cc_have mkfifo || cc_die 3 "mkfifo not found"
+cc_show "$C_CYN" "NW-21 Network device hardening | from $CC_HOST | results in $CC_RUN_DIR"
+cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it   ${C_GRN}[ok]${C_OFF} fine   ${C_YEL}[~] would change${C_OFF}   ${C_GRN}[+] changed${C_OFF}   ${C_RED}[x] failed${C_OFF}"
+header "1/4  devices"
+# The questions a flag did not answer.
+if [ -z "$HOSTS$DEVICES" ]; then
+    cc_net_ask_devices "$DEFUSER" "$USERSET" || cc_die 2 "no devices given (or use --hosts FILE / --device NAME,ADDRESS,VENDOR)"
+    HOSTS=$CC_NET_HOSTS; DEVICES=$CC_NET_DEVICES
+fi
 if [ "$ASK" = 1 ]; then
     [ -r /dev/tty ] || cc_die 3 "--ask-password needs a terminal; set BT_NET_PASS"
     printf 'Device password: ' >/dev/tty; stty -echo </dev/tty 2>/dev/null
     read -r BT_NET_PASS </dev/tty; stty echo </dev/tty 2>/dev/null; printf '\n' >/dev/tty
+else
+    cc_net_ask_password
 fi
 [ -n "${BT_NET_PASS:-}" ] || cc_die 3 "the device password is needed: set BT_NET_PASS or use --ask-password"
 [ "$ENABLE" = 1 ] && [ -z "${BT_NET_ENABLE:-}" ] && cc_die 3 "--enable-env: set BT_NET_ENABLE"
-
-cc_show "$C_CYN" "NW-21 Network device hardening | from $CC_HOST | results in $CC_RUN_DIR"
-cc_show "" "Legend: ${C_RED}[!]${C_OFF} fix now   ${C_YEL}[*]${C_OFF} look at it   ${C_GRN}[ok]${C_OFF} fine   ${C_YEL}[~] would change${C_OFF}   ${C_GRN}[+] changed${C_OFF}   ${C_RED}[x] failed${C_OFF}"
+if _cc_can_ask; then
+    if [ -z "$TEAM" ]; then
+        cc_ask_text "Your team's addresses? (management is limited to them and this box; Enter = do not limit it)" "" "addresses or networks separated by commas, like 192.168.220.0/24"
+        TEAM=$CC_ANSWER
+        for _t in $(printf '%s' "$TEAM" | tr ',' ' '); do
+            printf '%s' "$_t" | grep -q '^[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\(/[0-9]\{1,2\}\)\{0,1\}$' || cc_die 2 "team: IPv4 addresses or CIDRs (10.0.0.0/24)"
+        done
+    fi
+    if [ -z "$LOGHOST" ]; then
+        cc_ask_text "Send the devices' logs to a log server? Its address" "" "an IPv4 address, like 192.168.220.30 (Enter = no)"
+        [ -n "$CC_ANSWER" ] && { ipv4 "the log server" "$CC_ANSWER"; LOGHOST=$CC_ANSWER; }
+    fi
+    if [ -z "$NTP" ]; then
+        cc_ask_text "Take the time from a time server? Its address" "" "an IPv4 address (Enter = no)"
+        [ -n "$CC_ANSWER" ] && { ipv4 "the time server" "$CC_ANSWER"; NTP=$CC_ANSWER; }
+    fi
+fi
 
 # ---- Devices (same rules as NW-01) ---------------------------------------------------
 vendor_of() {
@@ -1710,6 +1764,7 @@ vendor_of() {
         /opnsense/ { print "opnsense"; exit }
         /pfsense/ { print "pfsense"; exit }
         /mikrotik|routeros/ { print "mikrotik"; exit }
+        /openwrt|lede|luci/ { print "openwrt"; exit }
         /cisco/ { print "cisco-ios"; exit }'
 }
 : >"$W/devices"
@@ -1750,6 +1805,8 @@ read_cmds() {
         paloalto)  printf 'set cli pager off\nset cli config-output-format set\nconfigure\nshow deviceconfig\nexit\nexit\n' ;;
         fortigate) printf 'show system interface\nshow system admin\nshow system global\nshow log syslogd setting\nshow system ntp\nshow system snmp community\nexit\n' ;;
         vyos)      printf '/opt/vyatta/bin/vyatta-op-cmd-wrapper show configuration commands' ;;
+        # OpenWRT: the settings as "uci show" lines, in a shell session.
+        openwrt)   printf 'echo ===uci\nuci -q show dropbear\nuci -q show uhttpd\nuci -q show system\nuci -q show upnpd\nuci -q show snmpd\necho ===lan\nuci -q get network.lan.ipaddr\necho ===rc\nls /etc/rc.d\nexit\n' ;;
         mikrotik)  printf ':put "===svc"; /ip service print terse without-paging; :put "===snmp"; /snmp print; /snmp community print terse without-paging; :put "===log"; /system logging action print terse without-paging; :put "===ntp"; /system ntp client print; :put "===mac"; /tool mac-server print; :put "===macwb"; /tool mac-server mac-winbox print; :put "===note"; /system note print' ;;
     esac
 }
@@ -1960,9 +2017,55 @@ END {
 }
 function svcs(a, n,   s, i) { s = ""; for (i = 1; i <= n; i++) s = s " " a[i]; return s }  # awk, not shell: posix-ok
 '
+# OpenWRT ("uci show" lines: package.section.option='value' ['value' ...]).
+# Every fix commits its package and reloads only that service.
+OW_AWK='
+function q(s) { gsub(/\047/, "", s); return s }  # awk, not shell: posix-ok
+/^===/ { sec = substr($0, 4); next }
+sec == "uci" && index($0, "=") { k = substr($0, 1, index($0, "=") - 1); v = substr($0, index($0, "=") + 1); V[k] = v }
+sec == "lan" && NF { lan = $1; sub(/\/.*/, "", lan); gsub(/\047/, "", lan) }
+sec == "rc" && /telnet/ { tel = $1 }
+END {
+    db = "dropbear.@dropbear[0]"
+    hh = q(V["uhttpd.main.listen_http"]); hs = q(V["uhttpd.main.listen_https"]); rd = q(V["uhttpd.main.redirect_https"])
+    if (hh != "" && rd != "1" && rd != "on") { F("plain", "HIGH", "web admin (LuCI) over plain HTTP: the root password crosses the network in the clear", "f")
+        X("plain", "uci set uhttpd.main.redirect_https=1 && uci commit uhttpd && /etc/init.d/uhttpd reload"); U("plain", "uci set uhttpd.main.redirect_https=" (rd == "" ? "0" : rd) " && uci commit uhttpd && /etc/init.d/uhttpd reload") }
+    else O("web admin: HTTPS only (or off)")
+    if (tel != "") { F("telnet", "HIGH", "telnet starts at boot (/etc/rc.d/" tel ")", "f")
+        X("telnet", "/etc/init.d/telnet stop; /etc/init.d/telnet disable"); U("telnet", "/etc/init.d/telnet enable; /etc/init.d/telnet start") }
+    else O("no telnet at boot")
+    ifc = q(V[db ".Interface"]); anyweb = ((hh " " hs) ~ /(^| )(0\.0\.0\.0:|\[::\]:|[0-9]+( |$))/)
+    # SSH from the outside is how the team gets in from remote: shown, left
+    # by default (limit who may connect with NW-20 firewall rules instead).
+    if (ifc == "" || ifc == "wan") { F("sshwan", "MED", "SSH answers on the outside (wan) too - needed if you log in from outside; NW-20 can limit who may", "l")
+        X("sshwan", "uci set " db ".Interface=lan && uci commit dropbear && /etc/init.d/dropbear restart"); U("sshwan", (ifc == "" ? "uci delete " db ".Interface" : "uci set " db ".Interface=" ifc) " && uci commit dropbear && /etc/init.d/dropbear restart") }
+    else O("SSH on " ifc " only")
+    if (anyweb && lan != "") { F("webany", "HIGH", "the web admin (LuCI) answers on every address, the outside too: limit it to the inside (" lan ")", "f")
+        X("webany", "uci delete uhttpd.main.listen_http; uci delete uhttpd.main.listen_https; uci add_list uhttpd.main.listen_https=" lan ":443" (hh != "" ? "; uci add_list uhttpd.main.listen_http=" lan ":80" : "") " && uci commit uhttpd && /etc/init.d/uhttpd restart")
+        u = "uci delete uhttpd.main.listen_http; uci delete uhttpd.main.listen_https"; n = split(hh, L, " "); for (i = 1; i <= n; i++) u = u "; uci add_list uhttpd.main.listen_http=" L[i]
+        n = split(hs, L, " "); for (i = 1; i <= n; i++) u = u "; uci add_list uhttpd.main.listen_https=" L[i]
+        U("webany", u " && uci commit uhttpd && /etc/init.d/uhttpd restart") }
+    else if (anyweb) F("webany", "HIGH", "the web admin (LuCI) answers on every address (the lan address was not read: set uhttpd listen_http/https by hand)", "-")
+    else O("the web admin on chosen addresses only")
+    if (q(V["upnpd.config.enabled"]) == "1") { F("upnp", "HIGH", "UPnP is on: any program inside can open ports on the router to the outside", "f")
+        X("upnp", "uci set upnpd.config.enabled=0 && uci commit upnpd && /etc/init.d/miniupnpd stop; /etc/init.d/miniupnpd disable"); U("upnp", "uci set upnpd.config.enabled=1 && uci commit upnpd && /etc/init.d/miniupnpd enable; /etc/init.d/miniupnpd start") }
+    for (k in V) if (k ~ /^snmpd\..*\.community$/ && dflt(q(V[k]))) snmpd = 1
+    if (snmpd) F("snmp", "MED", "SNMP has a default community name: change it in /etc/config/snmpd", "-")
+    it = q(V[db ".IdleTimeout"]); if (it == "" || it + 0 == 0 || it + 0 > to * 60) { F("timeout", "MED", "SSH logins never time out" (it != "" ? " (IdleTimeout " it ")" : ""), "f")
+        X("timeout", "uci set " db ".IdleTimeout=" (to * 60) " && uci commit dropbear && /etc/init.d/dropbear restart"); U("timeout", (it == "" ? "uci delete " db ".IdleTimeout" : "uci set " db ".IdleTimeout=" it) " && uci commit dropbear && /etc/init.d/dropbear restart") }
+    else O("SSH idle timeout " it " seconds")
+    li = q(V["system.@system[0].log_ip"])
+    if (lh != "" && li != lh) { F("log", "MED", "logs are not sent to " lh, "f")
+        X("log", "uci set system.@system[0].log_ip=" lh " && uci set system.@system[0].log_proto=udp && uci commit system && /etc/init.d/log restart"); U("log", (li == "" ? "uci delete system.@system[0].log_ip" : "uci set system.@system[0].log_ip=" li) " && uci commit system && /etc/init.d/log restart") }
+    sv = " " q(V["system.ntp.server"]) " "
+    if (ntp != "" && (index(sv, " " ntp " ") == 0 || q(V["system.ntp.enabled"]) == "0")) { F("ntp", "MED", "time is not taken from " ntp, "f")
+        X("ntp", "uci set system.ntp.enabled=1 && uci add_list system.ntp.server=" ntp " && uci commit system && /etc/init.d/sysntpd restart"); U("ntp", "uci del_list system.ntp.server=" ntp " && uci set system.ntp.enabled=" (q(V["system.ntp.enabled"]) == "" ? "1" : q(V["system.ntp.enabled"])) " && uci commit system && /etc/init.d/sysntpd restart") }
+    if (q(V[db ".BannerFile"]) == "") { F("banner", "LOW", "no login banner", "f")
+        X("banner", "printf \"%s\\n\" \"" bn "\" >/etc/bt-banner && uci set " db ".BannerFile=/etc/bt-banner && uci commit dropbear && /etc/init.d/dropbear restart"); U("banner", "uci delete " db ".BannerFile && uci commit dropbear && /etc/init.d/dropbear restart; rm -f /etc/bt-banner") }
+}'
 # check VENDOR RAWFILE ALLOWED -> the lines (see above)
 check() {
-    case "$1" in cisco-ios) _ck=$IOS_AWK ;; cisco-asa) _ck=$ASA_AWK ;; paloalto) _ck=$PAN_AWK ;; fortigate) _ck=$FG_AWK ;; vyos) _ck=$VY_AWK ;; mikrotik) _ck=$MT_AWK ;; esac
+    case "$1" in cisco-ios) _ck=$IOS_AWK ;; cisco-asa) _ck=$ASA_AWK ;; paloalto) _ck=$PAN_AWK ;; fortigate) _ck=$FG_AWK ;; vyos) _ck=$VY_AWK ;; mikrotik) _ck=$MT_AWK ;; openwrt) _ck=$OW_AWK ;; esac
     # prompts and echoed commands off the front of each line
     sed 's/^[A-Za-z0-9_.@()-]*[>#] *//' "$2" | awk -v US="$US" -v allowed="$3" -v lh="$LOGHOST" -v ntp="$NTP" -v bn="$BANNER" -v to="$TO" "$CHECK_AWK$_ck"
 }
@@ -2001,11 +2104,26 @@ awk -F"$US" '{ printf "%-14s %-4s %s\n", $1, $3, $4 }' "$W/find" >"$CC_RUN_DIR/f
 # ---- 2. Questions ---------------------------------------------------------------------------
 header "2/4  what to fix (Enter = the default in capitals)"
 : >"$W/plan"; _all=0
+# RISKY: changes that can stop someone logging in to the device.  They are
+# never the default, and never made without a person to confirm a login from
+# another machine (--batch or no terminal: shown and left).
+RISKY='mgmt|telnet|plain|http|sshwan|webany'
+CANCONFIRM=1; { [ "$CC_BATCH" = 1 ] || ! _cc_can_ask; } && CANCONFIRM=0
+# Tests only: BT_TEST_CONFIRM=1 plays the person who confirms.
+[ "${BT_TEST_CONFIRM:-0}" = 1 ] && CANCONFIRM=1
 while IFS="$US" read -r _n _i _l _t _d; do
     [ "$_d" = "-" ] && continue
+    # Limits on who may log in: leave by default (--fix-access: fix).
+    case "$_i" in mgmt|sshwan|webany) [ "$FIXACC" = 1 ] && [ "$_i" != sshwan ] && _d=f || _d=l ;; esac
+    if printf '%s\n' "$_i" | grep -qxE "$RISKY" && [ "$CANCONFIRM" = 0 ]; then
+        cc_show "$C_YEL" "  [-] $_n: $_t - left: it can stop someone logging in, so it needs a person to confirm a login from another machine (run without --batch)"
+        continue
+    fi
     if [ "$_all" = 0 ]; then
         case "$_i" in
-            mgmt) _how="limit it to $TEAM and this box; a new login is tested, then you confirm from another machine" ;;
+            mgmt) _how="ONLY $TEAM and this box could log in to it afterwards: a teammate outside that or a scoring engine would be LOCKED OUT; a new login is tested, then you confirm from another machine" ;;
+            sshwan) _how="SSH on the inside (lan) only: you could no longer log in from OUTSIDE; a new login is tested, then you confirm from another machine" ;;
+            webany) _how="the web admin on the inside address only: nobody could open it from OUTSIDE; a new login is tested, then you confirm from another machine" ;;
             telnet|plain) _how="turn it off; SSH (and HTTPS) stay" ;;
             *) _how="change it; the undo puts it back" ;;
         esac
@@ -2078,7 +2196,7 @@ elif cc_ask "Do these $NCH change(s) now, one device at a time?" Y "yes (each de
         cc_show "" ""; cc_show "$C_CYN" "  -- $_n ($_v): $(tr '\n' ' ' <"$W/ids.$_n")"
         { pre "$_v"; lines "$_n" X "$W/ids.$_n"; post "$_v"; } >"$W/fix.$_n"
         { pre "$_v"; lines "$_n" U "$W/ids.$_n"; post "$_v"; save "$_v"; } >"$W/undo.$_n"
-        _risky=0; grep -qxE 'mgmt|telnet|plain' "$W/ids.$_n" && _risky=1
+        _risky=0; grep -qxE "$RISKY" "$W/ids.$_n" && _risky=1
         # 1. One session stays open: the changes go in through a FIFO.
         rm -f "$W/fifo"; mkfifo "$W/fifo"
         sshopts >"$W/opts"; set --; while IFS= read -r _o; do set -- "$@" "$_o"; done <"$W/opts"
@@ -2103,7 +2221,9 @@ elif cc_ask "Do these $NCH change(s) now, one device at a time?" Y "yes (each de
         if try_login "$_v" "$_u" "$_a" "$_p"; then
             _keep=1
             # 3. Management changes: confirm from another machine before saving.
-            if [ "$_risky" = 1 ] && [ "$CC_BATCH" != 1 ] && _cc_can_ask; then
+            if [ "$_risky" = 1 ] && [ "${BT_TEST_CONFIRM:-0}" = 1 ] && ! _cc_can_ask; then
+                cc_show "$C_GRY" "  (tests: BT_TEST_CONFIRM=1 confirms the login from another machine)"
+            elif [ "$_risky" = 1 ]; then
                 cc_show "$C_YEL" "  [*] A new login from this box works. Now log in to $_n from ANOTHER team machine (or its web page)."
                 CC_TIMER_DEADLINE=$(( $(cc_now) + TIMER ))
                 cc_ask_keep || _keep=0
