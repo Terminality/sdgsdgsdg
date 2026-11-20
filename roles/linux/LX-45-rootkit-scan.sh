@@ -33,9 +33,9 @@
 #     malware            ClamAV, rkhunter and chkrootkit when installed
 #                        (ClamAV over /tmp, /var/tmp, /dev/shm, the web
 #                        folders and the homes, and if you say so the shared
-#                        folders: Samba path =, NFS exports, Gitea's data);
-#                        offered to install with apt, dnf or apk when the
-#                        box can reach a package mirror
+#                        folders: Samba path =, NFS exports, Gitea's data).
+#                        Never installed by this script: when one is
+#                        missing it says so, says how to get it, moves on
 #
 #   Then asked, one by one: kill a hidden / fake / miner process, quarantine
 #   a malware or rootkit file.  Kernel modules are reported, not unloaded
@@ -43,7 +43,6 @@
 #   remove what loads it (LX-42) and reboot.
 #
 #   QUESTIONS (Enter takes the default in capitals; a flag answers each):
-#     install ClamAV / rkhunter now?      --install / --no-install
 #     also scan the shared folders?       --shares / --no-shares
 #     each finding: [k]ill / [q]uarantine / [l]eave / [a]ll the rest default
 #     apply?                              --apply
@@ -51,12 +50,11 @@
 # USAGE
 #   sudo sh LX-45-rootkit-scan.sh                             scan, dry run
 #   sudo sh LX-45-rootkit-scan.sh --protected p.csv --apply   asks about each
-#   sudo sh LX-45-rootkit-scan.sh --protected p.csv --apply --batch --no-install
+#   sudo sh LX-45-rootkit-scan.sh --protected p.csv --apply --batch
 #
 # OPTIONS
 #   --apply            kill / quarantine (without it, dry run only)
-#   --install          install clamav and rkhunter if missing (needs a mirror)
-#   --no-install       never offer it
+#   --install, --no-install  still accepted, do nothing (it never installs)
 #   --no-clamav        skip the ClamAV scan (it can take minutes)
 #   --shares           also scan the shared folders (Samba path =, NFS
 #                      /etc/exports, Gitea's data) without asking
@@ -88,8 +86,9 @@
 #     a port open there but not in ss is hidden).
 #   - ClamAV needs signatures (freshclam, needs internet).  Without them it
 #     says so instead of "found nothing".
-#   - Rocky: clamav and rkhunter come from EPEL; Alpine: the community
-#     repository.
+#   - It never installs or downloads anything.  A missing scanner is
+#     skipped with the command to get it (Rocky: EPEL; Alpine: the community
+#     repository).
 #   - The "hidden" checks compare two views a split second apart: a process
 #     that just ended can show once.  Run it twice before acting.
 # =============================================================================
@@ -111,8 +110,6 @@ LX-45 Rootkit and malware scan - hidden processes, ports and modules, replaced p
   sudo sh LX-45-rootkit-scan.sh --protected p.csv --apply
 
   --apply            kill / quarantine (without it, dry run only)
-  --install          install clamav and rkhunter if missing
-  --no-install       never offer it
   --no-clamav        skip the ClamAV scan
   --shares           also scan the shared folders (Samba, NFS, Gitea)
   --no-shares        never scan them
@@ -354,30 +351,29 @@ grep -Eq "${US}(miner|sniffer)${US}|calls itself" "$W/find" || ok "no fake kerne
 
 # ---- 5. Malware scanners ---------------------------------------------------------------------
 header "5/6  ClamAV, rkhunter, chkrootkit"
-_miss=""; cc_have clamscan || _miss="$_miss clamav"; cc_have rkhunter || _miss="$_miss rkhunter"
-# The install command for this box (BT_TEST_PM picks one in tests).
+# Never installs or downloads anything: says what is there, and how to get
+# what is not (BT_TEST_PM picks the package manager in tests).
 _ipm=${BT_TEST_PM:-}
 if [ -z "$_ipm" ]; then
     if cc_have apt-get; then _ipm=apt; elif cc_have dnf; then _ipm=dnf; elif cc_have yum; then _ipm=yum; elif cc_have apk; then _ipm=apk; fi
 fi
-case "$_ipm" in
-    apt|dpkg) _icmd="apt-get install -y -q"; _ihint="apt-get install$_miss" ;;
-    # Rocky / RHEL: clamav and rkhunter are in EPEL (Fedora has them itself).
-    dnf|rpm)  _icmd="dnf install -y -q"; _ihint="dnf install$_miss  (Rocky: needs EPEL - dnf install epel-release)" ;;
-    yum)      _icmd="yum install -y -q"; _ihint="yum install$_miss  (needs EPEL)" ;;
-    # Alpine: both are in the community repository.
-    apk)      _icmd="apk add -q"; _ihint="apk add$_miss  (community repository on in /etc/apk/repositories)" ;;
-    *)        _icmd=""; _ihint="" ;;
-esac
-if [ -n "$_miss" ] && [ -z "$R" ] && [ "$INSTALL" != n ] && [ -n "$_icmd" ]; then
-    if [ "$INSTALL" = y ] || cc_ask "Install$_miss now (needs a package mirror; about 300 MB for ClamAV)?" N "yes, install them" "no, scan without them"; then
-        if [ "$CC_APPLY" = 1 ] && cc_is_root; then
-            cc_show "" "  installing$_miss ..."
-            # shellcheck disable=SC2086  # a list of package names
-            DEBIAN_FRONTEND=noninteractive $(cc_have timeout && echo timeout 600) $_icmd $_miss >>"$CC_LOG" 2>&1 && cc_show "$C_GRN" "  [+] installed$_miss" || cc_show "$C_RED" "  [x] could not install$_miss (no mirror?): $_ihint"
-        else cc_show "$C_GRY" "  (installing needs --apply and root)"; fi
-    else cc_show "$C_GRY" "  to install them later: $_ihint"; fi
-elif [ -n "$_miss" ] && [ -z "$R" ] && [ -n "$_ihint" ]; then cc_show "$C_GRY" "  not installed:$_miss - to install: $_ihint"; fi
+# how_to PACKAGE -> the command that installs it here.
+how_to() {
+    case "$_ipm" in
+        apt|dpkg) echo "apt-get install $1" ;;
+        # Rocky: clamav, rkhunter and chkrootkit are in EPEL; Fedora has them.
+        dnf|rpm)  echo "dnf install $1   (Rocky: dnf install epel-release first)" ;;
+        yum)      echo "yum install $1   (needs EPEL)" ;;
+        # Alpine: the community repository.
+        apk)      echo "apk add $1   (community repository on in /etc/apk/repositories)" ;;
+        *)        echo "install $1 with this box's package manager" ;;
+    esac
+}
+[ "$INSTALL" = y ] && cc_show "$C_GRY" "  (--install is not used any more: this script never installs anything)"
+for _t in clamscan:clamav rkhunter:rkhunter chkrootkit:chkrootkit; do
+    if cc_have "${_t%%:*}"; then cc_show "$C_GRN" "  [ok] ${_t#*:} is installed"
+    else cc_show "$C_YEL" "  [*] ${_t#*:} is not installed: skipped. To get it yourself: $(how_to "${_t#*:}")"; fi
+done
 SCAN=""
 # Gitea's repositories and the folders the box shares (Samba path =,
 # /etc/exports) hold files other people upload.  Asked: --shares / --no-shares.

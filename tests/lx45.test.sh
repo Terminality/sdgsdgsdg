@@ -115,6 +115,7 @@ _ps=$(command -v ps); _grep=$(command -v grep)
   done; } >"$T_TMP/apkdb"
 cat >"$A/apk" <<EOF
 #!/bin/sh
+echo "apk \$*" >>"$T_TMP/apkcalls"
 case "\$1" in audit) echo "U ${_grep#/}"; echo "A usr/bin/something-new" ;; esac
 EOF
 chmod +x "$A/apk"
@@ -122,7 +123,10 @@ out=$(export BT_TEST_PM=apk BT_TEST_APKDB="$T_TMP/apkdb" PATH="$A:$PATH"; $SH "$
 t_has "$out" "[!] $_ps belongs to no package: placed there by hand?" "a core program no package owns is HIGH"
 t_has "$out" "[!] $_grep does not match its package (replaced?): reinstall it - apk fix core" "apk audit U is HIGH, with apk fix"
 t_hasnt "$out" "something-new" "an added file that is not a core program is left out"
-t_has "$out" "apk add rkhunter" "the install hint is for apk"
+t_has "$out" "[*] rkhunter is not installed: skipped. To get it yourself: apk add rkhunter" "a missing scanner: said, with how to get it"
+out=$(export BT_TEST_PM=apk BT_TEST_APKDB="$T_TMP/apkdb" PATH="$A:$PATH"; $SH "$C" --out "$O" --no-color --install --no-clamav --batch 2>&1)
+t_has "$out" "this script never installs anything" "--install is still accepted, and says it does nothing"
+t_hasnt "$(cat "$T_TMP/apkcalls" 2>/dev/null)" "apk add" "nothing is ever installed"
 
 t_start "file shares are scanned"
 mkroot

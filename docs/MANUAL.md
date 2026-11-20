@@ -3094,7 +3094,7 @@ LX-42 finds what red team leaves to come back. This finds **what hides**: a root
 ```sh
 sudo sh LX-45-rootkit-scan.sh                                  # scan, dry run
 sudo sh LX-45-rootkit-scan.sh --protected p.csv --apply        # asks about each finding
-sudo sh LX-45-rootkit-scan.sh --protected p.csv --apply --batch --no-install
+sudo sh LX-45-rootkit-scan.sh --protected p.csv --apply --batch
 ```
 
 ### What it checks
@@ -3117,7 +3117,6 @@ sudo sh LX-45-rootkit-scan.sh --protected p.csv --apply --batch --no-install
 
 | Question | Answers | Flag |
 | --- | --- | --- |
-| Install ClamAV and rkhunter now? (only when missing; apt, dnf or apk) | `[y]` / `[n]`, default no | `--install` / `--no-install` |
 | Also scan the shared folders? (only when the box shares some outside the usual folders) | `[y]` / `[n]`, default yes | `--shares` / `--no-shares` |
 | Each process finding | `[k]ill` / `[l]eave` / `[a]ll the rest default` | `--batch` |
 | Each file finding | `[q]uarantine` / `[l]eave` / `[a]ll the rest default` | `--batch` |
@@ -3136,7 +3135,7 @@ In `rootkit-N/`: `output.txt`, `findings.txt`, `summary.txt`, `clamav.txt` / `rk
 - **A kernel rootkit can hide from `/proc` too.** If nothing shows but the box still feels wrong, scan it from another box (SH-03): a port open there but not in `ss` is hidden.
 - **Run it twice before acting** on a "hidden" finding: a process that ended between the two views can show once.
 - **ClamAV needs signatures** (`freshclam`). Without internet, there are none, and it says so instead of "found nothing".
-- **Installing:** Ubuntu and Mint `apt-get install clamav rkhunter`; Rocky needs EPEL first (`dnf install epel-release`); Fedora has them; Alpine `apk add clamav rkhunter` with the community repository on. When it doesn't install them, it prints the command.
+- **It never installs or downloads anything.** For ClamAV, rkhunter and chkrootkit it says whether each is installed; a missing one is skipped with the command to get it yourself: Ubuntu and Mint `apt-get install clamav`; Rocky needs EPEL first (`dnf install epel-release`); Fedora `dnf install clamav`; Alpine `apk add clamav` with the community repository on. `--install` and `--no-install` are still accepted and do nothing.
 
 ## 47. AppArmor confinement, `roles/linux/LX-44-apparmor.sh` (LX-44)
 
