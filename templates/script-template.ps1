@@ -10,14 +10,21 @@
 # USAGE
 #   powershell -NoProfile -ExecutionPolicy Bypass -File XX-00-name.ps1 [options]
 #
+#   QUESTIONS (Enter takes the default in capitals; a parameter answers each):
+#     which box                       -Box NAME
+#     the example option              -Example VALUE
+#
 # INPUTS
 #   -Example VALUE    what this option means and what happens without it
 #   Files read:       e.g. the protected list
 #
 # OUTPUTS  (all under the -Out folder, never next to the script)
 #   <ID>_<host>_<time>.log            everything printed, plus action output
-#   <ID>_<host>_<time>_<name>.csv     describe each CSV and its columns
 #   undo-<host>.log                   one line per change, newest last
+#   example-N\                        one numbered folder per run:
+#     output.txt                      the screen, without colours
+#     example.txt                     describe each table and its columns
+#     run.txt                         id, host, time
 #
 # WHAT IT CHANGES
 #   List every kind of change, or "nothing - read only".
@@ -46,8 +53,11 @@ param(
     [switch]$ForceScored,    # allow changes to accounts on the protected list
     [switch]$Quiet,          # only print warnings and errors
     [switch]$DebugLog,       # print debugging detail
-    # This script's own parameters:
-    [string]$Example = 'default'
+    [switch]$Batch,          # no questions: take every default
+    [switch]$NoColor,        # no colours
+    # This script's own parameters (each one answers a question):
+    [string]$Box,
+    [string]$Example
 )
 
 # >>> BT-LIB
@@ -61,19 +71,33 @@ if (-not $ccDir) { Write-Host 'cannot find lib/lib.ps1 above this script'; exit 
 # <<< BT-LIB
 
 # ---- 1. Start: open the log, find the protected list, check the kit --------
+if (-not (Test-CcBox $Box)) { Stop-Cc -Code 2 -Message ('-Box must be one of: ' + ($script:CcBoxes -join ' ')) }
 Initialize-Cc -Id 'XX-00' -Name 'Script template' -Kind readonly -Bound $PSBoundParameters
 $os = Get-CcOsInfo
 # Assert-CcAdmin           # uncomment if the script needs an elevated session
+Use-CcNumberedDir 'example'
 
-# ---- 2. The work ------------------------------------------------------------
-# Inventory scripts write CSV rows and findings.  Scripts that change things
-# call Test-CcAllowed before touching an item, Backup-CcFile or
-# Backup-CcRegistryKey before editing, and make every change through
-# Invoke-CcChange so dry-run and logging are automatic.
-$csv = New-CcCsv -Name example -Header @('item', 'value')
-Add-CcCsvRow -File $csv -Values @('powershell version', $os.PSVersion)
-Add-CcCsvRow -File $csv -Values @('example option', $Example)
-Write-CcLog -Level INFO -Message "wrote $csv"
+# The look: a title line, the legend, then numbered sections.
+Write-CcShow -Color Cyan -Text ('XX-00 Script template | host {0} | results in {1}' -f $script:Cc.Host, $script:Cc.RunDir)
+Write-CcLegend
 
-# ---- 3. Finish: print the summary and exit with the right code -------------
+# ---- 2. The questions: each one answered in advance by its parameter -------
+Write-CcHeader '1/2  questions'
+if (-not $Box) { $Box = Read-CcBox }
+if (-not $Example) { $Example = Read-CcText -Question 'An example option?' -Default 'default' -Hint 'any word' }
+
+# ---- 3. The work ------------------------------------------------------------
+# Scripts that change things call Test-CcAllowed before touching an item,
+# Backup-CcFile or Backup-CcRegistryKey before editing, make every change
+# through Invoke-CcChange (dry run and undo are automatic), and wrap risky
+# changes in Start-CcTimer ... Complete-CcTimer.
+Write-CcHeader '2/2  the work'
+$t = New-CcTable -Name example -Columns @('item', 'value')
+Add-CcTableRow -File $t -Values @('powershell version', $os.PSVersion)
+Add-CcTableRow -File $t -Values @('box', $Box)
+Add-CcTableRow -File $t -Values @('example option', $Example)
+Format-CcTable -File $t
+Write-CcShow -Color Green -Text ('  [ok] wrote ' + $t)
+
+# ---- 4. Finish: print the summary and exit with the right code -------------
 Complete-Cc

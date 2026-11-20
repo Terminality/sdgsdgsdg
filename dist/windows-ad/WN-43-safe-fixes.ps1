@@ -131,12 +131,12 @@ if ($Help -or $List) {
     exit 0
 }
 
-# >>> BT-LIB  (lib/lib.ps1 0.6.0 pasted in by tools/build.sh - edit lib/lib.ps1, not this copy)
+# >>> BT-LIB  (lib/lib.ps1 0.7.0 pasted in by tools/build.sh - edit lib/lib.ps1, not this copy)
 # =============================================================================
 # ID:       LB-02
 # NAME:     PowerShell library (lib.ps1)
 # ROLE:     Automation  (wave 0, foundation)
-# VERSION:  0.6.0
+# VERSION:  0.7.0
 #
 # PURPOSE
 #   The jobs every Windows script in this kit repeats, written once.  It is the
@@ -148,6 +148,11 @@ if ($Help -or $List) {
 #                                           Add-CcUndo
 #     5. the protected-list refusal         Test-CcProtected, Test-CcAllowed
 #     6. meaningful exit codes              Stop-Cc, Complete-Cc
+#     7. the look and the questions         Write-CcShow, Write-CcHeader,
+#        (the same as lib.sh)               Write-CcLegend, Read-CcChoice,
+#                                           Read-CcAsk, Read-CcText, Read-CcBox
+#     8. numbered run folders, .txt tables  Use-CcNumberedDir, New-CcTable
+#     9. the revert timer                   Start-CcTimer, Complete-CcTimer
 #   plus: admin check, OS facts, password generation, quarantine, SHA-256,
 #   CSV output, findings files, and for inventory scripts: flags
 #   (Add-CcFlag), a per-run folder (Use-CcRunDir) and raw command capture
@@ -210,7 +215,7 @@ if ($Help -or $List) {
 #     session, because there is no file to hash.
 # =============================================================================
 
-$script:CcLibVersion = '0.6.0'
+$script:CcLibVersion = '0.7.0'
 
 # All library state lives in one hashtable so it is easy to inspect while
 # debugging: type  $Cc  at a prompt after dot-sourcing a script.
@@ -223,6 +228,8 @@ $script:Cc = @{
     Host = $null; Ts = $null; Kit = $null; ScriptPath = $null
     Done = 0; Would = 0; Failed = 0; Refused = 0; FindingCount = 0
     RunDir = $null; CsvDir = $null; FlagsFile = $null; FlagCount = 0
+    Batch = $false; NoColor = $false; Tee = $null; Work = $null; Numbered = $false; RunUndo = $null
+    Answers = $null; AnswersUsed = $false; TimerTask = $null; TimerAt = $null
 }
 
 # -----------------------------------------------------------------------------
@@ -248,6 +255,9 @@ function Write-CcLog {
     if ($show) { Write-Host $line -ForegroundColor $color }
     if ($script:Cc.Log) {
         try { [IO.File]::AppendAllText($script:Cc.Log, $line + "`r`n") } catch { }
+    }
+    if ($script:Cc.Tee -and $Level -ne 'DEBUG' -and $Level -ne 'NOTE') {
+        try { [IO.File]::AppendAllText($script:Cc.Tee, $line + "`r`n") } catch { }
     }
 }
 
@@ -335,6 +345,364 @@ function Get-CcOsInfo {
 }
 
 # -----------------------------------------------------------------------------
+# The look and the questions (the same as lib.sh)
+# -----------------------------------------------------------------------------
+# Every script looks and asks the same way on Windows and on Linux:
+#     ==========[ 2/6  accounts ]==========          Write-CcHeader
+#     Legend: [!] HIGH  [*] MED  [ok] fine ...          Write-CcLegend
+#     [?] Which box is this?                            Read-CcChoice, Read-CcAsk,
+#           [d] domain controller (AD, DNS)             Read-CcText, Read-CcBox
+#           [o] other
+#           Answer [d/O]:
+# Enter takes the default (the answer in capitals).  With -Batch, or with no
+# console to ask on, every default is taken and shown.  Each question has a
+# script parameter that answers it in advance.
+# Results go in a numbered folder per run (Use-CcNumberedDir): <out>\NAME-1,
+# NAME-2, ... with output.txt (the screen without colour), run.txt and .txt
+# tables (New-CcTable).  No CSV is left in it.
+
+# Write-CcShow -Color Red -Text '...'   -> the text on screen in that colour
+#   (Red, Yellow, Green, Cyan, DarkGray, or '' for plain) and a plain copy in
+#   output.txt.
+function Write-CcShow {
+    param([string]$Color = '', [string]$Text = '')
+    if ($Color -and -not $script:Cc.NoColor) { Write-Host $Text -ForegroundColor $Color } else { Write-Host $Text }
+    if ($script:Cc.Tee) { try { [IO.File]::AppendAllText($script:Cc.Tee, $Text + "`r`n") } catch { } }
+}
+
+# Write-CcHeader 'title'   -> a blank line, then ==========[ title ]==========
+function Write-CcHeader {
+    param([string]$Title)
+    Write-CcShow -Text ''
+    Write-CcShow -Color Cyan -Text ('==========[ {0} ]==========' -f $Title)
+}
+
+# Write-CcLegend   -> the legend line, each mark in its colour.
+#   -Marks takes other pairs: @('Red=[!] DOWN','Green=[ok] up').
+function Write-CcLegend {
+    param([string[]]$Marks = @('Red=[!] HIGH', 'Yellow=[*] MED', 'Green=[ok] fine', 'Yellow=[~] would change', 'Green=[+] changed', 'Red=[x] failed'))
+    Write-Host 'Legend: ' -NoNewline
+    $plain = 'Legend:'
+    foreach ($m in $Marks) {
+        $p = $m -split '=', 2
+        if ($script:Cc.NoColor) { Write-Host ($p[1] + '   ') -NoNewline } else { Write-Host ($p[1] + '   ') -ForegroundColor $p[0] -NoNewline }
+        $plain = $plain + ' ' + $p[1] + '  '
+    }
+    Write-Host ''
+    if ($script:Cc.Tee) { try { [IO.File]::AppendAllText($script:Cc.Tee, $plain.TrimEnd() + "`r`n") } catch { } }
+}
+
+# Test-CcCanAsk   -> $true when questions can be asked: not -Batch, not
+#   $env:BT_NO_TTY = '1', and a console to read from (or test answers).
+function Test-CcCanAsk {
+    $c = $script:Cc
+    if ($c.Batch -or $env:BT_NO_TTY -eq '1') { return $false }
+    if ($null -ne $c.Answers -and $c.Answers.Count -gt 0) { return $true }
+    if (-not [Environment]::UserInteractive) { return $false }
+    # Started with -NonInteractive (a scheduled task, a test): Read-Host would fail.
+    foreach ($a in [Environment]::GetCommandLineArgs()) { if ($a -match '^-noni') { return $false } }
+    if ($Host.Name -eq 'Windows PowerShell ISE Host') { return $true }
+    try { [void][Console]::KeyAvailable; return $true } catch { return $false }
+}
+
+# Read-CcLine 'prompt'   -> one typed line.  Tests feed the answers in
+#   $env:BT_TEST_ANSWERS, separated by ';' (read once at start-up).
+function Read-CcLine {
+    param([string]$Prompt)
+    $c = $script:Cc
+    if ($null -ne $c.Answers -and $c.Answers.Count -gt 0) {
+        $a = [string]$c.Answers[0]
+        $c.Answers.RemoveAt(0)
+        Write-Host ($Prompt + ': ' + $a)
+        return $a
+    }
+    if ($c.AnswersUsed) { Write-Host ($Prompt + ': '); return '' }   # tests ran out of answers: take the default
+    return [string](Read-Host -Prompt $Prompt)
+}
+
+# Read-CcChoice -Question 'Which box is this?' -Default o -Options @('d=domain controller','o=other')
+#   -> the letter chosen.  Each option is 'letter=what it means'.
+function Read-CcChoice {
+    param([Parameter(Mandatory=$true)][string]$Question, [string]$Default = '', [Parameter(Mandatory=$true)][string[]]$Options)
+    $d = $Default.ToLower(); $keys = @(); $hint = @(); $mean = ''
+    foreach ($o in $Options) {
+        $p = $o -split '=', 2
+        $keys += $p[0]
+        if ($p[0] -eq $d) { $hint += $p[0].ToUpper(); $mean = $p[1] } else { $hint += $p[0] }
+    }
+    $h = $hint -join '/'
+    if (-not (Test-CcCanAsk)) {
+        Write-CcShow -Color Cyan -Text ('[?] {0} [{1}] {2} (default): {3}' -f $Question, $h, $d, $mean)
+        Write-CcLog -Level NOTE -Message ('asked: {0} -> {1} (default)' -f $Question, $d)
+        return $d
+    }
+    if ($script:Cc.NoColor) { Write-Host '[?] ' -NoNewline } else { Write-Host '[?] ' -ForegroundColor Cyan -NoNewline }
+    Write-Host $Question
+    foreach ($o in $Options) { $p = $o -split '=', 2; Write-Host ('      [{0}] {1}' -f $p[0], $p[1]) }
+    $a = ''; $tries = 0
+    while ($true) {
+        $a = (Read-CcLine -Prompt ('      Answer [' + $h + ']')).Trim().ToLower()
+        if ($a -eq '') { $a = $d }
+        if ($a -ne '' -and $keys -contains $a) { break }
+        $tries++
+        if ($tries -ge 5 -and $d) { $a = $d; break }
+        Write-Host ('      Type one of: ' + ($keys -join ', ')) -ForegroundColor Yellow
+    }
+    if ($script:Cc.Tee) { try { [IO.File]::AppendAllText($script:Cc.Tee, ('[?] {0} {1}' -f $Question, $a) + "`r`n") } catch { } }
+    Write-CcLog -Level NOTE -Message ('asked: {0} -> {1}' -f $Question, $a)
+    return $a
+}
+
+# Read-CcAsk -Question 'Back up the site?' -Default Y [-Yes 'yes, back it up'] [-No 'no, skip it']
+#   -> $true for yes.  Shown like Read-CcChoice with what each answer does.
+function Read-CcAsk {
+    param([Parameter(Mandatory=$true)][string]$Question, [string]$Default = 'N', [string]$Yes = 'yes', [string]$No = 'no')
+    $d = 'n'; if ($Default -eq 'Y' -or $Default -eq 'y') { $d = 'y' }
+    return ((Read-CcChoice -Question $Question -Default $d -Options @(('y=' + $Yes), ('n=' + $No))) -eq 'y')
+}
+
+# Read-CcText -Question 'Your team addresses?' -Default '' [-Hint 'addresses separated by spaces']
+#   -> the typed text, or the default on Enter, -Batch or no console.
+function Read-CcText {
+    param([Parameter(Mandatory=$true)][string]$Question, [string]$Default = '', [string]$Hint = '')
+    $shown = $Default; if (-not $shown) { $shown = 'none' }
+    if (-not (Test-CcCanAsk)) {
+        Write-CcShow -Color Cyan -Text ('[?] {0} {1} (default)' -f $Question, $shown)
+        return $Default
+    }
+    if ($script:Cc.NoColor) { Write-Host '[?] ' -NoNewline } else { Write-Host '[?] ' -ForegroundColor Cyan -NoNewline }
+    Write-Host $Question
+    if ($Hint) { Write-Host ('      type: ' + $Hint) }
+    $a = (Read-CcLine -Prompt ('      [Enter = ' + $shown + ']')).Trim()
+    if ($a -eq '') { $a = $Default }
+    if ($script:Cc.Tee) { try { [IO.File]::AppendAllText($script:Cc.Tee, ('[?] {0} {1}' -f $Question, $a) + "`r`n") } catch { } }
+    return $a
+}
+
+# The Windows box kinds (-Box NAME and the question), and the guess.
+$script:CcBoxes = @('dc', 'web', 'ecomm', 'fileshare', 'db', 'other')
+# Test-CcBox NAME   -> $true for '' or a known box kind.
+function Test-CcBox {
+    param([string]$Name)
+    return ([string]::IsNullOrEmpty($Name) -or ($script:CcBoxes -contains $Name.ToLower()))
+}
+# Get-CcBoxGuess   -> @(kind, why) from what is installed; @('', '') when
+#   nothing points anywhere.  Only reads.  Tests: $env:BT_TEST_BOX_GUESS =
+#   'web|IIS' (that guess) or '-' (no guess).
+function Get-CcBoxGuess {
+    if ($env:BT_TEST_BOX_GUESS -eq '-') { return @('', '') }
+    if ($env:BT_TEST_BOX_GUESS) { $p = $env:BT_TEST_BOX_GUESS -split '\|', 2; return @($p[0], $p[1]) }
+    if (-not (Test-CcWindows)) { return @('', '') }
+    try {
+        $os = Get-WmiObject -Class Win32_OperatingSystem -ErrorAction Stop
+        if ([int]$os.ProductType -eq 2) { return @('dc', 'a domain controller') }
+    } catch { }
+    $names = @(Get-Service -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    if ($names -contains 'W3SVC') { return @('web', 'IIS is installed (W3SVC)') }
+    foreach ($n in $names) { if ($n -eq 'MSSQLSERVER' -or $n -like 'MSSQL$*') { return @('db', ('SQL Server (' + $n + ')')) } }
+    try {
+        $sh = @(Get-WmiObject -Class Win32_Share -ErrorAction Stop | Where-Object { $_.Type -eq 0 -and $_.Name -notmatch '^(ADMIN\$|IPC\$|[A-Z]\$|print\$|NETLOGON|SYSVOL)$' })
+        if ($sh.Count -gt 0) { return @('fileshare', ('shared folders: ' + (($sh | ForEach-Object { $_.Name }) -join ' '))) }
+    } catch { }
+    return @('', '')
+}
+# Read-CcBox [-Default o] [-Question '...']   -> the box kind.  The guess is
+#   shown and becomes the answer for Enter.  A plain IIS guess does not
+#   replace a script's own 'ecomm' default.
+function Read-CcBox {
+    param([string]$Default = 'o', [string]$Question = 'Which box is this?')
+    $g = Get-CcBoxGuess
+    $d = $Default
+    if ($g[0]) {
+        Write-CcShow -Color DarkGray -Text ('  This box looks like: {0} ({1})' -f $g[0], $g[1])
+        $letter = @{ dc = 'd'; web = 'b'; ecomm = 'e'; fileshare = 'f'; db = 's'; other = 'o' }[$g[0]]
+        if (-not ($g[0] -eq 'web' -and $Default -eq 'e')) { $d = $letter }
+    }
+    $a = Read-CcChoice -Question $Question -Default $d -Options @('d=domain controller (AD, DNS)', 'b=web: an IIS site', 'e=ecomm: a shop or ordering site', 'f=fileshare: shared folders', 's=database: SQL Server', 'o=other')
+    return @{ d = 'dc'; b = 'web'; e = 'ecomm'; f = 'fileshare'; s = 'db'; o = 'other' }[$a]
+}
+
+# Use-CcNumberedDir 'name'   -> <out>\name-1, name-2, ... (next free number).
+#   Creates run.txt (id, host, time) and output.txt, which gets every screen
+#   line from now on.  Work files go in <run folder>\.work (removed at the end).
+function Use-CcNumberedDir {
+    param([Parameter(Mandatory=$true)][string]$Name)
+    $c = $script:Cc
+    $max = 0
+    foreach ($d in @(Get-ChildItem -LiteralPath $c.Out -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer })) {
+        if ($d.Name -match ('^' + [regex]::Escape($Name) + '-(\d+)$')) { $n = [int]$matches[1]; if ($n -gt $max) { $max = $n } }
+    }
+    $n = $max + 1
+    while (Test-Path -LiteralPath (Join-Path $c.Out ($Name + '-' + $n))) { $n++ }
+    $c.RunDir = Join-Path $c.Out ($Name + '-' + $n)
+    try { New-Item -ItemType Directory -Path (Join-Path $c.RunDir '.work') -Force -ErrorAction Stop | Out-Null }
+    catch { Stop-Cc -Code 3 -Message ('cannot create run folder {0}: {1}' -f $c.RunDir, $_.Exception.Message) }
+    $c.Work = Join-Path $c.RunDir '.work'
+    $c.CsvDir = $c.Work
+    $c.Numbered = $true
+    $c.RunUndo = Join-Path $c.RunDir 'undo.txt'
+    [IO.File]::WriteAllText((Join-Path $c.RunDir 'run.txt'), ("id={0}`r`nhost={1}`r`ntime={2}`r`n" -f $c.Id, $c.Host, $c.Ts))
+    # output.txt starts with the log so far (the start line), without DEBUG and NOTE lines.
+    $c.Tee = Join-Path $c.RunDir 'output.txt'
+    $lines = @()
+    if ($c.Log -and (Test-Path -LiteralPath $c.Log)) { $lines = @(Get-Content -LiteralPath $c.Log | Where-Object { $_ -notmatch '\[(DEBUG|NOTE)\]' }) }
+    [IO.File]::WriteAllText($c.Tee, (($lines -join "`r`n") + $(if ($lines.Count) { "`r`n" } else { '' })))
+    Write-CcLog -Level DEBUG -Message ('run folder: ' + $c.RunDir)
+}
+
+# New-CcTable -Name accounts -Columns @('account','admin','enabled')
+#   -> the path of <run folder>\accounts.txt, a " | " table with that header.
+#   Add-CcTableRow adds a line; Format-CcTable pads the columns at the end.
+function New-CcTable {
+    param([Parameter(Mandatory=$true)][string]$Name, [Parameter(Mandatory=$true)][string[]]$Columns)
+    $c = $script:Cc
+    if ($c.RunDir) { $f = Join-Path $c.RunDir ($Name + '.txt') } else { $f = Join-Path $c.Out ('{0}_{1}_{2}_{3}.txt' -f $c.Id, $c.Host, $c.Ts, $Name) }
+    [IO.File]::WriteAllText($f, (ConvertTo-CcTableLine -Values $Columns) + "`r`n")
+    return $f
+}
+# ConvertTo-CcTableLine @('a','b')   -> 'a | b' ("|" in a value becomes "/").
+function ConvertTo-CcTableLine {
+    param([object[]]$Values)
+    $out = @()
+    foreach ($v in @($Values)) { $s = ''; if ($null -ne $v) { $s = [string]$v }; $out += (($s -replace "[`r`n]+", ' ') -replace '\|', '/') }
+    return ($out -join ' | ')
+}
+function Add-CcTableRow {
+    param([Parameter(Mandatory=$true)][string]$File, [object[]]$Values)
+    [IO.File]::AppendAllText($File, (ConvertTo-CcTableLine -Values $Values) + "`r`n")
+}
+# Format-CcTable FILE   -> pad every column to its widest value (in place).
+function Format-CcTable {
+    param([Parameter(Mandatory=$true)][string]$File)
+    if (-not (Test-Path -LiteralPath $File)) { return }
+    # An ArrayList keeps each row an array of its own, even with one row.
+    $rows = New-Object System.Collections.ArrayList
+    foreach ($line in @(Get-Content -LiteralPath $File)) { [void]$rows.Add(@($line -split '\|' | ForEach-Object { $_.Trim() })) }
+    $w = @{}
+    foreach ($r in $rows) { for ($i = 0; $i -lt $r.Count; $i++) { if (-not $w.ContainsKey($i) -or $r[$i].Length -gt $w[$i]) { $w[$i] = $r[$i].Length } } }
+    $out = @()
+    foreach ($r in $rows) {
+        $cells = @(); for ($i = 0; $i -lt $r.Count; $i++) { $cells += $r[$i].PadRight($w[$i]) }
+        $out += (($cells -join ' | ').TrimEnd())
+    }
+    [IO.File]::WriteAllText($File, (($out -join "`r`n") + "`r`n"))
+}
+# ConvertTo-CcTableFile CSV TXT   -> the CSV as a padded " | " table.
+function ConvertTo-CcTableFile {
+    param([string]$Csv, [string]$Txt)
+    $first = @(Get-Content -LiteralPath $Csv -TotalCount 1)
+    if ($first.Count -eq 0) { return }
+    $cols = @($first[0] -split ',' | ForEach-Object { $_.Trim().Trim('"') })
+    [IO.File]::WriteAllText($Txt, (ConvertTo-CcTableLine -Values $cols) + "`r`n")
+    foreach ($row in @(Import-Csv -LiteralPath $Csv)) {
+        $vals = @(); foreach ($col in $cols) { $vals += $row.$col }
+        Add-CcTableRow -File $Txt -Values $vals
+    }
+    Format-CcTable -File $Txt
+}
+
+# -----------------------------------------------------------------------------
+# Revert timer (the same as lib.sh's): never locked out
+# -----------------------------------------------------------------------------
+# Start-CcTimer -Seconds 120
+#   After the changes, everything this run recorded with Add-CcUndo is undone
+#   by itself unless the operator answers "keep" (Complete-CcTimer), having
+#   logged in again from a NEW session.  The revert is a one-time scheduled
+#   task running as SYSTEM, so it still happens if this RDP or PowerShell
+#   session is cut off - which is the point.  Scheduled tasks start on the
+#   minute, so the time is rounded up to the next minute.
+#   Files in the run folder: undo.txt (this run's undo lines), revert.ps1
+#   (runs them, newest first), revert.log, KEEP (made by "keep", or by hand
+#   from another session: New-Item <run folder>\KEEP).
+#   $env:BT_TEST_SCHTASKS = FILE: the schtasks command is written there, not run.
+function Start-CcTimer {
+    param([int]$Seconds = 120)
+    $c = $script:Cc
+    if (-not $c.Apply) { return }
+    if (-not $c.RunDir) { Stop-Cc -Code 1 -Message 'Start-CcTimer needs Use-CcNumberedDir first' }
+    $revert = Join-Path $c.RunDir 'revert.ps1'
+    $task = ('BT-revert-{0}-{1}' -f $c.Id, $c.Ts)
+    $body = @'
+# Undo one run of TASKID (made by the library's revert timer).
+#   powershell -NoProfile -ExecutionPolicy Bypass -File revert.ps1 -Force
+param([switch]$Force)
+$d = Split-Path -Parent $MyInvocation.MyCommand.Path
+$log = Join-Path $d 'revert.log'
+if ((Test-Path -LiteralPath (Join-Path $d 'KEEP')) -and -not $Force) { exit 0 }
+if (Test-Path -LiteralPath (Join-Path $d 'REVERTED')) { exit 0 }
+[IO.File]::WriteAllText((Join-Path $d 'REVERTED'), [DateTime]::UtcNow.ToString('o'))
+$lines = @()
+if (Test-Path -LiteralPath (Join-Path $d 'undo.txt')) { $lines = @(Get-Content -LiteralPath (Join-Path $d 'undo.txt')) }
+[Array]::Reverse($lines)
+foreach ($l in $lines) {
+    $cmd = ($l -split "`t")[3]
+    if (-not $cmd) { continue }
+    try { Invoke-Expression $cmd; [IO.File]::AppendAllText($log, ('ok: ' + $cmd + "`r`n")) }
+    catch { [IO.File]::AppendAllText($log, ('FAILED: ' + $cmd + ' : ' + $_.Exception.Message + "`r`n")) }
+}
+if (Get-Command schtasks.exe -ErrorAction SilentlyContinue) { & schtasks.exe /Delete /TN 'TASKNAME' /F 2>&1 | Out-Null }
+'@
+    [IO.File]::WriteAllText($revert, $body.Replace('TASKID', $c.Id).Replace('TASKNAME', $task))
+    if (-not (Test-Path -LiteralPath $c.RunUndo)) { [IO.File]::WriteAllText($c.RunUndo, '') }
+    $at = [DateTime]::Now.AddSeconds($Seconds)
+    if ($at.Second -gt 0) { $at = $at.AddSeconds(60 - $at.Second) }
+    $tr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $revert + '"'
+    $args2 = @('/Create', '/TN', $task, '/SC', 'ONCE', '/ST', $at.ToString('HH:mm'), '/RU', 'SYSTEM', '/RL', 'HIGHEST', '/F', '/TR', $tr)
+    if ($env:BT_TEST_SCHTASKS) {
+        [IO.File]::AppendAllText($env:BT_TEST_SCHTASKS, ('schtasks ' + ($args2 -join ' ') + "`r`n"))
+    } else {
+        $o = Invoke-CcProgram -FilePath schtasks.exe -Arguments $args2
+        if ($LASTEXITCODE -ne 0) {
+            Write-CcShow -Color Red -Text ('[x] The revert timer could not be set (schtasks: ' + (($o | Out-String).Trim()) + '). Undo by hand if needed: ' + $revert)
+            return
+        }
+    }
+    if ($at.Date -ne [DateTime]::Now.Date) { Write-CcShow -Color Yellow -Text ('[*] The revert time is after midnight: check it with  schtasks /Query /TN ' + $task) }
+    $c.TimerTask = $task; $c.TimerAt = $at
+    Write-CcShow -Color Yellow -Text ('[*] Revert timer: everything is undone at {0} unless you keep it at the end.' -f $at.ToString('HH:mm'))
+}
+# Stop-CcTimer   -> remove the scheduled revert (the changes stay).
+function Stop-CcTimer {
+    $c = $script:Cc
+    if (-not $c.TimerTask) { return }
+    if ($env:BT_TEST_SCHTASKS) { [IO.File]::AppendAllText($env:BT_TEST_SCHTASKS, ('schtasks /Delete /TN ' + $c.TimerTask + " /F`r`n")) }
+    else { Invoke-CcProgram -FilePath schtasks.exe -Arguments @('/Delete', '/TN', $c.TimerTask, '/F') | Out-Null }
+    $c.TimerTask = $null
+}
+# Complete-CcTimer   -> the keep question.  $true when the changes are kept.
+#   -Batch keeps them; no console: they are undone unless KEEP is made.
+function Complete-CcTimer {
+    $c = $script:Cc
+    if (-not $c.TimerTask) { return $true }
+    $keep = Join-Path $c.RunDir 'KEEP'; $rev = Join-Path $c.RunDir 'REVERTED'; $revert = Join-Path $c.RunDir 'revert.ps1'
+    Write-CcHeader 'KEEP OR REVERT'
+    if (-not (Test-Path -LiteralPath $c.RunUndo) -or (Get-Item -LiteralPath $c.RunUndo).Length -eq 0) {
+        Stop-CcTimer; [IO.File]::WriteAllText($keep, ''); return $true
+    }
+    if (Test-Path -LiteralPath $rev) { Write-CcShow -Color Red -Text ('[!] The revert timer already ran: the changes were undone (see ' + (Join-Path $c.RunDir 'revert.log') + ')'); return $false }
+    if ($c.Batch) {
+        [IO.File]::WriteAllText($keep, ''); Stop-CcTimer
+        Write-CcShow -Color Green -Text ('[+] Changes kept (-Batch). Revert later: powershell -NoProfile -ExecutionPolicy Bypass -File "' + $revert + '" -Force')
+        return $true
+    }
+    if (-not (Test-CcCanAsk)) {
+        Write-CcShow -Color Yellow -Text ('[*] No console to ask. The changes are undone at {0} unless you run, from any session:  New-Item "{1}"' -f $c.TimerAt.ToString('HH:mm'), $keep)
+        return $true
+    }
+    Write-CcShow -Color Yellow -Text '[*] Check you can still get in: open a NEW RDP or PowerShell session and log in now.'
+    if (Read-CcAsk -Question ('Keep these changes? (undone by themselves at ' + $c.TimerAt.ToString('HH:mm') + ')') -Default N -Yes 'yes, keep them (I logged in from a new session)' -No 'no, put everything back now') {
+        if (Test-Path -LiteralPath $rev) { Write-CcShow -Color Red -Text '[!] Too late: the timer ran out and the changes were undone'; return $false }
+        [IO.File]::WriteAllText($keep, ''); Stop-CcTimer
+        Write-CcShow -Color Green -Text ('[+] Changes kept. Revert later: powershell -NoProfile -ExecutionPolicy Bypass -File "' + $revert + '" -Force')
+        return $true
+    }
+    Stop-CcTimer
+    & $revert -Force | Out-Null
+    Write-CcShow -Color Red -Text ('[!] Changes undone. What was done: ' + (Join-Path $c.RunDir 'revert.log'))
+    return $false
+}
+
+# -----------------------------------------------------------------------------
 # Start-up
 # -----------------------------------------------------------------------------
 
@@ -360,8 +728,15 @@ function Initialize-Cc {
     $ErrorActionPreference = 'Stop'
     $c = $script:Cc
     $c.Id = $Id; $c.Name = $Name; $c.Kind = $Kind
-    foreach ($k in @('Apply','Quiet','DebugLog','ForceScored','NoProtected')) {
+    foreach ($k in @('Apply','Quiet','DebugLog','ForceScored','NoProtected','Batch','NoColor')) {
         if ($Bound.ContainsKey($k)) { $c[$k] = [bool]$Bound[$k] }
+    }
+
+    # Tests answer the questions through $env:BT_TEST_ANSWERS ('y;n;;o').
+    if ($null -ne $env:BT_TEST_ANSWERS) {
+        $c.Answers = New-Object System.Collections.ArrayList
+        foreach ($a in ($env:BT_TEST_ANSWERS -split ';')) { [void]$c.Answers.Add($a) }
+        $c.AnswersUsed = $true
     }
 
     $h = $env:COMPUTERNAME
@@ -444,6 +819,8 @@ function Add-CcUndo {
     if (-not $script:Cc.Apply) { return }
     $line = "{0}`t{1}`t{2}`t{3}`r`n" -f ([DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")), $script:Cc.Id, $Description, $Command
     [IO.File]::AppendAllText($script:Cc.Undo, $line)
+    # This run's own copy: the revert timer and revert.ps1 undo just these.
+    if ($script:Cc.RunUndo) { [IO.File]::AppendAllText($script:Cc.RunUndo, $line) }
 }
 
 # Invoke-CcProgram -FilePath netsh.exe -Arguments @('advfirewall','show','allprofiles')
@@ -856,7 +1233,11 @@ function Use-CcRunDir {
 function Save-CcOutput {
     param([Parameter(Mandatory=$true)][string]$Name, [Parameter(Mandatory=$true)][scriptblock]$Command)
     $c = $script:Cc
-    if ($c.RunDir) { $file = Join-Path (Join-Path $c.RunDir 'raw') ($Name + '.txt') }
+    if ($c.RunDir) {
+        $raw = Join-Path $c.RunDir 'raw'
+        if (-not (Test-Path -LiteralPath $raw)) { New-Item -ItemType Directory -Path $raw -Force | Out-Null }
+        $file = Join-Path $raw ($Name + '.txt')
+    }
     else { $file = Join-Path $c.Out ('{0}_{1}_{2}_{3}.txt' -f $c.Id, $c.Host, $c.Ts, $Name) }
     $head = '# command: ' + $Command.ToString().Trim() + "`r`n# time: " + [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") + "`r`n"
     $text = ''
@@ -997,6 +1378,15 @@ function Complete-Cc {
     if ($c.Done -gt 0) { Write-CcLog -Level INFO -Message ('undo commands for this host are in {0}' -f $c.Undo) }
     if ($c.RunDir) { Write-CcLog -Level INFO -Message ('results: {0}' -f $c.RunDir) }
     if ($c.Log) { Write-CcLog -Level INFO -Message ('log: {0}' -f $c.Log) }
+    # A numbered run folder keeps no CSV: each CSV working file becomes a .txt
+    # table (unless the script wrote one) and the work folder goes.
+    if ($c.Numbered -and $c.Work -and (Test-Path -LiteralPath $c.Work) -and $env:BT_TEST_KEEP_CSV -ne '1') {
+        foreach ($f in @(Get-ChildItem -LiteralPath $c.Work -Filter '*.csv' -ErrorAction SilentlyContinue)) {
+            $t = Join-Path $c.RunDir ([IO.Path]::GetFileNameWithoutExtension($f.Name) + '.txt')
+            if (-not (Test-Path -LiteralPath $t)) { try { ConvertTo-CcTableFile -Csv $f.FullName -Txt $t } catch { } }
+        }
+        Remove-Item -LiteralPath $c.Work -Recurse -Force -ErrorAction SilentlyContinue
+    }
     exit $ExitCode
 }
 # <<< BT-LIB

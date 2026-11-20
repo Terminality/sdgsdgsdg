@@ -348,6 +348,14 @@ Library state is in one hashtable, `$Cc`: `$Cc.Apply`, `$Cc.Out`, `$Cc.Log`, `$C
 | `New-CcCsv -Name -Header` / `Add-CcCsvRow -File -Values` | Create a CSV in the output folder; append a quoted row |
 | `Add-CcFinding -Weakness -FixId -Class -Detail [-ProtectedDep]` | Write a finding |
 | `Use-CcRunDir` | Inventory scripts: put this run's CSV files in one folder |
+| `Write-CcShow -Color -Text`, `Write-CcHeader TITLE`, `Write-CcLegend` | The look, the same as the Linux scripts: colours, `==========[ 2/6  title ]==========`, the legend line; a plain copy goes to `output.txt` |
+| `Read-CcChoice -Question -Default -Options @('a=...','o=...')` | A question with lettered answers, each listed under it; Enter takes the default (in capitals). `-Batch`, `BT_NO_TTY=1`, or no console (a scheduled task, `-NonInteractive`) takes and shows the default |
+| `Read-CcAsk -Question -Default Y -Yes 'what yes does' -No 'what no does'` | A yes/no question, shown the same way |
+| `Read-CcText -Question -Default -Hint` | A typed answer; Enter takes the default |
+| `Read-CcBox`, `Test-CcBox NAME` | "Which box is this?": `dc`, `web`, `ecomm`, `fileshare`, `db`, `other`, guessed from the box (a domain controller, IIS, SQL Server, shared folders) |
+| `Use-CcNumberedDir NAME` | Results in `<out>\NAME-1`, `NAME-2`, ... with `output.txt` and `run.txt`; no CSV is left in it at the end (each becomes a `.txt` table) |
+| `New-CcTable -Name -Columns`, `Add-CcTableRow`, `Format-CcTable` | A `.txt` table (`a | b | c`, columns padded), the format SH-04 reads |
+| `Start-CcTimer -Seconds 120`, `Complete-CcTimer` | The revert timer: a one-time scheduled task (as SYSTEM) runs this run's undo lines unless "keep" is answered after logging in from a **new** session. `-Batch` keeps; no answer means undone. Tasks start on the minute, so the time is rounded up |
 | `Save-CcOutput -Name -Command {}` | Keep a read-only block's untouched output in `raw\<Name>.txt`; an error is recorded in the file instead of stopping the script |
 | `Add-CcFlag -Severity -Section -Item -Detail` | Record something unusual (`HIGH`, `MED`, `LOW`) |
 | `Show-CcFlagReport [-Max]` / `Get-CcFlagReport` | Print, or return, the HIGH then MED flags and the counts |
