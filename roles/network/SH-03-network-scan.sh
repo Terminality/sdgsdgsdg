@@ -4,7 +4,7 @@
 # NAME:     Network scan
 # ROLE:     Network  (wave 1)
 # KIND:     readonly - sends probes, changes nothing on any host
-# VERSION:  2.2.1
+# VERSION:  2.3.0
 #
 # PURPOSE
 #   Finds every live host and open port on the team's networks.  Asks what
@@ -52,6 +52,8 @@
 #   --full-hosts LIST           full scan only these hosts    (default all up)
 #   --os / --no-os              OS guess, root only           (default yes)
 #   --udp / --no-udp            top 25 UDP ports, root only   (default no)
+#   --team-number N    also scan the outside range 10.100.N.0/24 (the team
+#                      packet's numbering; asked when not given, Enter skips)
 #   --profile NAME     preset answers, no questions:
 #                        fast     quick scan + services
 #                        full     quick + full + services (+ OS as root)
@@ -77,6 +79,11 @@
 #   output.txt      everything shown on screen, without colour
 #   summary.txt     the summary page
 #   hosts.txt       ip, name, status, open ports, OS guess
+#   roles.txt       what each box looks like: ip, guess (router, Gitea, file
+#                   share, domain controller, Windows, RabbitMQ, Home
+#                   Assistant, web app), os, why
+#   suggested-hosts.txt   host-list rows for config/hosts.txt (copy the right
+#                   ones, give them real names)
 #   ports.txt       one line per open port with service and version
 #   vulns.txt       what the vuln and default scripts found
 #   flags.txt       every flag, HIGH first
@@ -134,7 +141,7 @@ while [ "$_cc_d" != "/" ] && [ ! -f "$_cc_d/lib/lib.sh" ]; do _cc_d=$(dirname "$
 # Ports the fallback engines check (TCP only).  Chosen for competition networks:
 # the usual scored services, Windows/AD, databases, remote admin, and ports
 # red teams like.
-FALLBACK_PORTS="21,22,23,25,53,80,88,110,111,135,139,143,389,443,445,464,465,514,587,593,636,993,995,1080,1433,1521,2049,2375,3000,3268,3306,3389,4444,5000,5432,5601,5900,5985,5986,6379,6667,8000,8080,8081,8443,8888,9000,9090,9200,10000,11211,27017,31337"
+FALLBACK_PORTS="21,22,23,25,53,80,88,110,111,135,139,143,389,443,445,464,465,514,587,593,636,993,995,1080,1433,1521,2049,2222,2375,3000,3268,3306,3389,4444,5000,5432,5601,5672,5900,5985,5986,6379,6667,8000,8080,8081,8123,8443,8888,9000,9090,9200,10000,11211,15672,27017,31337"
 
 usage() {
     cat <<'USAGE'
@@ -157,6 +164,7 @@ SH-03 Network scan - live hosts, open ports, services, vulns
   --full-hosts LIST           full scan only these hosts    (default all up)
   --os / --no-os              OS guess, needs root          (default yes)
   --udp / --no-udp            top 25 UDP ports, needs root  (default no)
+  --team-number N      also scan the outside range 10.100.N.0/24 (asked; Enter skips)
   --profile NAME       fast | full | udp | outside  (preset answers, no questions)
   --ports LIST         scan only these ports instead of the quick and full scans
   --engine NAME        nmap | python | bash | nc     (default: best available)
@@ -173,6 +181,7 @@ USAGE
 
 # ---- Options ----------------------------------------------------------------
 TARGETS=""
+TEAMNUM=""
 HOSTLIST=""
 PROFILE=""
 PORTS=""
@@ -209,6 +218,7 @@ while [ $# -gt 0 ]; do
                         for _t in $(sed 's/#.*//' "$2"); do add_target "$_t"; done
                         shift 2 ;;
         --hosts)        [ $# -ge 2 ] || cc_die 2 "--hosts needs a file"; HOSTLIST=$2; shift 2 ;;
+        --team-number)  [ $# -ge 2 ] || cc_die 2 "--team-number needs a number"; TEAMNUM=$2; shift 2 ;;
         --profile)      [ $# -ge 2 ] || cc_die 2 "--profile needs a name"; PROFILE=$2; shift 2 ;;
         --ports)        [ $# -ge 2 ] || cc_die 2 "--ports needs a list"; PORTS=$2; shift 2 ;;
         --engine)       [ $# -ge 2 ] || cc_die 2 "--engine needs a name"; ENGINE=$2; shift 2 ;;
@@ -354,13 +364,24 @@ if [ "$NMAP_MISSING" = 1 ]; then
 elif [ "$ENGINE" = nmap ]; then
     cc_show "$C_GRN" "[ok] nmap found: $(nmap --version 2>/dev/null | head -n 1)"
 fi
+case "$TEAMNUM" in ''|none) ;; *[!0-9]*) cc_die 2 "--team-number: a number from 1 to 254" ;; *) [ "$TEAMNUM" -ge 1 ] && [ "$TEAMNUM" -le 254 ] || cc_die 2 "--team-number: a number from 1 to 254" ;; esac
 if [ -z "$TARGETS" ]; then
     _can=0; _cc_can_ask && _can=1
-    [ "$_can" = 1 ] || cc_die 2 "nothing to scan: give --target or --targets-file (try --help)"
-    cc_ask_text "What should I scan?" "$(guess_target)" "one host 10.0.2.5, a range 10.0.2.1-50 or a subnet 10.0.2.0/24; several separated by spaces"
-    for _t in $(printf '%s' "$CC_ANSWER" | tr ',' ' '); do add_target "$_t"; done
-    [ -n "$TARGETS" ] || cc_die 2 "nothing to scan"
+    if [ "$_can" = 0 ] && { [ -z "$TEAMNUM" ] || [ "$TEAMNUM" = none ]; }; then cc_die 2 "nothing to scan: give --target, --targets-file or --team-number (try --help)"; fi
+    if [ "$_can" = 1 ]; then
+        cc_ask_text "What should I scan? (the inside network this box is on is the default)" "$(guess_target)" "one host 10.0.2.5, a range 10.0.2.1-50 or a subnet 10.0.2.0/24; several separated by spaces"
+        for _t in $(printf '%s' "$CC_ANSWER" | tr ',' ' '); do add_target "$_t"; done
+    fi
 fi
+# The outside range is 10.100.TEAM.0/24 (the team packet's numbering):
+# asked, so nobody needs to know it before the day.
+if [ -z "$TEAMNUM" ] && _cc_can_ask; then
+    cc_ask_text "Your team number? It adds the outside range 10.100.N.0/24 to the scan" "" "a number from 1 to 254 (Enter = skip the outside range)"
+    case "$CC_ANSWER" in ''|*[!0-9]*) [ -n "$CC_ANSWER" ] && cc_show "$C_YEL" "[*] '$CC_ANSWER' is not a team number: the outside range is skipped" ;;
+        *) [ "$CC_ANSWER" -ge 1 ] && [ "$CC_ANSWER" -le 254 ] && TEAMNUM=$CC_ANSWER ;; esac
+fi
+case "$TEAMNUM" in ''|none) ;; *) case " $TARGETS " in *" 10.100.$TEAMNUM.0/24 "*) ;; *) add_target "10.100.$TEAMNUM.0/24"; cc_show "$C_GRN" "[ok] team $TEAMNUM: the outside range 10.100.$TEAMNUM.0/24 is scanned too" ;; esac ;; esac
+[ -n "$TARGETS" ] || cc_die 2 "nothing to scan"
 
 # ask VAR QUESTION DEFAULT [YES-MEANS] [NO-MEANS] -> fill VAR with Y or N
 #   unless a flag already did.
@@ -473,6 +494,7 @@ port_name() {
         3306) echo mysql ;; 3389) echo ms-wbt-server ;; 5432) echo postgresql ;; 5601) echo kibana ;;
         5900) echo vnc ;; 5985) echo wsman ;; 5986) echo wsmans ;; 6379) echo redis ;; 6667) echo irc ;;
         8080|8000|8081|8888|9000|9090|3000|5000) echo http-alt ;; 8443) echo https-alt ;; 9200) echo elasticsearch ;;
+        2222) echo ssh-alt ;; 5672) echo amqp ;; 15672) echo rabbitmq-mgmt ;; 8123) echo home-assistant ;;
         10000) echo webmin ;; 11211) echo memcache ;; 27017) echo mongodb ;; *) echo "" ;;
     esac
 }
@@ -1040,11 +1062,54 @@ _fl="$CC_RUN_DIR/flags.txt"
 [ -f "$_fl" ] || cc_table_line severity section item detail time >"$_fl"
 if ! awk -F'|' 'NR > 1 { gsub(/ /, "", $1); if ($1 == "HIGH" || $1 == "MED") f = 1 } END { exit !f }' "$_fl"; then show "$C_GRN" "  [ok] nothing high or medium"; fi
 
+# ---- What each box looks like ------------------------------------------------------
+# A guess per address from its open ports and the versions it shows, so the
+# boxes on the team's diagram can be matched to their addresses.  Also
+# written as host-list rows (suggested-hosts.txt) for config/hosts.txt.
+show "" ""
+show "$C_CYN" "==========[ what each box looks like ]=========="
+RC=$(cc_table_new roles ip guess os why)
+awk -F'|' -v upf="$W/up" -v rc="$RC" -v sug="$CC_RUN_DIR/suggested-hosts.txt" '
+    BEGIN { while ((getline l < upf) > 0) { split(l, u, "|"); order[++n] = u[1]; os[u[1]] = tolower(u[3]) } }
+    { k = $2 "/" $3; P[$1, k] = 1; v = tolower($5 " " $4); V[$1] = V[$1] " " v }
+    function has(ip, k) { return ((ip, k) in P) }  # awk, not shell: posix-ok
+    END {
+        print "# name     ip               os       role         connect  port  user    scored_services  notes" > sug
+        for (i = 1; i <= n; i++) {
+            ip = order[i]; g = ""; why = ""; o = "linux"; r = "server"; c = "ssh"; cp = 22; us = "root"; sc = ""
+            vv = V[ip]
+            if (vv ~ /dropbear|openwrt|luci|uhttpd/) { g = "router (OpenWRT)"; why = "dropbear / LuCI / uhttpd"; o = "openwrt"; r = "router"; sc = "ssh:22" }
+            else if (has(ip, "tcp/88") && has(ip, "tcp/389")) { g = "Windows domain controller (AD)"; why = "Kerberos 88 + LDAP 389"; o = "windows"; r = "domain-ctrl"; c = "winrm"; cp = 5985; us = "-"; sc = "dns:53;ldap:389" }
+            else if (vv ~ /gitea|forgejo|gogs/ || (has(ip, "tcp/3000") && !has(ip, "tcp/445"))) { g = "Gitea (git server)"; why = (vv ~ /gitea/ ? "says Gitea" : "web on 3000"); r = "gitea"; sc = "http:3000" }
+            else if (has(ip, "tcp/445") || has(ip, "tcp/2049")) {
+                if (has(ip, "tcp/3389") || has(ip, "tcp/5985") || os[ip] ~ /windows/) { g = "Windows server"; why = "SMB + RDP/WinRM"; o = "windows"; r = "windows"; c = "winrm"; cp = 5985; us = "-" }
+                else { g = "file share (" (has(ip, "tcp/445") ? "Samba" : "") (has(ip, "tcp/445") && has(ip, "tcp/2049") ? " + " : "") (has(ip, "tcp/2049") ? "NFS" : "") ")"; why = "SMB 445 / NFS 2049"; r = "fileshare"; sc = (has(ip, "tcp/445") ? "smb:445" : "nfs:2049") } }
+            else if (has(ip, "tcp/3389") || has(ip, "tcp/5985") || os[ip] ~ /windows/) { g = "Windows box"; why = "RDP / WinRM"; o = "windows"; r = "windows"; c = "winrm"; cp = 5985; us = "-" }
+            else if (has(ip, "tcp/5672") || has(ip, "tcp/15672") || vv ~ /rabbitmq/) { g = "RabbitMQ (message queue)"; why = "AMQP 5672 / management 15672"; r = "rabbitmq"; sc = "amqp:5672" }
+            else if (has(ip, "tcp/8123") || vv ~ /home assistant/) { g = "Home Assistant"; why = "8123"; r = "homeassist"; sc = "http:8123" }
+            else if (has(ip, "tcp/80") || has(ip, "tcp/443")) { g = "web app"; why = "HTTP" (has(ip, "tcp/443") ? "S" : ""); r = "web"; sc = (has(ip, "tcp/443") ? "https:443" : "http:80") }
+            else if (has(ip, "tcp/22")) { g = "Linux box (SSH only)"; why = "SSH" }
+            else { g = "unknown"; why = "no port this script knows"; c = "none"; cp = "-"; us = "-" }
+            if (os[ip] ~ /alpine/) o = "linux"
+            print ip " | " g " | " os[ip] " | " why >> rc
+            print g "	" ip "	" why
+            nm = ip; sub(/.*\./, "box", nm)
+            printf "%-10s %-16s %-8s %-12s %-8s %-5s %-7s %-16s %s\n", nm, ip, o, r, c, cp, us, (sc == "" ? "-" : sc), "from SH-03: " g >> sug
+        }
+    }' "$W/open" >"$W/roles"
+# Hosts with no open port at all are in $W/up but not in $W/open: still listed.
+while IFS="$(printf '\t')" read -r _g _ip _why; do
+    case "$_g" in unknown) _c=$C_GRY ;; "router (OpenWRT)"|"Windows domain controller (AD)") _c=$C_CYN ;; *) _c=$C_GRN ;; esac
+    show "$_c" "  $(printf '%-16s %-32s (%s)' "$_ip" "$_g" "$_why")"
+done <"$W/roles"
+[ -s "$W/roles" ] || show "$C_GRY" "  (no open ports to go by)"
+show "$C_GRY" "  Host-list rows for these: $CC_RUN_DIR/suggested-hosts.txt (copy the right ones to config/hosts.txt and give them real names)"
+
 # ---- Tables lined up ---------------------------------------------------------------
 # shellcheck disable=SC2034  # read by cc_flag_report in the library
 CC_FLAGS=$_fl
 cc_table_sort_flags "$_fl"
-for _t in "$HC" "$PC" "$VC" "${SC:-}"; do [ -n "$_t" ] && cc_table_align "$_t"; done
+for _t in "$HC" "$PC" "$VC" "${SC:-}" "$RC"; do [ -n "$_t" ] && cc_table_align "$_t"; done
 
 # ---- Summary ----------------------------------------------------------------
 _nup=$(grep -c . "$W/up")
