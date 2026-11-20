@@ -11,7 +11,7 @@ Flókið applications:
 | Kvígindis (Ubuntu 24.04) | .44 | furniture help site | SV-01, SV-21, SV-20/42, SV-16 |
 | Skerja (Alpine 3.23) | .97 | tickets | SV-01, SV-21, SV-20/42, SV-16 |
 | Thorska (Fedora 44) | .231 | Home Manager | SV-01, SV-21, SV-50 |
-| Djupi (Mint 22.3) | ? | POS | SV-01, SV-21, SV-20/42, SV-16 |
+| Djupi (Mint 22.3) | .222 | POS | SV-01, SV-21, SV-20/42, SV-16 |
 | Haf (Lubuntu 22) | .67 | "Wabbit" (RabbitMQ?) | SV-50 |
 
 ## How every script works

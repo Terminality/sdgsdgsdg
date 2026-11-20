@@ -261,8 +261,8 @@ done
 kill "$LPID" 2>/dev/null
 t_start "this network: the team number, what each box looks like"
 r=$(srun --out "$T_TMP/tn" --target 10.9.9.0/24 --team-number 7 --batch --no-os --no-color 2>&1)
-t_has "$r" "[ok] team 7: the outside range 10.100.7.0/24 is scanned too" "--team-number adds the outside range"
-t_has "$(tail -n 3 "$STUBLOG" | head -n 1)$(cat "$STUBLOG")" "10.100.7.0/24" "and it is scanned"
+t_has "$r" "[ok] team 7: the outside range 10.100.107.0/24 is scanned too" "--team-number 7 adds 10.100.107.0/24 (1:1 NAT, 10.100.1XX)"
+t_has "$(tail -n 3 "$STUBLOG" | head -n 1)$(cat "$STUBLOG")" "10.100.107.0/24" "and it is scanned"
 srun --target 10.9.9.0/24 --team-number 300 --batch >/dev/null 2>&1; t_eq "$?" 2 "a team number over 254 exits 2"
 guess() { ( export STUB_P="$1"; srun --out "$T_TMP/g" --target 10.9.9.5 --team-number none --batch --no-os --no-color 2>&1 ); }
 r=$(guess "22/open/tcp//ssh//dropbear sshd 2022.82/, 80/open/tcp//http//LuCI Lua http config/")

@@ -52,8 +52,9 @@
 #   --full-hosts LIST           full scan only these hosts    (default all up)
 #   --os / --no-os              OS guess, root only           (default yes)
 #   --udp / --no-udp            top 25 UDP ports, root only   (default no)
-#   --team-number N    also scan the outside range 10.100.N.0/24 (the team
-#                      packet's numbering; asked when not given, Enter skips)
+#   --team-number N    also scan the outside range 10.100.1NN.0/24: team 2 is
+#                      10.100.102.0/24, team 13 is 10.100.113.0/24 (1:1 NAT,
+#                      the team packet's numbering; asked, Enter skips)
 #   --profile NAME     preset answers, no questions:
 #                        fast     quick scan + services
 #                        full     quick + full + services (+ OS as root)
@@ -1746,7 +1747,7 @@ SH-03 Network scan - live hosts, open ports, services, vulns
   --full-hosts LIST           full scan only these hosts    (default all up)
   --os / --no-os              OS guess, needs root          (default yes)
   --udp / --no-udp            top 25 UDP ports, needs root  (default no)
-  --team-number N      also scan the outside range 10.100.N.0/24 (asked; Enter skips)
+  --team-number N      also scan the outside range 10.100.(100+N).0/24, e.g. team 2: 10.100.102.0/24 (asked)
   --profile NAME       fast | full | udp | outside  (preset answers, no questions)
   --ports LIST         scan only these ports instead of the quick and full scans
   --engine NAME        nmap | python | bash | nc     (default: best available)
@@ -1946,7 +1947,7 @@ if [ "$NMAP_MISSING" = 1 ]; then
 elif [ "$ENGINE" = nmap ]; then
     cc_show "$C_GRN" "[ok] nmap found: $(nmap --version 2>/dev/null | head -n 1)"
 fi
-case "$TEAMNUM" in ''|none) ;; *[!0-9]*) cc_die 2 "--team-number: a number from 1 to 254" ;; *) [ "$TEAMNUM" -ge 1 ] && [ "$TEAMNUM" -le 254 ] || cc_die 2 "--team-number: a number from 1 to 254" ;; esac
+case "$TEAMNUM" in ''|none) ;; *[!0-9]*) cc_die 2 "--team-number: a number from 1 to 155" ;; *) TEAMNUM=$((TEAMNUM + 0)); [ "$TEAMNUM" -ge 1 ] && [ "$TEAMNUM" -le 155 ] || cc_die 2 "--team-number: a number from 1 to 155" ;; esac
 if [ -z "$TARGETS" ]; then
     _can=0; _cc_can_ask && _can=1
     if [ "$_can" = 0 ] && { [ -z "$TEAMNUM" ] || [ "$TEAMNUM" = none ]; }; then cc_die 2 "nothing to scan: give --target, --targets-file or --team-number (try --help)"; fi
@@ -1955,14 +1956,17 @@ if [ -z "$TARGETS" ]; then
         for _t in $(printf '%s' "$CC_ANSWER" | tr ',' ' '); do add_target "$_t"; done
     fi
 fi
-# The outside range is 10.100.TEAM.0/24 (the team packet's numbering):
-# asked, so nobody needs to know it before the day.
+# The outside range (1:1 NAT, the team packet): 10.100.1XX.Y is 192.168.220.Y,
+# XX the team number - team 2 is 10.100.102.0/24.  Asked, so nobody needs to
+# know it before the day.
 if [ -z "$TEAMNUM" ] && _cc_can_ask; then
-    cc_ask_text "Your team number? It adds the outside range 10.100.N.0/24 to the scan" "" "a number from 1 to 254 (Enter = skip the outside range)"
+    cc_ask_text "Your team number? It adds the outside range 10.100.1XX.0/24 (team 2 = 10.100.102.0/24) to the scan" "" "a number from 1 to 155 (Enter = skip the outside range)"
     case "$CC_ANSWER" in ''|*[!0-9]*) [ -n "$CC_ANSWER" ] && cc_show "$C_YEL" "[*] '$CC_ANSWER' is not a team number: the outside range is skipped" ;;
-        *) [ "$CC_ANSWER" -ge 1 ] && [ "$CC_ANSWER" -le 254 ] && TEAMNUM=$CC_ANSWER ;; esac
+        *) _tn=$((CC_ANSWER + 0)); [ "$_tn" -ge 1 ] && [ "$_tn" -le 155 ] && TEAMNUM=$_tn ;; esac
 fi
-case "$TEAMNUM" in ''|none) ;; *) case " $TARGETS " in *" 10.100.$TEAMNUM.0/24 "*) ;; *) add_target "10.100.$TEAMNUM.0/24"; cc_show "$C_GRN" "[ok] team $TEAMNUM: the outside range 10.100.$TEAMNUM.0/24 is scanned too" ;; esac ;; esac
+OUTSIDE=""
+case "$TEAMNUM" in ''|none) ;; *) OUTSIDE="10.100.$((100 + TEAMNUM)).0/24"
+    case " $TARGETS " in *" $OUTSIDE "*) ;; *) add_target "$OUTSIDE"; cc_show "$C_GRN" "[ok] team $TEAMNUM: the outside range $OUTSIDE is scanned too (10.100.$((100 + TEAMNUM)).Y = 192.168.220.Y)" ;; esac ;; esac
 [ -n "$TARGETS" ] || cc_die 2 "nothing to scan"
 
 # ask VAR QUESTION DEFAULT [YES-MEANS] [NO-MEANS] -> fill VAR with Y or N

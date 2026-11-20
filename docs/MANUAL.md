@@ -613,7 +613,7 @@ It asks like sqlmap (Enter takes the default, a flag answers in advance):
 | Question | Default | Flag |
 | --- | --- | --- |
 | What to scan: one host, a range or a subnet; several with spaces | your own network | `--target` |
-| Your team number? It adds the outside range `10.100.N.0/24` | skip | `--team-number N` (`none` skips) |
+| Your team number? It adds the outside range `10.100.1XX.0/24` (team 2: `10.100.102.0/24`) | skip | `--team-number N` (`none` skips) |
 | How aggressive: 1-2 slow and quiet, 3 normal, 4 fast, 5 fastest (can miss ports) | 4 | `--speed N` |
 | Quick scan of the top ports | yes | `--quick` / `--no-quick` |
 | How many top ports | 1000 | `--top-ports N` |
