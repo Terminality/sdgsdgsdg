@@ -43,7 +43,7 @@ record live scored services/accounts/sources in `protected.csv`, and approve
 high-risk changes. The inject lead tracks deadlines and writes submissions;
 the packet requires human-authored inject PDFs.
 
-Copy/run: no host script. Keep AU-01's `service-matrix.csv`, `change-log.csv`
+Copy/run: no host script. Keep INV3-01's `service-matrix.csv`, `change-log.csv`
 and `hardening-status.csv` open.
 
 ## Automation
@@ -51,15 +51,15 @@ and `hardening-status.csv` open.
 Go to the approved jump box. Copy:
 
 ```text
-dist/automation/AU-01-inv3-first15.sh
+dist/automation/INV3-01-first15-setup.sh
 dist/network/SH-03-network-scan.sh
 dist/MANIFEST.sha256
 ```
 
-Run AU-01 locally; it changes no remote host:
+Run INV3-01 locally; it changes no remote host:
 
 ```sh
-sh AU-01-inv3-first15.sh --team TEAM_NUMBER --out ~/ccdc-control --kit DIST_PATH
+sh INV3-01-first15-setup.sh --team TEAM_NUMBER --out ~/ccdc-control --kit DIST_PATH
 ```
 
 Distribute only the role's files below. Do not fan out mutation or password

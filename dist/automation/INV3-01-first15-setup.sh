@@ -1,7 +1,7 @@
 #!/bin/sh
 # =============================================================================
-# ID:       AU-01
-# NAME:     Invitational 3 first-15 controller
+# ID:       INV3-01
+# NAME:     Invitational 3 first-15 setup
 # ROLE:     Automation  (wave 1)
 # KIND:     readonly - writes only to the chosen output folder
 #
@@ -11,8 +11,8 @@
 #   It can launch SH-03 read-only discovery.
 #
 # USAGE
-#   sh AU-01-inv3-first15.sh --team 7 --out ~/ccdc-control
-#   sh AU-01-inv3-first15.sh --team 7 --scan --kit /opt/ccdc/dist --out ~/ccdc-control
+#   sh INV3-01-first15-setup.sh --team 7 --out ~/ccdc-control
+#   sh INV3-01-first15-setup.sh --team 7 --scan --kit /opt/ccdc/dist --out ~/ccdc-control
 #
 # INPUTS
 #   --team N       team number used in the external 10.100.1XX.Y NAT address
@@ -1275,8 +1275,8 @@ cc_finish() {
 
 usage() {
     cat <<'USAGE'
-AU-01 Invitational 3 first-15 controller
-  sh AU-01-inv3-first15.sh --team N [options]
+INV3-01 Invitational 3 first-15 setup
+  sh INV3-01-first15-setup.sh --team N [options]
 
 Options:
   --team N       team number, 1 through 99 (required)
@@ -1308,7 +1308,7 @@ done
 case "$TEAM" in ''|*[!0-9]*) cc_die 2 "--team must be a number from 1 through 99" ;; esac
 [ "$TEAM" -ge 1 ] 2>/dev/null && [ "$TEAM" -le 99 ] 2>/dev/null || cc_die 2 "--team must be from 1 through 99"
 
-cc_init "AU-01" "Invitational 3 first-15 controller" readonly
+cc_init "INV3-01" "Invitational 3 first-15 setup" readonly
 cc_use_numbered_dir "inv3-control"
 
 if [ -z "$KIT" ]; then
@@ -1454,7 +1454,7 @@ Scoring: about 8-12 services checked every 2-4 minutes; SLA after 5 failures.
   5. Stop and revert immediately if access, a service or scoring fails.
 
 Credential rotation is handled by the team's separate procedure (opt-in) in
-INV3-FIRST15-ROLE-CARDS.md. AU-01 itself does not generate, change, store,
+INV3-FIRST15-ROLE-CARDS.md. INV3-01 itself does not generate, change, store,
 transmit or track passwords.
 
 Use hardening-status.csv to gate each host. Inventory, off-host backup,
@@ -1481,7 +1481,7 @@ cc_info "internal network: 192.168.220.0/24"
 cc_info "external NAT prefix: $NAT_PREFIX.Y"
 cc_info "fill protected.csv and service-matrix.csv from Quotient before changes"
 cc_info "track each host's hardening gate in hardening-status.csv"
-cc_info "credential rotation is outside AU-01 and remains with the team process"
+cc_info "credential rotation is outside INV3-01 and remains with the team process"
 
 if [ "$DO_SCAN" -eq 1 ]; then
     SCAN="$KIT/network/SH-03-network-scan.sh"

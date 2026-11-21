@@ -1,6 +1,6 @@
 # Invitational 3 server guide
 
-Use this after AU-01 creates the team workspace. It is based on the packet's
+Use this after INV3-01 creates the team workspace. It is based on the packet's
 host table; live discovery and Quotient override every assumption here.
 
 After discovery and backup, follow [`INV3-HARDENING.md`](INV3-HARDENING.md)

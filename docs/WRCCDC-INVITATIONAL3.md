@@ -17,7 +17,7 @@ use [`INV3-VULNERABILITY-CHECKLIST.md`](INV3-VULNERABILITY-CHECKLIST.md).
 
 Internal network: `192.168.220.0/24`. From outside the OpenWRT router, a team
 reaches `10.100.1XX.Y`, where `XX` is its team number and `Y` is the internal
-last octet. AU-01 calculates both addresses and creates the working files.
+last octet. INV3-01 calculates both addresses and creates the working files.
 
 | Host | Address | OS | Known purpose |
 | --- | --- | --- | --- |
@@ -49,7 +49,7 @@ not proof of the complete environment.
 Create a private control folder:
 
 ```sh
-sh dist/automation/AU-01-inv3-first15.sh --team TEAM_NUMBER \
+sh dist/automation/INV3-01-first15-setup.sh --team TEAM_NUMBER \
   --out ~/ccdc-control --kit dist --scan
 ```
 
@@ -88,7 +88,7 @@ matrix, change log and first-15 guide. It performs no remote mutation.
 - Stop and roll back on the first new failure caused by a team change.
 
 Credential rotation is handled by the team's separate procedure and is outside
-AU-01. This runbook does not generate, change, store or track passwords.
+INV3-01. This runbook does not generate, change, store or track passwords.
 
 ## Router stop conditions
 

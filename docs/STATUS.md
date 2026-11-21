@@ -19,7 +19,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 
 | ID | Script | Risk | Status | File |
 | --- | --- | --- | --- | --- |
-| AU-01 | Invitational 3 first-15 controller | none | built | `roles/automation/AU-01-inv3-first15.sh` |
+| INV3-01 | Invitational 3 first-15 setup | none | built | `roles/automation/INV3-01-first15-setup.sh` |
 | LX-31 | Linux backup | none | built | `roles/linux/LX-31-backup.sh` |
 | WN-35 | Windows backup | none | built | `roles/windows-ad/WN-35-backup.ps1` |
 | SV-14 | Database backup | none | built | `roles/applications/SV-14-db-backup.sh` |

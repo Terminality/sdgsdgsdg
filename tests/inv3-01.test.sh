@@ -1,8 +1,8 @@
 #!/bin/sh
-# Tests for roles/automation/AU-01-inv3-first15.sh.
+# Tests for roles/automation/INV3-01-first15-setup.sh.
 . "$(dirname "$0")/helper.sh"
 SH=${TEST_SHELL:-sh}
-C="$T_ROOT/roles/automation/AU-01-inv3-first15.sh"
+C="$T_ROOT/roles/automation/INV3-01-first15-setup.sh"
 export CCDC_SKIP_VERIFY=1
 run() { $SH "$C" "$@"; }
 

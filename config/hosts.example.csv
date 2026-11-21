@@ -1,6 +1,6 @@
 host,ip,os,role,connect,port,user,scored_services,notes
 # The host list: one row per machine the team defends.
-# AU-01 (host list builder) will create and maintain this file once it exists;
+# INV3-01 (host list builder) will create and maintain this file once it exists;
 # until then, fill it in by hand from the scan and the team packet.
 #
 # host             short name, no domain

@@ -2,17 +2,17 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
-## 2026-11-20: Invitational 3 first-15 controller
+## 2026-11-20: Invitational 3 first-15 setup
 
-- Added AU-01 to calculate the team NAT map and generate private inventory,
+- Added INV3-01 to calculate the team NAT map and generate private inventory,
   protected-service, service-validation and change trackers.
 - Added the Invitational 3 host/protected examples and packet-specific runbook.
-- Kept credential rotation outside AU-01 for the team's separate procedure.
+- Kept credential rotation outside INV3-01 for the team's separate procedure.
 - Added a host-by-host Invitational 3 guide covering first commands, backup
   targets, dependencies, functional checks, stop conditions and official docs.
 - Replaced the old service picture with the packet-specific Mermaid topology
   and role-to-host routing table in the main README.
-- Added per-host Invitational 3 Linux/Windows hardening and an AU-01 hardening
+- Added per-host Invitational 3 Linux/Windows hardening and an INV3-01 hardening
   status tracker; credential rotation remains outside the controller.
 - Added a defensive, packet-specific vulnerability review for every router,
   Windows, Linux and application service, including official advisory sources.

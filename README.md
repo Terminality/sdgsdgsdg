@@ -81,7 +81,7 @@ flowchart TB
 | Role | Start here | Own these systems/tasks |
 | --- | --- | --- |
 | Captain | SSO, Quotient, portal, private Discord | Live service list, announcements, tickets, priorities and risky-change approval |
-| Automation | Approved jump box and AU-01 output | NAT/host map, protected list, service matrix, change log, script distribution and stopping failed fan-out |
+| Automation | Approved jump box and INV3-01 output | NAT/host map, protected list, service matrix, change log, script distribution and stopping failed fan-out |
 | Network | vigra `.2` | OpenWRT backup, interfaces, routes, NAT, firewall, external validation and router recovery |
 | Windows/AD | borgar `.10`, vattar `.79` | Food-ordering stack, AD/DNS, Windows backup, safe fixes, event monitoring and Windows firewall plan |
 | Linux/app 1 | kolla `.30`, gufu `.100`, haf `.67` | Fileshare, Gitea and Wabbit discovery, backup, monitoring and hardening |
@@ -134,7 +134,7 @@ business service and confirms access-risk changes from a fresh connection.
 
 1. Copy the standalone scripts from `dist/` and verify
    `dist/MANIFEST.sha256`.
-2. For Invitational 3, run `AU-01` with the team number to create the private
+2. For Invitational 3, run `INV3-01` with the team number to create the private
    NAT map, protected list, service matrix, change log and first-15 guide.
 3. Copy the WRCCDC host/protected examples into private working files and fill
    them from the current packet and Quotient.
@@ -168,7 +168,7 @@ Copy `dist/MANIFEST.sha256` too if you want each script to check it wasn't chang
 
 | Script | What it does | How to run it |
 | --- | --- | --- |
-| Invitational 3 controller (AU-01) | Creates a private team-specific internal/external NAT map, host list, starter protected list, service matrix, change log and first-15 guide. Optionally launches SH-03 read-only discovery. Credential rotation stays in the team's separate process | `sh dist/automation/AU-01-inv3-first15.sh --team 7 --out ~/ccdc-control --kit dist --scan` |
+| Invitational 3 first-15 setup (INV3-01) | Creates a private team-specific internal/external NAT map, host list, starter protected list, service matrix, change log and first-15 guide. Optionally launches SH-03 read-only discovery. Credential rotation stays in the team's separate process | `sh dist/automation/INV3-01-first15-setup.sh --team 7 --out ~/ccdc-control --kit dist --scan` |
 | Network scan (SH-03) | Live hosts, open ports and service versions. With the host list it checks every scored service is reachable and flags hosts that should not be there. The `wrccdc` profile quickly checks common AD, web, mail, SMB, database and administration ports. Uses nmap, or python, bash or nc when nmap is missing | `sh roles/network/SH-03-network-scan.sh --target 10.0.2.0/24 --hosts config/hosts.csv --profile wrccdc --out ~/ccdc-out` |
 | Scan diff (SH-04) | What changed between two network scans, or two enum runs of one host: new accounts, SSH keys, cron entries, sudo rules, SUID files and listening ports, with the additions flagged first | `sh roles/network/SH-04-scan-diff.sh --type sh05 --out /root/ccdc-out` |
 | Linux enum (SH-05) | Read-only inventory of a Linux or Unix host: accounts, listening ports and their programs, services, cron and other autostart, SSH keys, sudo, processes, risky files, firewall, PAM, credentials files. One-page summary with the problems worst first | `sudo sh roles/linux/SH-05-linux-enum.sh --out /root/ccdc-out` |
