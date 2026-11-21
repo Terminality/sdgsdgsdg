@@ -10,6 +10,14 @@ What changed, newest first. Each entry names the scripts touched and how they we
 - Kept credential rotation outside AU-01 for the team's separate procedure.
 - Added a host-by-host Invitational 3 guide covering first commands, backup
   targets, dependencies, functional checks, stop conditions and official docs.
+- Replaced the old service picture with the packet-specific Mermaid topology
+  and role-to-host routing table in the main README.
+- Added per-host Invitational 3 Linux/Windows hardening and an AU-01 hardening
+  status tracker; credential rotation remains outside the controller.
+- Added a defensive, packet-specific vulnerability review for every router,
+  Windows, Linux and application service, including official advisory sources.
+- Added copy-friendly first-15 role cards and a protected, one-host-at-a-time
+  account rotation phase using the existing standalone password tools.
 
 ## 2026-11-18: WRCCDC invitational readiness
 

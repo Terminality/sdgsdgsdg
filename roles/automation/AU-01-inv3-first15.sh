@@ -24,6 +24,7 @@
 #   inv3-control-N/nat-map.csv           internal-to-external address map
 #   inv3-control-N/protected.csv         starter list; add Quotient data first
 #   inv3-control-N/service-matrix.csv    functional validation tracker
+#   inv3-control-N/hardening-status.csv  one row per host; no credentials
 #   inv3-control-N/change-log.csv        team change record
 #   inv3-control-N/first15.txt           role order and per-host commands
 #
@@ -102,6 +103,7 @@ HOSTS="$CC_RUN_DIR/hosts.csv"
 NAT="$CC_RUN_DIR/nat-map.csv"
 PROTECTED="$CC_RUN_DIR/protected.csv"
 SERVICES="$CC_RUN_DIR/service-matrix.csv"
+HARDENING="$CC_RUN_DIR/hardening-status.csv"
 CHANGES="$CC_RUN_DIR/change-log.csv"
 GUIDE="$CC_RUN_DIR/first15.txt"
 
@@ -176,6 +178,20 @@ thorska,192.168.220.231,,home-manager,,,,,,,,unknown,unknown,,Perform the applic
 djupi,192.168.220.222,,point-of-sale,,,,,,,,unknown,unknown,,Perform a safe test transaction workflow
 EOF
 
+cat >"$HARDENING" <<'EOF'
+host,owner,inventory_complete,backup_off_host,monitoring_started,protected_list_current,safe_fixes_dry_run,safe_fixes_applied,persistence_reviewed,firewall_plan_reviewed,fresh_session_tested,business_tested,quotient_checked,status,notes
+vigra,,no,no,no,no,n/a,n/a,no,no,no,no,no,discovery,Router uses separate OpenWRT procedure; no generic host hardening
+kolla,,no,no,no,no,no,no,no,no,no,no,no,discovery,Preserve authenticated fileshare workflow and ACLs
+borgar,,no,no,no,no,no,no,no,no,no,no,no,discovery,Preserve food-ordering application and database dependencies
+gufu,,no,no,no,no,no,no,no,no,no,no,no,discovery,Preserve Gitea repositories app.ini database and SSH Git if used
+vattar,,no,no,no,no,no,no,no,no,no,no,no,discovery,Preserve complete AD DNS Kerberos LDAP SMB RPC dependencies
+haf,,no,no,no,no,no,no,no,no,no,no,no,discovery,Identify Wabbit before service or firewall hardening
+kvigindis,,no,no,no,no,no,no,no,no,no,no,no,discovery,Preserve help-site web app database and uploads
+skerja,,no,no,no,no,no,no,no,no,no,no,no,discovery,Preserve ticket database attachments sessions and notifications
+thorska,,no,no,no,no,no,no,no,no,no,no,no,discovery,Preserve Home Manager and SELinux firewalld context
+djupi,,no,no,no,no,no,no,no,no,no,no,no,discovery,Preserve POS UI database integrations and transaction data
+EOF
+
 cat >"$CHANGES" <<'EOF'
 utc,requester,owner,host,service,action,exact_command,protected_version,precheck,postcheck,quotient_or_orange,rollback,status,notes
 EOF
@@ -202,20 +218,27 @@ Scoring: about 8-12 services checked every 2-4 minutes; SLA after 5 failures.
   Windows: SH-06; add WN-04 on vattar.
   Linux: SH-05 everywhere; add SV-01 on application/database hosts.
 
-0:08-0:12 - backups and monitoring
+0:08-0:12 - backups, account plan and monitoring
   Windows: WN-35, then WN-44.
   Linux: LX-31; SV-14 where a database exists; then LX-40 and LX-41.
   Copy backups/evidence off each host. A local-only backup is not complete.
+  Build the protected account list from Quotient and service dependencies.
+  Dry-run LX-20/WN-20/NW-10; do not rotate an unknown service/scorer account.
 
-0:12-0:15 - validate and prioritize
-  1. Test each listed business workflow, not only its listening port.
-  2. Compare live hosts and services with the packet and Quotient.
-  3. Start with HIGH findings that threaten access, data or scored services.
-  4. Make one controlled change at a time with a named owner and rollback.
-  5. Stop immediately if access, a service or scoring fails.
+0:12-0:15 - controlled account changes, validate and prioritize
+  1. Rotate only approved interactive accounts, one host/device at a time.
+  2. Test a new SSH/RDP/console login before keeping each password change.
+  3. Do not rotate service, task, app-pool, database, scorer or unknown accounts.
+  4. Test each listed business workflow, not only its listening port.
+  5. Stop and revert immediately if access, a service or scoring fails.
 
-Credential rotation is handled by the team's separate procedure. AU-01 does
-not generate, change, store, transmit or track passwords.
+Credential rotation is handled by the team's separate procedure (opt-in) in
+INV3-FIRST15-ROLE-CARDS.md. AU-01 itself does not generate, change, store,
+transmit or track passwords.
+
+Use hardening-status.csv to gate each host. Inventory, off-host backup,
+monitoring, current protected list and a business test come before safe fixes.
+Firewall planning and fresh-session validation are last.
 
 VALIDATION AFTER EVERY CHANGE
 =============================
@@ -236,6 +259,7 @@ cc_info "team $TEAM workspace: $CC_RUN_DIR"
 cc_info "internal network: 192.168.220.0/24"
 cc_info "external NAT prefix: $NAT_PREFIX.Y"
 cc_info "fill protected.csv and service-matrix.csv from Quotient before changes"
+cc_info "track each host's hardening gate in hardening-status.csv"
 cc_info "credential rotation is outside AU-01 and remains with the team process"
 
 if [ "$DO_SCAN" -eq 1 ]; then

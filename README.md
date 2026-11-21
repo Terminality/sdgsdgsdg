@@ -27,6 +27,9 @@ every change**.
 | The WRCCDC competition-day order, roles and commands | [`docs/WRCCDC-INVITATIONAL.md`](docs/WRCCDC-INVITATIONAL.md) |
 | The 2026 Invitational 3 packet-specific environment and first 15 minutes | [`docs/WRCCDC-INVITATIONAL3.md`](docs/WRCCDC-INVITATIONAL3.md) |
 | What every Invitational 3 server does, first commands and official resources | [`docs/INV3-SERVER-GUIDE.md`](docs/INV3-SERVER-GUIDE.md) |
+| What vulnerabilities and misconfigurations to inspect on every Invitational 3 service | [`docs/INV3-VULNERABILITY-CHECKLIST.md`](docs/INV3-VULNERABILITY-CHECKLIST.md) |
+| How to harden each Invitational 3 Linux and Windows server safely | [`docs/INV3-HARDENING.md`](docs/INV3-HARDENING.md) |
+| What each role copies and runs in the first 15 minutes, including controlled account rotation | [`docs/INV3-FIRST15-ROLE-CARDS.md`](docs/INV3-FIRST15-ROLE-CARDS.md) |
 | What to do after a finding and how to roll it back | [`docs/RESPONSE-MATRIX.md`](docs/RESPONSE-MATRIX.md) |
 | Detailed options, output and troubleshooting for each script | [`docs/MANUAL.md`](docs/MANUAL.md) |
 | Known scored services and ports | [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) |
@@ -36,22 +39,63 @@ every change**.
 
 If you only read two documents, read this README and the WRCCDC runbook.
 
-## Current WRCCDC service picture
+## Invitational 3 network
 
-The current preparation material identifies these logical scored checks. The
-live Quotient page and current packet always override this table.
+`XX` is your team number. From the VPN/team side, `10.100.1XX.Y` maps through
+vigra to internal host `192.168.220.Y`. Quotient and live discovery determine
+the actual scored ports and accounts.
 
-| System | Preserve and validate |
-| --- | --- |
-| Active Directory | DNS, ICMP/ping, WinRM and the AD services those checks depend on |
-| E-commerce | HTTP/HTTPS behavior and ICMP/ping |
-| MSSQL | SQL login/query, ICMP/ping, RDP and SMB |
-| Splunk | Chrony/NTP, management, searchable data/query, SSH and ICMP/ping |
-| Webmail | IMAP, interactive webmail login, SMTP, SSH and ICMP/ping |
+```mermaid
+flowchart TB
+    TEAM["Team workstations<br/>NetBird VPN + SSO"]
+    OPS["WCComps services<br/>Quotient + portal + Discord"]
+    EXT["Mapped team network<br/>10.100.1XX.0/24"]
+    FW["vigra - .2<br/>OpenWRT router<br/>1:1 NAT + firewall"]
+    LAN["Internal LAN<br/>192.168.220.0/24"]
 
-An open port is not proof that a service works. For example, Splunk query needs
-searchable data, webmail-interactive needs a valid login and MSSQL needs an
-actual database response.
+    TEAM --> EXT
+    OPS --> EXT
+    EXT --> FW
+    FW --> LAN
+
+    LAN --> KOLLA["kolla - .30<br/>Alpine fileshare"]
+    LAN --> BORGAR["borgar - .10<br/>Windows 2022 food ordering"]
+    LAN --> GUFU["gufu - .100<br/>Rocky Linux Gitea"]
+    LAN --> VATTAR["vattar - .79<br/>Windows 2019 AD/DNS"]
+    LAN --> HAF["haf - .67<br/>Lubuntu Wabbit"]
+    LAN --> KVIG["kvigindis - .44<br/>Ubuntu help site"]
+    LAN --> SKERJA["skerja - .97<br/>Alpine ticketing"]
+    LAN --> THORSKA["thorska - .231<br/>Fedora Home Manager"]
+    LAN --> DJUPI["djupi - .222<br/>Mint point of sale"]
+
+    classDef network fill:#fff3cd,stroke:#8a6d00,color:#111;
+    classDef windows fill:#dbeafe,stroke:#1d4ed8,color:#111;
+    classDef linux fill:#dcfce7,stroke:#15803d,color:#111;
+    class FW,LAN,EXT network;
+    class BORGAR,VATTAR windows;
+    class KOLLA,GUFU,HAF,KVIG,SKERJA,THORSKA,DJUPI linux;
+```
+
+### Where each teammate goes
+
+| Role | Start here | Own these systems/tasks |
+| --- | --- | --- |
+| Captain | SSO, Quotient, portal, private Discord | Live service list, announcements, tickets, priorities and risky-change approval |
+| Automation | Approved jump box and AU-01 output | NAT/host map, protected list, service matrix, change log, script distribution and stopping failed fan-out |
+| Network | vigra `.2` | OpenWRT backup, interfaces, routes, NAT, firewall, external validation and router recovery |
+| Windows/AD | borgar `.10`, vattar `.79` | Food-ordering stack, AD/DNS, Windows backup, safe fixes, event monitoring and Windows firewall plan |
+| Linux/app 1 | kolla `.30`, gufu `.100`, haf `.67` | Fileshare, Gitea and Wabbit discovery, backup, monitoring and hardening |
+| Linux/app 2 | kvigindis `.44`, skerja `.97`, thorska `.231`, djupi `.222` | Help site, ticketing, Home Manager and POS discovery, backup, monitoring and hardening |
+| Detection/IR | Alert/evidence folders from every host | Triage alerts, preserve evidence, timeline, containment and incident report |
+| Inject lead | Quotient and evidence copies | Deadlines, rubric, human-authored PDF, citations and submission naming |
+
+Unknown application dependencies must be discovered before firewalling. An
+open port is not proof that ordering, ticketing, Gitea, file sharing, AD or POS
+actually works.
+
+For competition transfer, use the single standalone files under `dist/`; do
+not copy the source file from `roles/` without its library. The role cards list
+the smallest file set for each teammate.
 
 ## Safety model
 

@@ -3,6 +3,11 @@
 Use this after AU-01 creates the team workspace. It is based on the packet's
 host table; live discovery and Quotient override every assumption here.
 
+After discovery and backup, follow [`INV3-HARDENING.md`](INV3-HARDENING.md)
+for the exact safe-fix, monitoring, persistence and firewall order per host.
+Use [`INV3-VULNERABILITY-CHECKLIST.md`](INV3-VULNERABILITY-CHECKLIST.md) for
+the service-specific review and evidence checklist.
+
 Do not begin by patching, stopping services or closing ports. First identify
 the process, configuration, data, authentication and upstream/downstream
 dependencies behind each business service.

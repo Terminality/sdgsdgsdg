@@ -6,6 +6,13 @@ announcements and credentials always override this document.
 For host-by-host first actions, backups, validation and official resources, use
 [`INV3-SERVER-GUIDE.md`](INV3-SERVER-GUIDE.md).
 
+For packet-specific Linux and Windows hardening order, use
+[`INV3-HARDENING.md`](INV3-HARDENING.md).
+
+For the copy/run sequence by role and controlled first-15 account changes, use
+[`INV3-FIRST15-ROLE-CARDS.md`](INV3-FIRST15-ROLE-CARDS.md). For service review,
+use [`INV3-VULNERABILITY-CHECKLIST.md`](INV3-VULNERABILITY-CHECKLIST.md).
+
 ## Environment
 
 Internal network: `192.168.220.0/24`. From outside the OpenWRT router, a team
