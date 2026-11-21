@@ -67,6 +67,7 @@ Contents:
 57. Windows persistence sweep, `roles/windows-ad/WN-42-persistence-sweep.ps1` (WN-42)
 58. Windows web shell hunter, `roles/windows-ad/WN-16-webshell-hunter.ps1` (WN-16)
 59. Windows service recovery, `roles/windows-ad/WN-50-service-recovery.ps1` (WN-50)
+60. Windows change watch, `roles/windows-ad/WN-44-change-watch.ps1` (WN-44)
 
 ---
 
@@ -3946,4 +3947,57 @@ If Apache (XAMPP) serves port 80 and IIS is stopped, IIS is "not in use" and lef
 - Each fixed service is checked again at the end ("[ok] W3SVC is up").
 - In `<out>\recovery-N\`: `output.txt`, `status.txt` (each service: state, start, ports, result, fixes), `summary.txt`, `run.txt`, `undo.txt`, `revert.ps1`, `watch.txt` with `-Watch`.
 - Up here but red in scoring: the firewall (`WN-25 -Undo latest`), the router, then the scoring address. A defaced site still answers 200: look at the page, and run WN-16.
+- Not yet run on real Windows: try it on a VM first.
+
+## 60. Windows change watch, `roles/windows-ad/WN-44-change-watch.ps1` (WN-44)
+
+Takes a baseline of the places red team uses to get back in, then checks again (once, or every N seconds) and raises one alert per change, worst first. It changes nothing. The Windows twin of LX-40. Start it on Borgar and Vattar once the first 15 minutes of hardening are done, in a spare window, and leave it running.
+
+### How to run it
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-44-change-watch.ps1                       # asks, then watches
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-44-change-watch.ps1 -Batch                # one check (the first run takes the baseline)
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-44-change-watch.ps1 -Loop 60 -Team 10.0.0.5 -AlertTo \\10.0.0.9\alerts\borgar.txt
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-44-change-watch.ps1 -Accept               # your own changes become the baseline
+```
+
+### What it watches
+
+| Section | Alert | Level |
+| --- | --- | --- |
+| users | an account added, deleted or enabled (domain accounts on a DC) | MED |
+| admins | a new member of Administrators or Remote Desktop Users; on a DC Domain / Enterprise / Schema Admins, Account / Backup Operators, DnsAdmins | HIGH |
+| services | a new service (HIGH from a temp or user folder), its program changed (HIGH), set to Disabled | MED / HIGH |
+| running | a running service stopped: HIGH for the event log, Defender, the firewall, Sysmon and the protected list | MED / HIGH |
+| tasks | a new scheduled task (HIGH if it downloads, hides or runs from a temp folder), a task's command changed | MED / HIGH |
+| runkeys | a Run / RunOnce value or Winlogon Userinit / Shell added or changed | HIGH |
+| ports | a new listener (HIGH for a shell, nc, an unknown program), a port nothing listens on any more | MED / HIGH |
+| shares | a share added or pointing elsewhere | MED |
+| security | a firewall profile, Defender real-time protection, WDigest, sticky keys or the event log service turned off | HIGH |
+| wmi, ifeo | a WMI event subscription; a debugger on a program | HIGH |
+| hosts | the hosts file changed | MED |
+| web | a page added (HIGH) or changed in an IIS site folder: run WN-16 | MED / HIGH |
+| events | since the last check: a log cleared, a service installed, a member added to a group (HIGH); an account or task created, a Remote Desktop logon from a new address (MED; your team's addresses never) | MED / HIGH |
+
+Each change is alerted once. `changes-since-baseline.txt` in the state folder always holds everything that differs from the baseline.
+
+### The questions
+
+| Question | Answers | Parameter |
+| --- | --- | --- |
+| Use the baseline from TIME? (only when there is one) | `[Y]` compare / `[n]` take a new one | `-UseBaseline` / `-Baseline` (`-Accept`) |
+| How often should it check? | seconds, 0 = once (Enter = 60) | `-Loop N` / `-Once` |
+| Read the event logs too? | `[Y]` / `[n]` | `-NoEvents` |
+| Your team's addresses? | addresses separated by spaces (kept for next time) | `-Team` |
+| Also write each alert to a file off the box? (when looping) | a file on a share, or Enter | `-AlertTo` |
+
+`-Batch` (or no console) takes the defaults and checks **once**: no loop unless `-Loop` is given.
+
+### Output
+
+- `<out>\changewatch-N\`: `output.txt`, `alerts.txt` (time, severity, section, change, item, detail), `summary.txt`, `run.txt`.
+- `<out>\watch-<host>\` (kept between runs): `baseline\`, `last\` (one text file per section), `alerts.log` (every alert ever), `changes-since-baseline.txt`, `last-check.txt`, `rdp-seen.txt`, `team.txt`.
+- Your own changes show up too: after hardening on purpose, run `-Accept`.
+- A red team with admin rights can stop it: `-AlertTo \\otherbox\share\file.txt` keeps a copy off the box.
 - Not yet run on real Windows: try it on a VM first.

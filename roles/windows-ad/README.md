@@ -1,6 +1,6 @@
 # Windows / AD — identity + policy
 
-Scripts owned by this role. 9 of 12 are built.
+Scripts owned by this role. 10 of 12 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -14,7 +14,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | WN-27 | Windows remote access lockdown | Hardening: hard | access | planned |  |
 | WN-23 | Account lockdown (Windows / AD) | Hardening: hard | access | built | [`roles/windows-ad/WN-23-ad-lockdown.ps1`](../../roles/windows-ad/WN-23-ad-lockdown.ps1) |
 | WN-20 | Windows password rotation | Management | access | built | [`roles/windows-ad/WN-20-password-rotation.ps1`](../../roles/windows-ad/WN-20-password-rotation.ps1) |
-| WN-44 | Windows alerts | Alerts | none | planned |  |
+| WN-44 | Windows change watch | Alerts | none | built | [`roles/windows-ad/WN-44-change-watch.ps1`](../../roles/windows-ad/WN-44-change-watch.ps1) |
 | WN-42 | Windows persistence sweep | Hardening: medium | service | built | [`roles/windows-ad/WN-42-persistence-sweep.ps1`](../../roles/windows-ad/WN-42-persistence-sweep.ps1) |
 | WN-16 | Windows web shell hunter | wave2 | medium | built | [`roles/windows-ad/WN-16-webshell-hunter.ps1`](../../roles/windows-ad/WN-16-webshell-hunter.ps1) |
 | WN-50 | Windows service recovery | any | service | built | [`roles/windows-ad/WN-50-service-recovery.ps1`](../../roles/windows-ad/WN-50-service-recovery.ps1) |
