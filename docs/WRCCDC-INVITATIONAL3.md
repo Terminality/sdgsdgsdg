@@ -44,8 +44,7 @@ sh dist/automation/AU-01-inv3-first15.sh --team TEAM_NUMBER \
 ```
 
 The controller writes the inventory, NAT map, starter protected list, service
-matrix, password tracker, change log and exact per-host commands. It never
-stores a password and performs no remote mutation.
+matrix, change log and first-15 guide. It performs no remote mutation.
 
 ### 0:00-0:03
 
@@ -72,51 +71,14 @@ stores a password and performs no remote mutation.
 
 ### 0:12-0:15
 
-- Rotate only administrator, root and known default credentials first.
-- Work serially, one host at a time.
-- Dry run, apply, test a fresh login, submit the change in Quotient, perform the
-  real business workflow and watch at least two scoring cycles.
+- Test every listed business workflow, not only its listening port.
+- Reconcile live hosts and services with the packet and Quotient.
+- Prioritize HIGH findings that threaten access, data or scored services.
+- Make one controlled change at a time with a named owner and rollback.
 - Stop and roll back on the first new failure caused by a team change.
-- Never bulk-rotate vattar's domain accounts or an unknown service identity.
 
-## Password workflow
-
-Passwords never go in Git, command lines, logs or `password-status.csv`.
-
-For Linux, run locally on each of kolla, gufu, haf, kvigindis, skerja, thorska
-and djupi:
-
-```sh
-sudo sh linux/LX-20-password-rotation.sh --out /root/ccdc-out \
-  --protected /root/ccdc-out/protected.csv --users root
-```
-
-After reviewing the plan and completing a backup:
-
-```sh
-sudo sh linux/LX-20-password-rotation.sh --out /root/ccdc-out \
-  --protected /root/ccdc-out/protected.csv --users root --apply
-```
-
-For borgar and vattar, run locally in elevated PowerShell:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File windows-ad\WN-20-password-rotation.ps1 `
-  -Out C:\ccdc-out -Protected C:\ccdc-out\protected.csv -Users Administrator
-```
-
-Repeat with `-Apply` only after WN-35. On vattar, do not omit `-Users`: without
-it, WN-20 can target every eligible domain user.
-
-For vigra:
-
-1. Keep the original SSH session open and establish another.
-2. Run `sysupgrade -b /tmp/vigra-prechange.tar.gz` and copy it off-device.
-3. Save `uci export`, `ip addr`, `ip route`, and `nft list ruleset` or
-   `fw3 print`.
-4. Run `passwd` interactively. Do not place the new password in history.
-5. Test a third login, management, NAT and the scored services.
-6. Submit the password change through Quotient.
+Credential rotation is handled by the team's separate procedure and is outside
+AU-01. This runbook does not generate, change, store or track passwords.
 
 ## Router stop conditions
 
@@ -131,7 +93,8 @@ About 8-12 services are checked every 2-4 minutes. An SLA occurs after five
 failed checks; do not use that as a rollback timer. Roll back a team change on
 its first new failure.
 
-- Quotient: service status, injects and password-change requests.
+- Quotient: service status and injects; use the team's approved credential
+  procedure for any required password-change request.
 - Ticket portal: scoring adjustments, support and detailed incident reports.
 - Private Discord: announcements and Orange/Black/White Team communication.
 - Manual services require a real business workflow, not merely an open port.

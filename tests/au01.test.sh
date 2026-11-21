@@ -16,7 +16,7 @@ t_has "$(run --help 2>&1)" "--scan" "help documents optional scan"
 t_start "team workspace"
 r=$(run --team 7 --out "$T_TMP/out" 2>&1); t_eq "$?" 0 "controller exits zero"
 R="$T_TMP/out/inv3-control-1"
-for f in hosts.csv nat-map.csv protected.csv service-matrix.csv password-status.csv change-log.csv first15.txt; do
+for f in hosts.csv nat-map.csv protected.csv service-matrix.csv change-log.csv first15.txt; do
     t_file "$R/$f" "$f generated"
 done
 t_eq "$(tail -n +2 "$R/hosts.csv" | wc -l | tr -d ' ')" 10 "all ten packet hosts present"
@@ -24,10 +24,9 @@ t_ok "router internal address" grep -q '^vigra,192.168.220.2,' "$R/hosts.csv"
 t_ok "team 7 NAT address" grep -q '^borgar,192.168.220.10,10.100.107.10,' "$R/nat-map.csv"
 t_ok "service matrix gets external address" grep -q '^gufu,192.168.220.100,10.100.107.100,' "$R/service-matrix.csv"
 t_ok "AD protected" grep -q '^service,NTDS,' "$R/protected.csv"
-t_ok "one password row per host" test "$(tail -n +2 "$R/password-status.csv" | wc -l | tr -d ' ')" -eq 10
-t_fail "password tracker has no password column" grep -qi 'new_password\|old_password\|password_value' "$R/password-status.csv"
-t_has "$(cat "$R/first15.txt")" "Do not rotate all domain users" "DC bulk rotation warning"
-t_has "$(cat "$R/first15.txt")" "sysupgrade -b" "OpenWRT backup step"
+t_fail "no password tracker is generated" test -e "$R/password-status.csv"
+t_has "$(cat "$R/first15.txt")" "team's separate procedure" "credential process is explicitly separate"
+t_has "$(cat "$R/first15.txt")" "Test each listed business workflow" "last phase prioritizes service validation"
 t_has "$r" "fill protected.csv" "terminal gives stop condition"
 
 t_start "numbered runs and alternate team"

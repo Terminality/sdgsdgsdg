@@ -5,9 +5,9 @@ What changed, newest first. Each entry names the scripts touched and how they we
 ## 2026-11-20: Invitational 3 first-15 controller
 
 - Added AU-01 to calculate the team NAT map and generate private inventory,
-  protected-service, service-validation, password-status and change trackers.
+  protected-service, service-validation and change trackers.
 - Added the Invitational 3 host/protected examples and packet-specific runbook.
-- Documented one-host-at-a-time Linux, Windows/AD and OpenWRT credential work.
+- Kept credential rotation outside AU-01 for the team's separate procedure.
 
 ## 2026-11-18: WRCCDC invitational readiness
 

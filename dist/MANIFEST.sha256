@@ -2,7 +2,7 @@
 33b5cce7cf7a7d0d1f5184eff2fd40b294bb8ec470bd13d9d5316d966eb33194  applications/SV-01-web-db-enum.sh
 a1aeac42f58782686c7d399821a2423694b46de7c7ae8c5434e3a6ea300c6012  applications/SV-14-db-backup.sh
 1e5f140cf3fbee3705272a1eda5737a7f0580993379d11bf1c8b1b0b377387c6  applications/SV-30-service-hardening.sh
-c2bc2a541a90c5d115377e18a8b6b850a3c4a17a11682aad50b25a15920dc8c4  automation/AU-01-inv3-first15.sh
+76cc097857a60296718026739bab8c9e3fb7a1918f80e9af9cc58fd7d3c25238  automation/AU-01-inv3-first15.sh
 e08d8c287120fabba8f87f958a383720ab9de96660d75c404061b8de9b6b2933  linux/LX-20-password-rotation.sh
 330868d5c40de7f9eb7f7eba36d00ef7097a38166d106a0745aeae42797ed7e0  linux/LX-22-ssh-hardening.sh
 c8a0510dba707e3508dbc3a89e35fc256f798c7bf73997c41cc07e55f24c5dea  linux/LX-25-firewall.sh

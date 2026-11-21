@@ -7,8 +7,8 @@
 #
 # PURPOSE
 #   Builds the Invitational 3 team inventory, NAT map, protected list, service
-#   matrix, change log and per-host password tracker. Prints the safe first-15
-#   order and exact local commands. It can launch SH-03 read-only discovery.
+#   matrix and change log. Prints the safe first-15 order and validation steps.
+#   It can launch SH-03 read-only discovery.
 #
 # USAGE
 #   sh AU-01-inv3-first15.sh --team 7 --out ~/ccdc-control
@@ -24,7 +24,6 @@
 #   inv3-control-N/nat-map.csv           internal-to-external address map
 #   inv3-control-N/protected.csv         starter list; add Quotient data first
 #   inv3-control-N/service-matrix.csv    functional validation tracker
-#   inv3-control-N/password-status.csv   password workflow, never passwords
 #   inv3-control-N/change-log.csv        team change record
 #   inv3-control-N/first15.txt           role order and per-host commands
 #
@@ -42,8 +41,7 @@
 # KNOWN LIMITS / WHAT TO WATCH FOR
 #   Exact scored services and scoring accounts are withheld until competition
 #   day. The generated protected list is incomplete until Quotient and live
-#   discovery are recorded. This script deliberately does not rotate passwords
-#   remotely or submit password changes to Quotient.
+#   discovery are recorded. Credential rotation is outside this controller.
 # =============================================================================
 
 # >>> CCDC-LIB
@@ -64,8 +62,8 @@ Options:
   --scan         launch the read-only SH-03 scan after setup
   --help         show this text
 
-The generated files contain no passwords. Fill protected.csv from Quotient
-before any password, firewall, account or service change.
+Fill protected.csv from Quotient before any firewall, account or service
+change. Credential rotation is handled by the team's separate process.
 
 USAGE
     cc_usage_common
@@ -104,7 +102,6 @@ HOSTS="$CC_RUN_DIR/hosts.csv"
 NAT="$CC_RUN_DIR/nat-map.csv"
 PROTECTED="$CC_RUN_DIR/protected.csv"
 SERVICES="$CC_RUN_DIR/service-matrix.csv"
-PASSWORDS="$CC_RUN_DIR/password-status.csv"
 CHANGES="$CC_RUN_DIR/change-log.csv"
 GUIDE="$CC_RUN_DIR/first15.txt"
 
@@ -179,22 +176,6 @@ thorska,192.168.220.231,,home-manager,,,,,,,,unknown,unknown,,Perform the applic
 djupi,192.168.220.222,,point-of-sale,,,,,,,,unknown,unknown,,Perform a safe test transaction workflow
 EOF
 
-# Passwords never belong here. The owner fills this record after inventory,
-# backup, protected-account review, fresh-session verification and Quotient.
-cat >"$PASSWORDS" <<'EOF'
-host,platform,owner,target_accounts,dependencies_recorded,backup_complete,protected_reviewed,dry_run_reviewed,changed_utc,new_login_tested,quotient_submitted,business_tested,rollback_path,status,notes
-vigra,openwrt,,admin,no,no,no,no,,,,,,,not-started,Rotate only after config backup and second SSH session
-kolla,linux,,root,no,no,no,no,,,,,,,not-started,
-borgar,windows,,Administrator,no,no,no,no,,,,,,,not-started,Protect app pool task and service identities
-gufu,linux,,root,no,no,no,no,,,,,,,not-started,Protect Gitea and database identities
-vattar,windows-ad,,Administrator,no,no,no,no,,,,,,,not-started,Do not rotate every domain account; protect scorer Orange and service identities
-haf,linux,,root,no,no,no,no,,,,,,,not-started,
-kvigindis,linux,,root,no,no,no,no,,,,,,,not-started,
-skerja,linux,,root,no,no,no,no,,,,,,,not-started,
-thorska,linux,,root,no,no,no,no,,,,,,,not-started,
-djupi,linux,,root,no,no,no,no,,,,,,,not-started,
-EOF
-
 cat >"$CHANGES" <<'EOF'
 utc,requester,owner,host,service,action,exact_command,protected_version,precheck,postcheck,quotient_or_orange,rollback,status,notes
 EOF
@@ -226,42 +207,15 @@ Scoring: about 8-12 services checked every 2-4 minutes; SLA after 5 failures.
   Linux: LX-31; SV-14 where a database exists; then LX-40 and LX-41.
   Copy backups/evidence off each host. A local-only backup is not complete.
 
-0:12-0:15 - controlled credentials
-  1. Rotate only administrator/root/default accounts first.
-  2. Work one host at a time. Dry run, apply, test a new session, submit the
-     password change through Quotient, then test the real business function.
-  3. Stop immediately if access, a service, or scoring fails; use rollback.
-  4. Do not bulk-rotate vattar domain users or application/service identities.
+0:12-0:15 - validate and prioritize
+  1. Test each listed business workflow, not only its listening port.
+  2. Compare live hosts and services with the packet and Quotient.
+  3. Start with HIGH findings that threaten access, data or scored services.
+  4. Make one controlled change at a time with a named owner and rollback.
+  5. Stop immediately if access, a service or scoring fails.
 
-PER-HOST PASSWORD COMMANDS (run locally; no password on command line)
-====================================================================
-
-Linux hosts: kolla gufu haf kvigindis skerja thorska djupi
-  Dry run:
-    sudo sh linux/LX-20-password-rotation.sh --out /root/ccdc-out \\
-      --protected /root/ccdc-out/protected.csv --users root
-  Apply after backup/protected review:
-    sudo sh linux/LX-20-password-rotation.sh --out /root/ccdc-out \\
-      --protected /root/ccdc-out/protected.csv --users root --apply
-  Keep the revert timer active until a fresh SSH login and business test pass.
-
-borgar - Windows Server 2022 food ordering
-  powershell -NoProfile -ExecutionPolicy Bypass -File windows-ad\\WN-20-password-rotation.ps1 \\
-    -Out C:\\ccdc-out -Protected C:\\ccdc-out\\protected.csv -Users Administrator
-  Repeat with -Apply only after WN-35 backup and application dependency review.
-
-vattar - Windows Server 2019 Active Directory
-  powershell -NoProfile -ExecutionPolicy Bypass -File windows-ad\\WN-20-password-rotation.ps1 \\
-    -Out C:\\ccdc-out -Protected C:\\ccdc-out\\protected.csv -Users Administrator
-  Repeat with -Apply only after WN-04/WN-35. Do not rotate all domain users.
-
-vigra - OpenWRT
-  1. Keep the current SSH session open and open a second session.
-  2. Back up: sysupgrade -b /tmp/vigra-prechange.tar.gz
-  3. Record: uci export; ip addr; ip route; nft list ruleset or fw3 print.
-  4. Run passwd interactively. Never place the password in shell history.
-  5. Test a third SSH login, LuCI if used, NAT and two scoring cycles.
-  6. Record the change in password-status.csv and submit through Quotient.
+Credential rotation is handled by the team's separate procedure. AU-01 does
+not generate, change, store, transmit or track passwords.
 
 VALIDATION AFTER EVERY CHANGE
 =============================
@@ -282,7 +236,7 @@ cc_info "team $TEAM workspace: $CC_RUN_DIR"
 cc_info "internal network: 192.168.220.0/24"
 cc_info "external NAT prefix: $NAT_PREFIX.Y"
 cc_info "fill protected.csv and service-matrix.csv from Quotient before changes"
-cc_info "password-status.csv records verification only; it never stores passwords"
+cc_info "credential rotation is outside AU-01 and remains with the team process"
 
 if [ "$DO_SCAN" -eq 1 ]; then
     SCAN="$KIT/network/SH-03-network-scan.sh"
