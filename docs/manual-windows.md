@@ -70,6 +70,7 @@ What to look at after each one:
 | --- | --- | --- | --- |
 | **WN-42** Persistence sweep | Every place a red team leaves a way back in: scheduled tasks, Run keys, startup folders, Winlogon, services, WMI subscriptions, debuggers, local admins | Right after the first 15 min, then whenever you suspect red team | `.\WN-42-persistence-sweep.ps1` |
 | **WN-16** Web shell hunter (Borgar) | Every file in the IIS site folders: pages that run commands sent from a browser, code in upload folders or hidden in images | Right after the first 15 min, then whenever the site acts up | `.\WN-16-webshell-hunter.ps1` |
+| **WN-44** Change watch | A baseline, then an alert for every new account, admin, service, task, Run key, listener, a firewall or Defender turned off, a cleared log, an RDP logon from a new address | Start it after the first 15 min in a spare window: `-Loop 60 -AlertTo` a share; `-Accept` after your own changes | `.\WN-44-change-watch.ps1 -Loop 60` |
 | **WN-43** Safe fixes again | Red team turns things back off | Every hour or after an incident | `.\WN-43-safe-fixes.ps1 -Apply -Batch` |
 | **SH-06** full | A full picture, including processes, connections, sessions, shares, software, events | When things are calm, and to compare | `.\SH-06-windows-enum.ps1` |
 | **WN-23** again (Vattar) | New admins or accounts since the last run | Every hour | `.\WN-23-ad-lockdown.ps1 -Admins youradmin` |
@@ -98,7 +99,7 @@ What to look at after each one:
 
 Each section below is the full reference for one script: how to run it, every question and its parameter, what each check means, what it writes, and what to do when something goes wrong. They are in the order above.
 
-Scripts: [SH-06](#sh-06-windows-enum-distwindows-adsh-06-windows-enumps1) [WN-35](#wn-35-windows-backup-distwindows-adwn-35-backupps1) [WN-20](#wn-20-windows-password-rotation-distwindows-adwn-20-password-rotationps1) [WN-25](#wn-25-windows-firewall-distwindows-adwn-25-firewallps1) [WN-23](#wn-23-account-lockdown-windows--ad-distwindows-adwn-23-ad-lockdownps1) [WN-43](#wn-43-windows-safe-fixes-distwindows-adwn-43-safe-fixesps1) [WN-42](#wn-42-windows-persistence-sweep-distwindows-adwn-42-persistence-sweepps1) [WN-16](#wn-16-windows-web-shell-hunter-distwindows-adwn-16-webshell-hunterps1) 
+Scripts: [SH-06](#sh-06-windows-enum-distwindows-adsh-06-windows-enumps1) [WN-35](#wn-35-windows-backup-distwindows-adwn-35-backupps1) [WN-20](#wn-20-windows-password-rotation-distwindows-adwn-20-password-rotationps1) [WN-25](#wn-25-windows-firewall-distwindows-adwn-25-firewallps1) [WN-23](#wn-23-account-lockdown-windows--ad-distwindows-adwn-23-ad-lockdownps1) [WN-43](#wn-43-windows-safe-fixes-distwindows-adwn-43-safe-fixesps1) [WN-42](#wn-42-windows-persistence-sweep-distwindows-adwn-42-persistence-sweepps1) [WN-16](#wn-16-windows-web-shell-hunter-distwindows-adwn-16-webshell-hunterps1) [WN-44](#wn-44-windows-change-watch-distwindows-adwn-44-change-watchps1) 
 
 ### SH-06: Windows enum (`dist/windows-ad/SH-06-windows-enum.ps1`)
 
@@ -574,3 +575,57 @@ The matching line is shown under each file, so a real shell is easy to tell from
 - In `<out>\webshells-N\`: `output.txt`, `findings.txt` (level, file, size, changed, reasons, the line, what was done), `folders.txt`, `summary.txt`, `run.txt`, `undo.txt`, `revert.ps1`.
 - A shell means red team got in: run WN-42 next (what else they left), then WN-20 (passwords).
 - A compiled shell (a `.dll` in `bin\`) is not read. Not yet run on real Windows: try it on a VM first.
+
+
+### WN-44: Windows change watch (`dist/windows-ad/WN-44-change-watch.ps1`)
+
+Takes a baseline of the places red team uses to get back in, then checks again (once, or every N seconds) and raises one alert per change, worst first. It changes nothing. The Windows twin of LX-40. Start it on Borgar and Vattar once the first 15 minutes of hardening are done, in a spare window, and leave it running.
+
+#### How to run it
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-44-change-watch.ps1                       # asks, then watches
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-44-change-watch.ps1 -Batch                # one check (the first run takes the baseline)
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-44-change-watch.ps1 -Loop 60 -Team 10.0.0.5 -AlertTo \\10.0.0.9\alerts\borgar.txt
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-44-change-watch.ps1 -Accept               # your own changes become the baseline
+```
+
+#### What it watches
+
+| Section | Alert | Level |
+| --- | --- | --- |
+| users | an account added, deleted or enabled (domain accounts on a DC) | MED |
+| admins | a new member of Administrators or Remote Desktop Users; on a DC Domain / Enterprise / Schema Admins, Account / Backup Operators, DnsAdmins | HIGH |
+| services | a new service (HIGH from a temp or user folder), its program changed (HIGH), set to Disabled | MED / HIGH |
+| running | a running service stopped: HIGH for the event log, Defender, the firewall, Sysmon and the protected list | MED / HIGH |
+| tasks | a new scheduled task (HIGH if it downloads, hides or runs from a temp folder), a task's command changed | MED / HIGH |
+| runkeys | a Run / RunOnce value or Winlogon Userinit / Shell added or changed | HIGH |
+| ports | a new listener (HIGH for a shell, nc, an unknown program), a port nothing listens on any more | MED / HIGH |
+| shares | a share added or pointing elsewhere | MED |
+| security | a firewall profile, Defender real-time protection, WDigest, sticky keys or the event log service turned off | HIGH |
+| wmi, ifeo | a WMI event subscription; a debugger on a program | HIGH |
+| hosts | the hosts file changed | MED |
+| web | a page added (HIGH) or changed in an IIS site folder: run WN-16 | MED / HIGH |
+| events | since the last check: a log cleared, a service installed, a member added to a group (HIGH); an account or task created, a Remote Desktop logon from a new address (MED; your team's addresses never) | MED / HIGH |
+
+Each change is alerted once. `changes-since-baseline.txt` in the state folder always holds everything that differs from the baseline.
+
+#### The questions
+
+| Question | Answers | Parameter |
+| --- | --- | --- |
+| Use the baseline from TIME? (only when there is one) | `[Y]` compare / `[n]` take a new one | `-UseBaseline` / `-Baseline` (`-Accept`) |
+| How often should it check? | seconds, 0 = once (Enter = 60) | `-Loop N` / `-Once` |
+| Read the event logs too? | `[Y]` / `[n]` | `-NoEvents` |
+| Your team's addresses? | addresses separated by spaces (kept for next time) | `-Team` |
+| Also write each alert to a file off the box? (when looping) | a file on a share, or Enter | `-AlertTo` |
+
+`-Batch` (or no console) takes the defaults and checks **once**: no loop unless `-Loop` is given.
+
+#### Output
+
+- `<out>\changewatch-N\`: `output.txt`, `alerts.txt` (time, severity, section, change, item, detail), `summary.txt`, `run.txt`.
+- `<out>\watch-<host>\` (kept between runs): `baseline\`, `last\` (one text file per section), `alerts.log` (every alert ever), `changes-since-baseline.txt`, `last-check.txt`, `rdp-seen.txt`, `team.txt`.
+- Your own changes show up too: after hardening on purpose, run `-Accept`.
+- A red team with admin rights can stop it: `-AlertTo \\otherbox\share\file.txt` keeps a copy off the box.
+- Not yet run on real Windows: try it on a VM first.
