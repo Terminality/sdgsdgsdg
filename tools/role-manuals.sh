@@ -23,7 +23,7 @@ order() {
         linux)        echo "SH-05 LX-31 LX-20 LX-22 LX-25 LX-21 LX-26 LX-42 LX-45 LX-39 SV-26 LX-40 LX-41 LX-43 LX-44 LX-46" ;;
         network)      echo "SH-03 NW-01 NW-07 NW-12 NW-10 NW-21 NW-20 NW-30 SH-04" ;;
         applications) echo "SV-01 SV-14 SV-15 SV-50 SV-45 SV-46 SV-21 SV-20 SV-42 SV-30 SV-16 SV-32 SV-31 SV-40 SV-41 SV-44" ;;
-        windows)      echo "SH-06 WN-35 WN-20 WN-25 WN-23 WN-43 WN-42 WN-16" ;;
+        windows)      echo "SH-06 WN-35 WN-20 WN-25 WN-23 WN-43 WN-42 WN-16 WN-50" ;;
     esac
 }
 
