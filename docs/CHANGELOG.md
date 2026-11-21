@@ -8,6 +8,8 @@ What changed, newest first. Each entry names the scripts touched and how they we
   protected-service, service-validation and change trackers.
 - Added the Invitational 3 host/protected examples and packet-specific runbook.
 - Kept credential rotation outside AU-01 for the team's separate procedure.
+- Added a host-by-host Invitational 3 guide covering first commands, backup
+  targets, dependencies, functional checks, stop conditions and official docs.
 
 ## 2026-11-18: WRCCDC invitational readiness
 

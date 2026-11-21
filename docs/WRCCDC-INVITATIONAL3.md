@@ -3,6 +3,9 @@
 This is the packet-specific addendum for Flokid. The live Quotient service list,
 announcements and credentials always override this document.
 
+For host-by-host first actions, backups, validation and official resources, use
+[`INV3-SERVER-GUIDE.md`](INV3-SERVER-GUIDE.md).
+
 ## Environment
 
 Internal network: `192.168.220.0/24`. From outside the OpenWRT router, a team

@@ -26,6 +26,7 @@ every change**.
 | --- | --- |
 | The WRCCDC competition-day order, roles and commands | [`docs/WRCCDC-INVITATIONAL.md`](docs/WRCCDC-INVITATIONAL.md) |
 | The 2026 Invitational 3 packet-specific environment and first 15 minutes | [`docs/WRCCDC-INVITATIONAL3.md`](docs/WRCCDC-INVITATIONAL3.md) |
+| What every Invitational 3 server does, first commands and official resources | [`docs/INV3-SERVER-GUIDE.md`](docs/INV3-SERVER-GUIDE.md) |
 | What to do after a finding and how to roll it back | [`docs/RESPONSE-MATRIX.md`](docs/RESPONSE-MATRIX.md) |
 | Detailed options, output and troubleshooting for each script | [`docs/MANUAL.md`](docs/MANUAL.md) |
 | Known scored services and ports | [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) |
