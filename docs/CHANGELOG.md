@@ -2,6 +2,13 @@
 
 What changed, newest first. Each entry names the scripts touched and how they were tested. Library versions follow `CC_LIB_VERSION` in `lib/lib.sh` and `$script:CcLibVersion` in `lib/lib.ps1`, which are always the same.
 
+## 2026-11-21: Invitational 3 automation engineer runbook
+
+- Added a command-focused automation README covering workspace setup, live
+  control files, discovery, per-platform distribution, account changes, safe
+  fixes, persistence review, firewall gates, validation and failure handling.
+- Documentation only; no competition-host behavior or script logic changed.
+
 ## 2026-11-20: Invitational 3 first-15 setup
 
 - Added INV3-01 to calculate the team NAT map and generate private inventory,

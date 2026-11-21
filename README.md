@@ -26,6 +26,7 @@ every change**.
 | --- | --- |
 | The WRCCDC competition-day order, roles and commands | [`docs/WRCCDC-INVITATIONAL.md`](docs/WRCCDC-INVITATIONAL.md) |
 | The 2026 Invitational 3 packet-specific environment and first 15 minutes | [`docs/WRCCDC-INVITATIONAL3.md`](docs/WRCCDC-INVITATIONAL3.md) |
+| Exactly what the Invitational 3 automation engineer runs and coordinates | [`docs/INV3-AUTOMATION-ENGINEER-README.md`](docs/INV3-AUTOMATION-ENGINEER-README.md) |
 | What every Invitational 3 server does, first commands and official resources | [`docs/INV3-SERVER-GUIDE.md`](docs/INV3-SERVER-GUIDE.md) |
 | What vulnerabilities and misconfigurations to inspect on every Invitational 3 service | [`docs/INV3-VULNERABILITY-CHECKLIST.md`](docs/INV3-VULNERABILITY-CHECKLIST.md) |
 | How to harden each Invitational 3 Linux and Windows server safely | [`docs/INV3-HARDENING.md`](docs/INV3-HARDENING.md) |
