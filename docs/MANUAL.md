@@ -65,6 +65,7 @@ Contents:
 55. File share hardening (Samba and NFS), `roles/applications/SV-46-fileshare-hardening.sh` (SV-46)
 56. Account lockdown (Windows / AD), `roles/windows-ad/WN-23-ad-lockdown.ps1` (WN-23)
 57. Windows persistence sweep, `roles/windows-ad/WN-42-persistence-sweep.ps1` (WN-42)
+58. Windows service recovery, `roles/windows-ad/WN-50-service-recovery.ps1` (WN-50)
 
 ---
 
@@ -3843,4 +3844,58 @@ MED findings (a shell or script, an unknown admin) are offered with default **ke
 - Dry run unless `-Apply`; the revert timer runs with `-Apply` (120 s, `-Timer`): everything is undone unless you answer "keep". `revert.ps1 -Force` in the run folder undoes the run later.
 - Never touched: anything on the protected list (service, account, path, process), the account running it, the built-in Administrator.
 - In `<out>\persistence-N\`: `output.txt`, `findings.txt` (level, area, name, what it runs, why, what was done), `summary.txt`, `run.txt`, `undo.txt`, `revert.ps1`.
+- Not yet run on real Windows: try it on a VM first.
+
+## 58. Windows service recovery, `roles/windows-ad/WN-50-service-recovery.ps1` (WN-50)
+
+When a scored Windows service goes red, starting it again is often not enough: red team broke something under it. This checks each service the same way, says why it is down, and offers the fix. The Windows twin of SV-50. Run it the moment scoring shows Borgar's site or Vattar's AD red.
+
+### How to run it
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-50-service-recovery.ps1                       # check, dry run
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-50-service-recovery.ps1 -Apply                # check and fix (asks)
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-50-service-recovery.ps1 -Apply -Batch -Services W3SVC,DNS
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-50-service-recovery.ps1 -Watch 30 -AutoRestart -Apply
+```
+
+### What it checks
+
+Services: IIS (W3SVC, WAS), Apache, nginx, SQL Server, MySQL, MariaDB; on a DC NTDS, DNS, Kdc (Kerberos), Netlogon, W32Time, ADWS, DFSR; LanmanServer (SMB), TermService (RDP), WinRM, FTP, EventLog; and every service on the protected list. A known service is checked when it is scored on this box kind, running, or set to start at boot.
+
+| Check | What it means | Fix offered (default) |
+| --- | --- | --- |
+| firewall | an inbound block rule on the service's port | turn the rule off (yes) |
+| port held | another program listens on its port | stop that program (yes when it runs from a temp or user folder, no otherwise) |
+| disabled | start mode Disabled: it cannot start | set to Automatic (yes) |
+| not running | stopped | start it (yes) |
+| not listening / no answer | running, but nothing on its port, or the page answers 500 or more | restart it (yes) |
+| IIS site or app pool | W3SVC runs but a site or app pool is stopped (a favourite trick) | start it (yes) |
+| restart on crash | not set to restart by itself | restart after 5 s, 10 s, 30 s (yes; one question for all when there are more than 2) |
+| its program | missing, or in a temp or user folder | reported only: restore it (WN-35 backup) or WN-42 |
+| disk | the system drive under 10% free | reported only |
+
+If Apache (XAMPP) serves port 80 and IIS is stopped, IIS is "not in use" and left alone: it is not started, and Apache is not offered for stopping.
+
+### The questions
+
+| Question | Answers | Parameter |
+| --- | --- | --- |
+| Which box is this? | domain controller, web, ecomm, fileshare, database, other (guessed) | `-Box` |
+| Check which services? | `[A]`ll found / `[s]` only the scored ones for this box | `-Services a,b` |
+| Each fix | `[Y]` / `[n]` (the default shown in the table above) | `-Fix firewall,kill,enable,start,pool,recovery` answers yes |
+| Make these N fix(es) now? | `[y]` / `[N]` | `-Apply` |
+
+`-Batch` takes every default: a dry run unless `-Apply` is given.
+
+### Watch mode
+
+`-Watch 30` checks every 30 seconds and prints a line when a service goes DOWN or comes back UP (also in `watch.txt`). With `-AutoRestart -Apply` it starts a service that went down, at most 3 times in 10 minutes each: after that it stops trying and says so, so a crash loop is not hidden. A disabled service is not started: run WN-50 without `-Watch` to find out why.
+
+### Safety and output
+
+- Dry run unless `-Apply`. No revert timer: these fixes bring services up, and undoing them would take them down again. Each change still has an undo line; `revert.ps1 -Force` in the run folder undoes the run.
+- Each fixed service is checked again at the end ("[ok] W3SVC is up").
+- In `<out>\recovery-N\`: `output.txt`, `status.txt` (each service: state, start, ports, result, fixes), `summary.txt`, `run.txt`, `undo.txt`, `revert.ps1`, `watch.txt` with `-Watch`.
+- Up here but red in scoring: the firewall (`WN-25 -Undo latest`), the router, then the scoring address. A defaced site still answers 200: look at the page, and run WN-16.
 - Not yet run on real Windows: try it on a VM first.

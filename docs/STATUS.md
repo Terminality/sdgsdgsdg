@@ -1,6 +1,6 @@
 # Build status
 
-51 of 54 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+52 of 55 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -9,7 +9,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | Enum (look only) | 6 | 7 |
 | Backup and prep | 5 | 5 |
 | wave2 | 14 | 14 |
-| any | 1 | 1 |
+| any | 2 | 2 |
 | wave1 | 3 | 3 |
 | Hardening: easy | 3 | 3 |
 | Hardening: medium | 3 | 3 |
@@ -64,6 +64,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | ID | Script | Risk | Status | File |
 | --- | --- | --- | --- | --- |
 | SV-50 | Service recovery | medium | built | `roles/applications/SV-50-service-recovery.sh` |
+| WN-50 | Windows service recovery | service | built | `roles/windows-ad/WN-50-service-recovery.ps1` |
 
 ## wave1
 
