@@ -68,6 +68,7 @@ What to look at after each one:
 | --- | --- | --- | --- |
 | **WN-42** Persistence sweep | Every place a red team leaves a way back in: scheduled tasks, Run keys, startup folders, Winlogon, services, WMI subscriptions, debuggers, local admins | Right after the first 15 min, then whenever you suspect red team | `.\WN-42-persistence-sweep.ps1` |
 | **WN-16** Web shell hunter (Borgar) | Every file in the IIS site folders: pages that run commands sent from a browser, code in upload folders or hidden in images | Right after the first 15 min, then whenever the site acts up | `.\WN-16-webshell-hunter.ps1` |
+| **WN-50** Service recovery | Why a scored service is down (stopped, disabled, a block rule, another program on its port, a stopped IIS app pool) and the fix; sets restart-on-crash | The moment a service goes red; `-Watch 30 -AutoRestart -Apply` in a spare window keeps them up | `.\WN-50-service-recovery.ps1` |
 | **WN-44** Change watch | A baseline, then an alert for every new account, admin, service, task, Run key, listener, a firewall or Defender turned off, a cleared log, an RDP logon from a new address | Start it after the first 15 min in a spare window: `-Loop 60 -AlertTo` a share; `-Accept` after your own changes | `.\WN-44-change-watch.ps1 -Loop 60` |
 | **WN-43** Safe fixes again | Red team turns things back off | Every hour or after an incident | `.\WN-43-safe-fixes.ps1 -Apply -Batch` |
 | **SH-06** full | A full picture, including processes, connections, sessions, shares, software, events | When things are calm, and to compare | `.\SH-06-windows-enum.ps1` |
@@ -80,7 +81,7 @@ What to look at after each one:
 | You think red team is on the box | `SH-06 -Profile triage` (copies the event logs too), then WN-42 |
 | A new admin or account | WN-23 on Vattar; WN-42 `-Areas admins` on Borgar |
 | The site changed by itself, or red team keeps coming back | WN-16 on Borgar (web shells), then WN-42 |
-| A scored service went red | check the firewall first: `WN-25 -Undo latest` puts the old one back; then the service (`services.msc`, IIS Manager) |
+| A scored service went red | `WN-50 -Apply`: it finds why and offers the fix. Still red? `WN-25 -Undo latest` puts the old firewall back |
 | Locked out of RDP after the firewall | do nothing: the rollback task puts the old firewall back at the time it showed |
 | Something a fix broke | `revert.ps1 -Force` in that run's folder, or `-Undo latest` (WN-25, WN-43) |
 | Sticky keys gives a command prompt at the login screen | WN-43 (`stickykeys`, `debuggers`) |

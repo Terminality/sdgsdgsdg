@@ -658,11 +658,12 @@ function ConvertTo-CcTableFile {
 #   (runs them, newest first), revert.log, KEEP (made by "keep", or by hand
 #   from another session: New-Item <run folder>\KEEP).
 #   $env:BT_TEST_SCHTASKS = FILE: the schtasks command is written there, not run.
-function Start-CcTimer {
-    param([int]$Seconds = 120)
+# Write-CcRevert   -> writes revert.ps1 in the run folder (it runs this run's
+#   undo lines, newest first) and returns its path.  Start-CcTimer calls it;
+#   a script with no timer calls it itself so its run can still be undone.
+function Write-CcRevert {
     $c = $script:Cc
-    if (-not $c.Apply) { return }
-    if (-not $c.RunDir) { Stop-Cc -Code 1 -Message 'Start-CcTimer needs Use-CcNumberedDir first' }
+    if (-not $c.RunDir) { Stop-Cc -Code 1 -Message 'Write-CcRevert needs Use-CcNumberedDir first' }
     $revert = Join-Path $c.RunDir 'revert.ps1'
     $task = ('BT-revert-{0}-{1}' -f $c.Id, $c.Ts)
     $body = @'
@@ -687,6 +688,15 @@ if (Get-Command schtasks.exe -ErrorAction SilentlyContinue) { & schtasks.exe /De
 '@
     [IO.File]::WriteAllText($revert, $body.Replace('TASKID', $c.Id).Replace('TASKNAME', $task))
     if (-not (Test-Path -LiteralPath $c.RunUndo)) { [IO.File]::WriteAllText($c.RunUndo, '') }
+    return $revert
+}
+function Start-CcTimer {
+    param([int]$Seconds = 120)
+    $c = $script:Cc
+    if (-not $c.Apply) { return }
+    if (-not $c.RunDir) { Stop-Cc -Code 1 -Message 'Start-CcTimer needs Use-CcNumberedDir first' }
+    $revert = Write-CcRevert
+    $task = ('BT-revert-{0}-{1}' -f $c.Id, $c.Ts)
     $at = [DateTime]::Now.AddSeconds($Seconds)
     # The task is made from an XML file: a /TR command with quotes inside
     # quotes is mangled by Windows PowerShell 5.1 on its way to schtasks.exe,
