@@ -1,6 +1,6 @@
 # Windows / AD — identity + policy
 
-Scripts owned by this role. 8 of 11 are built.
+Scripts owned by this role. 9 of 12 are built.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -16,6 +16,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | WN-20 | Windows password rotation | Management | access | built | [`roles/windows-ad/WN-20-password-rotation.ps1`](../../roles/windows-ad/WN-20-password-rotation.ps1) |
 | WN-44 | Windows alerts | Alerts | none | planned |  |
 | WN-42 | Windows persistence sweep | Hardening: medium | service | built | [`roles/windows-ad/WN-42-persistence-sweep.ps1`](../../roles/windows-ad/WN-42-persistence-sweep.ps1) |
+| WN-16 | Windows web shell hunter | wave2 | medium | built | [`roles/windows-ad/WN-16-webshell-hunter.ps1`](../../roles/windows-ad/WN-16-webshell-hunter.ps1) |
 | WN-50 | Windows service recovery | any | service | built | [`roles/windows-ad/WN-50-service-recovery.ps1`](../../roles/windows-ad/WN-50-service-recovery.ps1) |
 
 Script files in this folder are named `<ID>-<short-name>.sh` or `.ps1`. What the tiers and risk levels mean, and the rules for each: `docs/PLAN.md`.

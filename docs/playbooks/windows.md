@@ -67,6 +67,7 @@ What to look at after each one:
 | Script | What it does | When | Command |
 | --- | --- | --- | --- |
 | **WN-42** Persistence sweep | Every place a red team leaves a way back in: scheduled tasks, Run keys, startup folders, Winlogon, services, WMI subscriptions, debuggers, local admins | Right after the first 15 min, then whenever you suspect red team | `.\WN-42-persistence-sweep.ps1` |
+| **WN-16** Web shell hunter (Borgar) | Every file in the IIS site folders: pages that run commands sent from a browser, code in upload folders or hidden in images | Right after the first 15 min, then whenever the site acts up | `.\WN-16-webshell-hunter.ps1` |
 | **WN-50** Service recovery | Why a scored service is down (stopped, disabled, a block rule, another program on its port, a stopped IIS app pool) and the fix; sets restart-on-crash | The moment a service goes red; `-Watch 30 -AutoRestart -Apply` in a spare window keeps them up | `.\WN-50-service-recovery.ps1` |
 | **WN-43** Safe fixes again | Red team turns things back off | Every hour or after an incident | `.\WN-43-safe-fixes.ps1 -Apply -Batch` |
 | **SH-06** full | A full picture, including processes, connections, sessions, shares, software, events | When things are calm, and to compare | `.\SH-06-windows-enum.ps1` |
@@ -78,6 +79,7 @@ What to look at after each one:
 | --- | --- |
 | You think red team is on the box | `SH-06 -Profile triage` (copies the event logs too), then WN-42 |
 | A new admin or account | WN-23 on Vattar; WN-42 `-Areas admins` on Borgar |
+| The site changed by itself, or red team keeps coming back | WN-16 on Borgar (web shells), then WN-42 |
 | A scored service went red | `WN-50 -Apply`: it finds why and offers the fix. Still red? `WN-25 -Undo latest` puts the old firewall back |
 | Locked out of RDP after the firewall | do nothing: the rollback task puts the old firewall back at the time it showed |
 | Something a fix broke | `revert.ps1 -Force` in that run's folder, or `-Undo latest` (WN-25, WN-43) |
@@ -86,7 +88,7 @@ What to look at after each one:
 ### Notes for this network
 
 - **Vattar is the domain controller.** WN-20 changes domain passwords there; WN-23 locks the admin groups; WN-25 keeps the AD ports (DNS 53, Kerberos 88, LDAP 389/636, SMB 445, RPC) open by itself. Group Policy is not touched by any script here.
-- **Borgar serves the food ordering site.** WN-25 `-Box web` (guessed if IIS is there) keeps 80 and 443 open. There is no IIS hardening script yet: check the site's folder for files that should not be there by hand.
+- **Borgar serves the food ordering site.** WN-25 `-Box web` (guessed if IIS is there) keeps 80 and 443 open. WN-16 reads every IIS site folder for web shells; give it the order page with `-Url` so it checks the site still loads after quarantining.
 - **RDP is how you get in.** WN-25 keeps 3389 open when it is listening; the packet says the boxes may also be reached over VNC or telnet - SH-06 lists what listens.
 - Passwords for scored accounts go to the scoring engine (Quotient), not to a ticket.
 - Nothing here has run on a real Windows box yet: do a dry run first, and keep a second RDP session open.

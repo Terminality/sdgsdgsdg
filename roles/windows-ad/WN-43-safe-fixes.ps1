@@ -970,7 +970,9 @@ function SvcOff([string]$fix, [string]$name) {
     if (-not $s) { Res $fix $name '' '' 'service not found'; return }
     if ($s.State -ne 'Running' -and $s.StartMode -eq 'Disabled') { Fine $fix $name 'stopped, disabled'; return }
     if (-not (Test-CcAllowed -Type service -Value $name)) { Res $fix $name $s.State $s.State 'refused: protected service'; return }
-    if ($Cc.Apply) { Plan 'svc' $name $s.StartMode $s.State; Add-CcUndo -Description "WN-43 $name back" -Command ('Set-Service {0} -StartupType {1}; Start-Service {0}' -f $name, @{ 'Auto' = 'Automatic'; 'Manual' = 'Manual'; 'Disabled' = 'Disabled' }[$s.StartMode]) }
+    if ($Cc.Apply) { Plan 'svc' $name $s.StartMode $s.State; $mode = @{ 'Auto' = 'Automatic'; 'Manual' = 'Manual'; 'Disabled' = 'Disabled' }[[string]$s.StartMode]; if (-not $mode) { $mode = 'Manual' }
+        $back = 'Set-Service {0} -StartupType {1}' -f $name, $mode; if ($s.State -eq 'Running') { $back += '; Start-Service ' + $name }
+        Add-CcUndo -Description "WN-43 $name back" -Command $back }
     [void](Change $fix $name ('{0}, {1}' -f $s.State, $s.StartMode) 'Stopped, Disabled' { Set-Svc $name 'Disabled' 'Stopped' })
 }
 function F-spooler { if (-not $IsDC) { Res spooler 'Spooler' '' '' 'not a domain controller: left alone'; return }; SvcOff spooler 'Spooler' }

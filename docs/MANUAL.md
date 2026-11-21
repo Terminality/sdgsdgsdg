@@ -65,7 +65,8 @@ Contents:
 55. File share hardening (Samba and NFS), `roles/applications/SV-46-fileshare-hardening.sh` (SV-46)
 56. Account lockdown (Windows / AD), `roles/windows-ad/WN-23-ad-lockdown.ps1` (WN-23)
 57. Windows persistence sweep, `roles/windows-ad/WN-42-persistence-sweep.ps1` (WN-42)
-58. Windows service recovery, `roles/windows-ad/WN-50-service-recovery.ps1` (WN-50)
+58. Windows web shell hunter, `roles/windows-ad/WN-16-webshell-hunter.ps1` (WN-16)
+59. Windows service recovery, `roles/windows-ad/WN-50-service-recovery.ps1` (WN-50)
 
 ---
 
@@ -3846,7 +3847,54 @@ MED findings (a shell or script, an unknown admin) are offered with default **ke
 - In `<out>\persistence-N\`: `output.txt`, `findings.txt` (level, area, name, what it runs, why, what was done), `summary.txt`, `run.txt`, `undo.txt`, `revert.ps1`.
 - Not yet run on real Windows: try it on a VM first.
 
-## 58. Windows service recovery, `roles/windows-ad/WN-50-service-recovery.ps1` (WN-50)
+## 58. Windows web shell hunter, `roles/windows-ad/WN-16-webshell-hunter.ps1` (WN-16)
+
+A web shell is a small page that runs red team's commands from a browser: the usual way back into a web site. This reads every file in the site folders and flags the ones that look like one. The Windows twin of SV-16. Run it on Borgar after the first 15 minutes, and whenever the food ordering site acts up or changes by itself.
+
+### How to run it
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-16-webshell-hunter.ps1                       # scan + dry run
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-16-webshell-hunter.ps1 -Apply                # asks about each file
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-16-webshell-hunter.ps1 -Apply -Batch -Url http://127.0.0.1/order/
+```
+
+### Where it looks
+
+Every site, application and virtual folder in IIS (`applicationHost.config`), `C:\inetpub\wwwroot`, `C:\xampp\htdocs`, `C:\wamp\www`, `C:\wamp64\www`, and any `-WebRoot`. If none is given it asks for one more folder (Enter = none). The folders and where each came from are in `folders.txt`.
+
+It reads ASP.NET (`.aspx .ashx .asmx .ascx .cshtml`), classic ASP (`.asp .asa .cer`), PHP, JSP, `web.config`, and images and text files (for code hidden in them). Programs (`.exe .bat .ps1 .vbs ...`) are flagged by name only.
+
+### What each level means
+
+| Level | What | Default |
+| --- | --- | --- |
+| HIGH | request data run as code or a command (`eval(Request..)`, `Execute Request(..)`, `Process.Start` with `Request`, `system($_GET..)`); code sent in the request loaded as a program (`Assembly.Load`); eval of encoded code; a known web shell name; code in an upload or image folder; code inside an image or text file; a `web.config` with code in it, or one that makes `.jpg`/`.txt` files run as code | quarantine |
+| MED | code that runs programs (`Process.Start`, `WScript.Shell`, `cmd /c`, `powershell`, `shell_exec`); `Assembly.Load`; a long base64 blob; a program or script in the site folder (not `bin\`) | keep |
+| LOW | a code file changed in the last `-Hours` hours (24) | listed only (`findings.txt`; `-ShowLow` shows them) |
+
+The matching line is shown under each file, so a real shell is easy to tell from an admin page that runs `ipconfig` on purpose.
+
+### The questions
+
+| Question | Answers | Parameter |
+| --- | --- | --- |
+| Another folder to scan (a site that is not in IIS)? | a folder, or Enter for none | `-WebRoot` |
+| Each HIGH or MED file | `[q]`uarantine, `[k]`eep, `[a]`ll the rest: their default | `-Exclude` names a path never offered |
+| Quarantine these N file(s) now? | `[y]` / `[N]` | `-Apply` |
+
+`-Batch` takes every default: a dry run unless `-Apply` is given.
+
+### Safety and output
+
+- Dry run unless `-Apply`. Files are moved, never deleted: into `<out>\quarantine\<host>\<time>_WN-16\`, full path kept, with the SHA-256 in the log. The revert timer runs with `-Apply` (120 s, `-Timer`); `revert.ps1 -Force` in the run folder puts them back later.
+- **The page check.** Before and after quarantining it loads `-Url` (default `http://127.0.0.1/`; anything under 500 counts as loading). If the site loaded before and does not after, every file is put back at once. Give the real page with `-Url http://127.0.0.1/order/` if the site is not at `/`. `-NoUrlCheck` skips it.
+- A path on the protected list is never moved.
+- In `<out>\webshells-N\`: `output.txt`, `findings.txt` (level, file, size, changed, reasons, the line, what was done), `folders.txt`, `summary.txt`, `run.txt`, `undo.txt`, `revert.ps1`.
+- A shell means red team got in: run WN-42 next (what else they left), then WN-20 (passwords).
+- A compiled shell (a `.dll` in `bin\`) is not read. Not yet run on real Windows: try it on a VM first.
+
+## 59. Windows service recovery, `roles/windows-ad/WN-50-service-recovery.ps1` (WN-50)
 
 When a scored Windows service goes red, starting it again is often not enough: red team broke something under it. This checks each service the same way, says why it is down, and offers the fix. The Windows twin of SV-50. Run it the moment scoring shows Borgar's site or Vattar's AD red.
 
