@@ -69,6 +69,7 @@ What to look at after each one:
 | Script | What it does | When | Command |
 | --- | --- | --- | --- |
 | **WN-42** Persistence sweep | Every place a red team leaves a way back in: scheduled tasks, Run keys, startup folders, Winlogon, services, WMI subscriptions, debuggers, local admins | Right after the first 15 min, then whenever you suspect red team | `.\WN-42-persistence-sweep.ps1` |
+| **WN-16** Web shell hunter (Borgar) | Every file in the IIS site folders: pages that run commands sent from a browser, code in upload folders or hidden in images | Right after the first 15 min, then whenever the site acts up | `.\WN-16-webshell-hunter.ps1` |
 | **WN-43** Safe fixes again | Red team turns things back off | Every hour or after an incident | `.\WN-43-safe-fixes.ps1 -Apply -Batch` |
 | **SH-06** full | A full picture, including processes, connections, sessions, shares, software, events | When things are calm, and to compare | `.\SH-06-windows-enum.ps1` |
 | **WN-23** again (Vattar) | New admins or accounts since the last run | Every hour | `.\WN-23-ad-lockdown.ps1 -Admins youradmin` |
@@ -79,6 +80,7 @@ What to look at after each one:
 | --- | --- |
 | You think red team is on the box | `SH-06 -Profile triage` (copies the event logs too), then WN-42 |
 | A new admin or account | WN-23 on Vattar; WN-42 `-Areas admins` on Borgar |
+| The site changed by itself, or red team keeps coming back | WN-16 on Borgar (web shells), then WN-42 |
 | A scored service went red | check the firewall first: `WN-25 -Undo latest` puts the old one back; then the service (`services.msc`, IIS Manager) |
 | Locked out of RDP after the firewall | do nothing: the rollback task puts the old firewall back at the time it showed |
 | Something a fix broke | `revert.ps1 -Force` in that run's folder, or `-Undo latest` (WN-25, WN-43) |
@@ -87,7 +89,7 @@ What to look at after each one:
 ### Notes for this network
 
 - **Vattar is the domain controller.** WN-20 changes domain passwords there; WN-23 locks the admin groups; WN-25 keeps the AD ports (DNS 53, Kerberos 88, LDAP 389/636, SMB 445, RPC) open by itself. Group Policy is not touched by any script here.
-- **Borgar serves the food ordering site.** WN-25 `-Box web` (guessed if IIS is there) keeps 80 and 443 open. There is no IIS hardening script yet: check the site's folder for files that should not be there by hand.
+- **Borgar serves the food ordering site.** WN-25 `-Box web` (guessed if IIS is there) keeps 80 and 443 open. WN-16 reads every IIS site folder for web shells; give it the order page with `-Url` so it checks the site still loads after quarantining.
 - **RDP is how you get in.** WN-25 keeps 3389 open when it is listening; the packet says the boxes may also be reached over VNC or telnet - SH-06 lists what listens.
 - Passwords for scored accounts go to the scoring engine (Quotient), not to a ticket.
 - Nothing here has run on a real Windows box yet: do a dry run first, and keep a second RDP session open.
@@ -96,7 +98,7 @@ What to look at after each one:
 
 Each section below is the full reference for one script: how to run it, every question and its parameter, what each check means, what it writes, and what to do when something goes wrong. They are in the order above.
 
-Scripts: [SH-06](#sh-06-windows-enum-distwindows-adsh-06-windows-enumps1) [WN-35](#wn-35-windows-backup-distwindows-adwn-35-backupps1) [WN-20](#wn-20-windows-password-rotation-distwindows-adwn-20-password-rotationps1) [WN-25](#wn-25-windows-firewall-distwindows-adwn-25-firewallps1) [WN-23](#wn-23-account-lockdown-windows--ad-distwindows-adwn-23-ad-lockdownps1) [WN-43](#wn-43-windows-safe-fixes-distwindows-adwn-43-safe-fixesps1) [WN-42](#wn-42-windows-persistence-sweep-distwindows-adwn-42-persistence-sweepps1) 
+Scripts: [SH-06](#sh-06-windows-enum-distwindows-adsh-06-windows-enumps1) [WN-35](#wn-35-windows-backup-distwindows-adwn-35-backupps1) [WN-20](#wn-20-windows-password-rotation-distwindows-adwn-20-password-rotationps1) [WN-25](#wn-25-windows-firewall-distwindows-adwn-25-firewallps1) [WN-23](#wn-23-account-lockdown-windows--ad-distwindows-adwn-23-ad-lockdownps1) [WN-43](#wn-43-windows-safe-fixes-distwindows-adwn-43-safe-fixesps1) [WN-42](#wn-42-windows-persistence-sweep-distwindows-adwn-42-persistence-sweepps1) [WN-16](#wn-16-windows-web-shell-hunter-distwindows-adwn-16-webshell-hunterps1) 
 
 ### SH-06: Windows enum (`dist/windows-ad/SH-06-windows-enum.ps1`)
 
@@ -524,3 +526,51 @@ MED findings (a shell or script, an unknown admin) are offered with default **ke
 - Never touched: anything on the protected list (service, account, path, process), the account running it, the built-in Administrator.
 - In `<out>\persistence-N\`: `output.txt`, `findings.txt` (level, area, name, what it runs, why, what was done), `summary.txt`, `run.txt`, `undo.txt`, `revert.ps1`.
 - Not yet run on real Windows: try it on a VM first.
+
+
+### WN-16: Windows web shell hunter (`dist/windows-ad/WN-16-webshell-hunter.ps1`)
+
+A web shell is a small page that runs red team's commands from a browser: the usual way back into a web site. This reads every file in the site folders and flags the ones that look like one. The Windows twin of SV-16. Run it on Borgar after the first 15 minutes, and whenever the food ordering site acts up or changes by itself.
+
+#### How to run it
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-16-webshell-hunter.ps1                       # scan + dry run
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-16-webshell-hunter.ps1 -Apply                # asks about each file
+powershell -NoProfile -ExecutionPolicy Bypass -File WN-16-webshell-hunter.ps1 -Apply -Batch -Url http://127.0.0.1/order/
+```
+
+#### Where it looks
+
+Every site, application and virtual folder in IIS (`applicationHost.config`), `C:\inetpub\wwwroot`, `C:\xampp\htdocs`, `C:\wamp\www`, `C:\wamp64\www`, and any `-WebRoot`. If none is given it asks for one more folder (Enter = none). The folders and where each came from are in `folders.txt`.
+
+It reads ASP.NET (`.aspx .ashx .asmx .ascx .cshtml`), classic ASP (`.asp .asa .cer`), PHP, JSP, `web.config`, and images and text files (for code hidden in them). Programs (`.exe .bat .ps1 .vbs ...`) are flagged by name only.
+
+#### What each level means
+
+| Level | What | Default |
+| --- | --- | --- |
+| HIGH | request data run as code or a command (`eval(Request..)`, `Execute Request(..)`, `Process.Start` with `Request`, `system($_GET..)`); code sent in the request loaded as a program (`Assembly.Load`); eval of encoded code; a known web shell name; code in an upload or image folder; code inside an image or text file; a `web.config` with code in it, or one that makes `.jpg`/`.txt` files run as code | quarantine |
+| MED | code that runs programs (`Process.Start`, `WScript.Shell`, `cmd /c`, `powershell`, `shell_exec`); `Assembly.Load`; a long base64 blob; a program or script in the site folder (not `bin\`) | keep |
+| LOW | a code file changed in the last `-Hours` hours (24) | listed only (`findings.txt`; `-ShowLow` shows them) |
+
+The matching line is shown under each file, so a real shell is easy to tell from an admin page that runs `ipconfig` on purpose.
+
+#### The questions
+
+| Question | Answers | Parameter |
+| --- | --- | --- |
+| Another folder to scan (a site that is not in IIS)? | a folder, or Enter for none | `-WebRoot` |
+| Each HIGH or MED file | `[q]`uarantine, `[k]`eep, `[a]`ll the rest: their default | `-Exclude` names a path never offered |
+| Quarantine these N file(s) now? | `[y]` / `[N]` | `-Apply` |
+
+`-Batch` takes every default: a dry run unless `-Apply` is given.
+
+#### Safety and output
+
+- Dry run unless `-Apply`. Files are moved, never deleted: into `<out>\quarantine\<host>\<time>_WN-16\`, full path kept, with the SHA-256 in the log. The revert timer runs with `-Apply` (120 s, `-Timer`); `revert.ps1 -Force` in the run folder puts them back later.
+- **The page check.** Before and after quarantining it loads `-Url` (default `http://127.0.0.1/`; anything under 500 counts as loading). If the site loaded before and does not after, every file is put back at once. Give the real page with `-Url http://127.0.0.1/order/` if the site is not at `/`. `-NoUrlCheck` skips it.
+- A path on the protected list is never moved.
+- In `<out>\webshells-N\`: `output.txt`, `findings.txt` (level, file, size, changed, reasons, the line, what was done), `folders.txt`, `summary.txt`, `run.txt`, `undo.txt`, `revert.ps1`.
+- A shell means red team got in: run WN-42 next (what else they left), then WN-20 (passwords).
+- A compiled shell (a `.dll` in `bin\`) is not read. Not yet run on real Windows: try it on a VM first.
