@@ -1,6 +1,6 @@
 # Build status
 
-51 of 54 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
+52 of 55 scripts are built. The plan, tiers and rules: `docs/PLAN.md`.
 
 This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not edit it by hand.
 
@@ -8,7 +8,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | --- | --- | --- |
 | Enum (look only) | 6 | 7 |
 | Backup and prep | 5 | 5 |
-| wave2 | 14 | 14 |
+| wave2 | 15 | 15 |
 | any | 1 | 1 |
 | wave1 | 3 | 3 |
 | Hardening: easy | 3 | 3 |
@@ -58,6 +58,7 @@ This file is generated from `docs/catalog.csv` by `tools/update-docs.sh`. Do not
 | LX-45 | Rootkit and malware scan | medium | built | `roles/linux/LX-45-rootkit-scan.sh` |
 | LX-44 | AppArmor confinement | medium | built | `roles/linux/LX-44-apparmor.sh` |
 | LX-46 | Safe security updates | medium | built | `roles/linux/LX-46-safe-updates.sh` |
+| WN-16 | Windows web shell hunter | medium | built | `roles/windows-ad/WN-16-webshell-hunter.ps1` |
 
 ## any
 
